@@ -19,3 +19,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo test
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo run -p beatbox -- --version
+      - name: CLI fib smoke
+        run: |
+          cargo run -p beatbox -- run examples/fib.wasm --input '{"n":10}' | tee /tmp/beatbox-fib.json
+          grep '"status": "ok"' /tmp/beatbox-fib.json
+          grep '"value": 55' /tmp/beatbox-fib.json
+          grep '"deterministic": true' /tmp/beatbox-fib.json
+      - name: CLI spin fuel smoke
+        run: |
+          cargo run -p beatbox -- run examples/spin.wasm --input '{"n":0}' --policy fuel=1000000 | tee /tmp/beatbox-spin.json
+          grep '"status": "timeout"' /tmp/beatbox-spin.json
+          grep '"code": "fuel_exhausted"' /tmp/beatbox-spin.json

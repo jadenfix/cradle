@@ -146,6 +146,9 @@ fn result(
     effective_isolation: EffectiveIsolation,
     inputs_digest: String,
 ) -> ExecutionResult {
+    // The initial wasm lane is W0: an empty linker denies every host import, so
+    // core modules are deterministic by construction. Revisit this when W1
+    // capability-scoped WASI is added under Lane::Wasm.
     let deterministic = matches!(request.lane, Lane::Wasm);
     let stderr = error
         .as_ref()
