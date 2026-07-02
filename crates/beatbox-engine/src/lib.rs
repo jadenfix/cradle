@@ -150,10 +150,8 @@ fn result(
     // core modules are deterministic by construction. Revisit this when W1
     // capability-scoped WASI is added under Lane::Wasm.
     let deterministic = matches!(request.lane, Lane::Wasm);
-    let stderr = error
-        .as_ref()
-        .map_or_else(String::new, |body| body.message.clone());
-    let (stderr, stderr_truncated) = truncate(stderr, request.policy.limits.output_bytes);
+    let (error, stderr, stderr_truncated) =
+        truncate_error(error, request.policy.limits.output_bytes);
     ExecutionResult {
         status,
         value,
@@ -172,6 +170,18 @@ fn result(
         effective_isolation,
         egress: Vec::new(),
     }
+}
+
+fn truncate_error(
+    error: Option<ErrorBody>,
+    output_bytes: u64,
+) -> (Option<ErrorBody>, String, bool) {
+    let Some(mut body) = error else {
+        return (None, String::new(), false);
+    };
+    let (message, truncated) = truncate(body.message, output_bytes);
+    body.message = message.clone();
+    (Some(body), message, truncated)
 }
 
 fn engine_version() -> String {
@@ -689,6 +699,31 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Denied);
         let code = result.error.map(|error| error.code);
         assert_eq!(code.as_deref(), Some("host_import_denied"));
+        Ok(())
+    }
+
+    #[test]
+    fn error_body_respects_output_byte_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let mut request = request_for(
+            r#"
+            (module
+              (import "very-long-import-module-name" "very-long-import-name" (func))
+              (func (export "run")))
+            "#,
+            serde_json::Value::Null,
+        );
+        request.policy.limits.output_bytes = 8;
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Denied);
+        assert!(result.stderr_truncated);
+        assert!(result.stderr.len() <= 8);
+        let error = result.error.as_ref().ok_or_else(|| {
+            std::io::Error::other("denied import should include a structured error")
+        })?;
+        assert_eq!(error.code, "host_import_denied");
+        assert!(error.message.len() <= 8);
         Ok(())
     }
 

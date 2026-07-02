@@ -12,6 +12,11 @@ pub struct JobStore {
     conn: Arc<Mutex<Connection>>,
 }
 
+pub struct CreatedJob {
+    pub job_id: String,
+    pub inserted: bool,
+}
+
 impl JobStore {
     pub fn in_memory() -> Result<Self, JobStoreError> {
         Self::from_connection(Connection::open_in_memory()?)
@@ -37,6 +42,7 @@ impl JobStore {
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
+                idempotency_key TEXT,
                 request_json TEXT NOT NULL,
                 result_json TEXT,
                 error_json TEXT,
@@ -45,19 +51,70 @@ impl JobStore {
             );
             "#,
         )?;
+        ensure_column(&conn, "jobs", "idempotency_key", "TEXT")?;
+        conn.execute_batch(
+            r#"
+            CREATE UNIQUE INDEX IF NOT EXISTS jobs_idempotency_key_unique
+                ON jobs(idempotency_key)
+                WHERE idempotency_key IS NOT NULL;
+            "#,
+        )?;
         Ok(())
     }
 
     pub fn create(&self, request: &ExecuteRequest) -> Result<String, JobStoreError> {
+        self.create_or_get(request).map(|created| created.job_id)
+    }
+
+    pub fn create_or_get(&self, request: &ExecuteRequest) -> Result<CreatedJob, JobStoreError> {
+        let idempotency_key = normalized_idempotency_key(request);
         let id = Uuid::new_v4().to_string();
         let now = now();
         let request_json = serde_json::to_string(request)?;
         let conn = self.lock()?;
+        if let Some(key) = idempotency_key.as_deref()
+            && let Some((existing, existing_request)) = find_by_idempotency_key(&conn, key)?
+        {
+            if existing_request != request_json {
+                return Err(JobStoreError::IdempotencyConflict);
+            }
+            return Ok(CreatedJob {
+                job_id: existing,
+                inserted: false,
+            });
+        }
         conn.execute(
-            "INSERT INTO jobs (id, status, request_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, JobStatus::Queued.as_str(), request_json, now, now],
+            "INSERT INTO jobs (id, status, idempotency_key, request_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                JobStatus::Queued.as_str(),
+                idempotency_key,
+                request_json,
+                now,
+                now
+            ],
         )?;
-        Ok(id)
+        Ok(CreatedJob {
+            job_id: id,
+            inserted: true,
+        })
+    }
+
+    pub fn find_idempotent(
+        &self,
+        request: &ExecuteRequest,
+    ) -> Result<Option<String>, JobStoreError> {
+        let Some(key) = normalized_idempotency_key(request) else {
+            return Ok(None);
+        };
+        let request_json = serde_json::to_string(request)?;
+        let Some((id, existing_request)) = self.find_by_idempotency_key(&key)? else {
+            return Ok(None);
+        };
+        if existing_request != request_json {
+            return Err(JobStoreError::IdempotencyConflict);
+        }
+        Ok(Some(id))
     }
 
     pub fn get(&self, id: &str) -> Result<Option<JobRecord>, JobStoreError> {
@@ -71,8 +128,19 @@ impl JobStore {
         .map_err(JobStoreError::from)
     }
 
-    pub fn mark_running(&self, id: &str) -> Result<(), JobStoreError> {
-        self.set_status(id, JobStatus::Running)
+    pub fn mark_running(&self, id: &str) -> Result<bool, JobStoreError> {
+        let now = now();
+        let conn = self.lock()?;
+        let rows = conn.execute(
+            "UPDATE jobs SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status = ?4",
+            params![
+                JobStatus::Running.as_str(),
+                now,
+                id,
+                JobStatus::Queued.as_str()
+            ],
+        )?;
+        Ok(rows > 0)
     }
 
     pub fn complete(&self, id: &str, result: &ExecutionResult) -> Result<(), JobStoreError> {
@@ -133,14 +201,12 @@ impl JobStore {
         Ok(exists.is_some())
     }
 
-    fn set_status(&self, id: &str, status: JobStatus) -> Result<(), JobStoreError> {
-        let now = now();
+    fn find_by_idempotency_key(
+        &self,
+        key: &str,
+    ) -> Result<Option<(String, String)>, JobStoreError> {
         let conn = self.lock()?;
-        conn.execute(
-            "UPDATE jobs SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status != ?4",
-            params![status.as_str(), now, id, JobStatus::Canceled.as_str()],
-        )?;
-        Ok(())
+        find_by_idempotency_key(&conn, key)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, JobStoreError> {
@@ -160,6 +226,8 @@ pub enum JobStoreError {
     PoisonedConnection,
     #[error("invalid persisted job status `{0}`")]
     InvalidStatus(String),
+    #[error("idempotency key was already used for a different request")]
+    IdempotencyConflict,
 }
 
 fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobRecord> {
@@ -223,6 +291,107 @@ fn parse_status(value: &str) -> Result<JobStatus, JobStoreError> {
     }
 }
 
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    declaration: &str,
+) -> Result<(), JobStoreError> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !columns.iter().any(|existing| existing == column) {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn find_by_idempotency_key(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<(String, String)>, JobStoreError> {
+    conn.query_row(
+        "SELECT id, request_json FROM jobs WHERE idempotency_key = ?1",
+        params![key],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+    .map_err(JobStoreError::from)
+}
+
+fn normalized_idempotency_key(request: &ExecuteRequest) -> Option<String> {
+    request
+        .idempotency_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use beatbox_core::{Lane, Policy, Source};
+    use serde_json::json;
+
+    use super::JobStore;
+
+    fn request() -> beatbox_core::ExecuteRequest {
+        beatbox_core::ExecuteRequest {
+            lane: Lane::Wasm,
+            source: Source::WasmWat {
+                text: "(module (func (export \"run\")))".to_string(),
+            },
+            entrypoint: None,
+            input: json!(null),
+            stdin: String::new(),
+            policy: Policy::default(),
+            idempotency_key: None,
+        }
+    }
+
+    #[test]
+    fn canceled_job_does_not_transition_to_running() -> Result<(), Box<dyn std::error::Error>> {
+        let store = JobStore::in_memory()?;
+        let request = request();
+        let id = store.create(&request)?;
+
+        assert!(store.cancel(&id)?);
+        assert!(!store.mark_running(&id)?);
+
+        let job = store
+            .get(&id)?
+            .ok_or_else(|| std::io::Error::other("job exists"))?;
+        assert_eq!(job.status, beatbox_core::JobStatus::Canceled);
+        Ok(())
+    }
+
+    #[test]
+    fn idempotency_key_reuses_persisted_job_after_reopen() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let db_path =
+            std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
+        let mut request = request();
+        request.idempotency_key = Some("same-step".to_string());
+
+        let first_id = {
+            let store = JobStore::open(&db_path)?;
+            store.create(&request)?
+        };
+        let second_id = {
+            let store = JobStore::open(&db_path)?;
+            store.create(&request)?
+        };
+
+        assert_eq!(first_id, second_id);
+        std::fs::remove_file(db_path).ok();
+        Ok(())
+    }
 }

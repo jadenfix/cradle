@@ -1,7 +1,11 @@
 pub use beatbox_core::*;
 
+use std::time::Duration;
+
 use reqwest::StatusCode;
 use thiserror::Error;
+
+pub const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(65);
 
 #[derive(Clone)]
 pub struct Client {
@@ -15,13 +19,18 @@ impl Client {
         Self {
             base_url: trim_base_url(base_url.into()),
             api_key: None,
-            http: reqwest::Client::new(),
+            http: default_http_client(),
         }
     }
 
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Result<Self, ClientError> {
+        self.http = reqwest::Client::builder().timeout(timeout).build()?;
+        Ok(self)
     }
 
     pub async fn health(&self) -> Result<serde_json::Value, ClientError> {
@@ -88,6 +97,16 @@ impl Client {
             Some(api_key) => request.bearer_auth(api_key),
             None => request,
         }
+    }
+}
+
+fn default_http_client() -> reqwest::Client {
+    match reqwest::Client::builder()
+        .timeout(DEFAULT_HTTP_TIMEOUT)
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => reqwest::Client::new(),
     }
 }
 

@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::{fs, io};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{AuthMode, ServerConfig, router};
 use clap::Parser;
@@ -20,6 +20,9 @@ struct Cli {
         default_value = ".beatbox/beatbox.sqlite3"
     )]
     db_path: PathBuf,
+    /// Allow binding a non-loopback address without BEATBOX_API_KEY.
+    #[arg(long)]
+    allow_unauthenticated_remote: bool,
 }
 
 #[tokio::main]
@@ -29,6 +32,13 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let api_key = cli.api_key.and_then(non_empty);
+    if !cli.addr.ip().is_loopback() && api_key.is_none() && !cli.allow_unauthenticated_remote {
+        bail!(
+            "refusing to bind {} without BEATBOX_API_KEY; pass --allow-unauthenticated-remote only for isolated test networks",
+            cli.addr
+        );
+    }
     let engine = BeatboxEngine::new()?;
     if let Some(parent) = cli.db_path.parent()
         && !parent.as_os_str().is_empty()
@@ -41,11 +51,16 @@ async fn main() -> Result<()> {
         })?;
     }
     let mut config = ServerConfig::new(engine).with_sqlite_job_store(&cli.db_path)?;
-    if let Some(token) = cli.api_key {
+    if let Some(token) = api_key {
         config.auth = AuthMode::Required { token };
     }
     let listener = tokio::net::TcpListener::bind(cli.addr).await?;
     println!("beatboxd listening on http://{}", cli.addr);
     axum::serve(listener, router(config)).await?;
     Ok(())
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    (!value.is_empty()).then_some(value)
 }

@@ -1,12 +1,14 @@
 mod jobs;
 
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::{Path as AxumPath, State};
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -19,10 +21,19 @@ use bytes::Bytes;
 pub use jobs::JobStore;
 use jobs::JobStoreError;
 use serde_json::{Value, json};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use url::{Host, Url};
 use utoipa::OpenApi;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 pub const DEFAULT_SYNC_WALL_MS: u64 = 60_000;
+pub const DEFAULT_JOB_WALL_MS: u64 = 5 * 60_000;
+pub const DEFAULT_MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 256 * 1024 * 1024;
+pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
+pub const DEFAULT_MAX_FUEL: u64 = 100_000_000;
+pub const DEFAULT_MAX_CONCURRENT_SYNC: usize = 8;
+pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -30,6 +41,13 @@ pub struct ServerConfig {
     pub engine: BeatboxEngine,
     pub jobs: JobStore,
     pub sync_wall_ms: u64,
+    pub job_wall_ms: u64,
+    pub max_memory_bytes: u64,
+    pub max_output_bytes: u64,
+    pub max_fuel: u64,
+    pub max_request_bytes: usize,
+    pub max_concurrent_sync: usize,
+    pub max_concurrent_jobs: usize,
 }
 
 impl ServerConfig {
@@ -41,6 +59,13 @@ impl ServerConfig {
             engine,
             jobs,
             sync_wall_ms: DEFAULT_SYNC_WALL_MS,
+            job_wall_ms: DEFAULT_JOB_WALL_MS,
+            max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            max_fuel: DEFAULT_MAX_FUEL,
+            max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
+            max_concurrent_sync: DEFAULT_MAX_CONCURRENT_SYNC,
+            max_concurrent_jobs: DEFAULT_MAX_CONCURRENT_JOBS,
         }
     }
 
@@ -53,6 +78,21 @@ impl ServerConfig {
         self.jobs = JobStore::open(path)?;
         Ok(self)
     }
+
+    pub fn with_max_request_bytes(mut self, max_request_bytes: usize) -> Self {
+        self.max_request_bytes = max_request_bytes;
+        self
+    }
+
+    pub fn with_max_concurrent_jobs(mut self, max_concurrent_jobs: usize) -> Self {
+        self.max_concurrent_jobs = max_concurrent_jobs;
+        self
+    }
+
+    pub fn with_max_concurrent_sync(mut self, max_concurrent_sync: usize) -> Self {
+        self.max_concurrent_sync = max_concurrent_sync;
+        self
+    }
 }
 
 #[derive(Clone, Default)]
@@ -64,16 +104,28 @@ pub enum AuthMode {
     },
 }
 
+impl AuthMode {
+    fn required(&self) -> bool {
+        matches!(self, Self::Required { .. })
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     started: Instant,
     config: ServerConfig,
+    sync_permits: Arc<Semaphore>,
+    job_permits: Arc<Semaphore>,
 }
 
 pub fn router(config: ServerConfig) -> Router {
+    let sync_permits = Arc::new(Semaphore::new(config.max_concurrent_sync));
+    let job_permits = Arc::new(Semaphore::new(config.max_concurrent_jobs));
     let state = AppState {
         started: Instant::now(),
         config,
+        sync_permits,
+        job_permits,
     };
     Router::new()
         .route("/v1/health", get(health))
@@ -99,44 +151,53 @@ async fn capabilities(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     state.authorize(&headers)?;
-    Ok(Json(capabilities_json()))
+    Ok(Json(capabilities_json(&state.config)))
 }
 
 async fn execute(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<ExecuteRequest>,
+    request: Request<Body>,
 ) -> Result<Json<ExecutionResult>, ApiError> {
     state.authorize(&headers)?;
-    if request.policy.limits.wall_ms > state.config.sync_wall_ms {
-        return Err(ApiError::unprocessable_body(ErrorBody::new(
-            "sync_limit_exceeded",
-            format!(
-                "policy.limits.wall_ms={} exceeds synchronous ceiling {}; submit to /v1/jobs",
-                request.policy.limits.wall_ms, state.config.sync_wall_ms
-            ),
-        )));
-    }
-    state
-        .config
-        .engine
-        .execute(request)
-        .map(Json)
-        .map_err(ApiError::unprocessable)
+    let request = parse_json_body(&state, request).await?;
+    execute_sync(&state, request).await.map(Json)
 }
 
 async fn create_job(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<ExecuteRequest>,
+    request: Request<Body>,
 ) -> Result<(StatusCode, Json<CreateJobResponse>), ApiError> {
     state.authorize(&headers)?;
-    let job_id = state
+    let request = parse_json_body(&state, request).await?;
+    admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
+    if let Some(job_id) = state
         .config
         .jobs
-        .create(&request)
+        .find_idempotent(&request)
+        .map_err(ApiError::job_store)?
+    {
+        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
+    }
+    let permit = state.job_permits.clone().try_acquire_owned().map_err(|_| {
+        ApiError::too_many(
+            "job_concurrency_exceeded",
+            format!(
+                "maximum concurrent jobs ({}) are already running",
+                state.config.max_concurrent_jobs
+            ),
+        )
+    })?;
+    let created = state
+        .config
+        .jobs
+        .create_or_get(&request)
         .map_err(ApiError::job_store)?;
-    spawn_job(state, job_id.clone(), request);
+    let job_id = created.job_id;
+    if created.inserted {
+        spawn_job(state, job_id.clone(), request, permit);
+    }
     Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })))
 }
 
@@ -169,11 +230,24 @@ async fn cancel_job(
     }
 }
 
-fn spawn_job(state: AppState, job_id: String, request: ExecuteRequest) {
+fn spawn_job(
+    state: AppState,
+    job_id: String,
+    request: ExecuteRequest,
+    permit: OwnedSemaphorePermit,
+) {
     tokio::spawn(async move {
-        if let Err(error) = state.config.jobs.mark_running(&job_id) {
-            tracing::warn!(%job_id, %error, "failed to mark job running");
-            return;
+        let _permit = permit;
+        match state.config.jobs.mark_running(&job_id) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::info!(%job_id, "job was canceled before worker start");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%job_id, %error, "failed to mark job running");
+                return;
+            }
         }
         let engine = state.config.engine.clone();
         let result = tokio::task::spawn_blocking(move || engine.execute(request)).await;
@@ -252,9 +326,36 @@ impl ApiError {
     }
 
     fn job_store(error: JobStoreError) -> Self {
+        match error {
+            JobStoreError::IdempotencyConflict => Self {
+                status: StatusCode::CONFLICT,
+                body: ErrorBody::new("idempotency_conflict", error.to_string()),
+            },
+            error => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                body: ErrorBody::new("job_store", error.to_string()),
+            },
+        }
+    }
+
+    fn bad_request(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ErrorBody::new(code, message),
+        }
+    }
+
+    fn too_many(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: ErrorBody::new(code, message),
+        }
+    }
+
+    fn internal(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            body: ErrorBody::new("job_store", error.to_string()),
+            body: ErrorBody::new(code, message),
         }
     }
 }
@@ -265,7 +366,146 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn capabilities_json() -> Value {
+async fn parse_json_body<T: serde::de::DeserializeOwned>(
+    state: &AppState,
+    request: Request<Body>,
+) -> Result<T, ApiError> {
+    require_json_content_type(request.headers())?;
+    let bytes = read_limited_body(state, request).await?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| ApiError::bad_request("invalid_json", error.to_string()))
+}
+
+fn require_json_content_type(headers: &HeaderMap) -> Result<(), ApiError> {
+    let Some(content_type) = headers.get(CONTENT_TYPE) else {
+        return Err(ApiError::bad_request(
+            "unsupported_media_type",
+            "content-type must be application/json",
+        ));
+    };
+    if json_content_type(content_type) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "unsupported_media_type",
+            "content-type must be application/json",
+        ))
+    }
+}
+
+fn json_content_type(value: &HeaderValue) -> bool {
+    value
+        .to_str()
+        .ok()
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("application/json"))
+}
+
+async fn read_limited_body(state: &AppState, request: Request<Body>) -> Result<Bytes, ApiError> {
+    let limit = state.config.max_request_bytes;
+    to_bytes(request.into_body(), limit)
+        .await
+        .map_err(|error| ApiError::bad_request("body_limit", error.to_string()))
+}
+
+async fn execute_sync(
+    state: &AppState,
+    request: ExecuteRequest,
+) -> Result<ExecutionResult, ApiError> {
+    admit_execution_request(&state.config, &request, ExecutionMode::Sync)?;
+    let _permit = state
+        .sync_permits
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            ApiError::too_many(
+                "sync_concurrency_exceeded",
+                format!(
+                    "maximum concurrent synchronous executions ({}) are already running",
+                    state.config.max_concurrent_sync
+                ),
+            )
+        })?;
+    let engine = state.config.engine.clone();
+    let result = tokio::task::spawn_blocking(move || engine.execute(request))
+        .await
+        .map_err(|error| ApiError::internal("execute_worker", error.to_string()))?;
+    result.map_err(ApiError::unprocessable)
+}
+
+#[derive(Clone, Copy)]
+enum ExecutionMode {
+    Sync,
+    Job,
+}
+
+fn admit_execution_request(
+    config: &ServerConfig,
+    request: &ExecuteRequest,
+    mode: ExecutionMode,
+) -> Result<(), ApiError> {
+    admit_remote_source(request)?;
+    let max_wall_ms = match mode {
+        ExecutionMode::Sync => config.sync_wall_ms,
+        ExecutionMode::Job => config.job_wall_ms,
+    };
+    if request.policy.limits.wall_ms > max_wall_ms {
+        let code = match mode {
+            ExecutionMode::Sync => "sync_limit_exceeded",
+            ExecutionMode::Job => "job_limit_exceeded",
+        };
+        let target = match mode {
+            ExecutionMode::Sync => "synchronous ceiling",
+            ExecutionMode::Job => "asynchronous job ceiling",
+        };
+        return Err(ApiError::unprocessable_body(ErrorBody::new(
+            code,
+            format!(
+                "policy.limits.wall_ms={} exceeds {target} {max_wall_ms}",
+                request.policy.limits.wall_ms
+            ),
+        )));
+    }
+    if request.policy.limits.memory_bytes > config.max_memory_bytes {
+        return Err(limit_exceeded(
+            "memory_bytes",
+            request.policy.limits.memory_bytes,
+            config.max_memory_bytes,
+        ));
+    }
+    if request.policy.limits.output_bytes > config.max_output_bytes {
+        return Err(limit_exceeded(
+            "output_bytes",
+            request.policy.limits.output_bytes,
+            config.max_output_bytes,
+        ));
+    }
+    if let Some(fuel) = request.policy.limits.fuel
+        && fuel > config.max_fuel
+    {
+        return Err(limit_exceeded("fuel", fuel, config.max_fuel));
+    }
+    Ok(())
+}
+
+fn limit_exceeded(field: &'static str, actual: u64, max: u64) -> ApiError {
+    ApiError::unprocessable_body(ErrorBody::new(
+        "limit_exceeded",
+        format!("policy.limits.{field}={actual} exceeds daemon maximum {max}"),
+    ))
+}
+
+fn admit_remote_source(request: &ExecuteRequest) -> Result<(), ApiError> {
+    if matches!(&request.source, Source::WasmFile { .. }) {
+        return Err(ApiError::unprocessable_body(ErrorBody::new(
+            "host_file_source_denied",
+            "remote API requests cannot reference daemon-local source paths; upload WAT or base64 Wasm bytes",
+        )));
+    }
+    Ok(())
+}
+
+fn capabilities_json(config: &ServerConfig) -> Value {
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "lanes": [
@@ -283,10 +523,17 @@ fn capabilities_json() -> Value {
             {"lane": "exec", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}}
         ],
         "limits": {
-            "sync_wall_ms": DEFAULT_SYNC_WALL_MS,
+            "sync_wall_ms": config.sync_wall_ms,
+            "job_wall_ms": config.job_wall_ms,
             "default_wall_ms": Policy::default().limits.wall_ms,
             "default_memory_bytes": Policy::default().limits.memory_bytes,
-            "default_output_bytes": Policy::default().limits.output_bytes
+            "default_output_bytes": Policy::default().limits.output_bytes,
+            "max_request_bytes": config.max_request_bytes,
+            "max_memory_bytes": config.max_memory_bytes,
+            "max_output_bytes": config.max_output_bytes,
+            "max_fuel": config.max_fuel,
+            "max_concurrent_sync": config.max_concurrent_sync,
+            "max_concurrent_jobs": config.max_concurrent_jobs
         },
         "engines": {"wasmtime": "45"}
     })
@@ -406,25 +653,32 @@ pub fn origin_allowed(headers: &HeaderMap) -> bool {
 }
 
 fn local_origin_allowed(origin: &str) -> bool {
-    let Some(authority) = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))
-    else {
+    let Some(url) = parse_origin(origin) else {
         return false;
     };
-    let authority = authority.split('/').next().unwrap_or(authority);
-    let authority = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
-    let host = if let Some(rest) = authority.strip_prefix('[') {
-        let Some((host, _)) = rest.split_once(']') else {
-            return false;
-        };
-        host
-    } else {
-        authority.split(':').next().unwrap_or(authority)
-    };
-    matches!(host, "localhost" | "127.0.0.1" | "::1")
+    match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(addr)) => addr == Ipv4Addr::LOCALHOST,
+        Some(Host::Ipv6(addr)) => addr == Ipv6Addr::LOCALHOST,
+        None => false,
+    }
+}
+
+fn parse_origin(origin: &str) -> Option<Url> {
+    let url = Url::parse(origin.trim().trim_end_matches('/')).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    url.host()?;
+    Some(url)
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -447,13 +701,33 @@ async fn mcp_get() -> Response {
         .into_response()
 }
 
-async fn mcp_post(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let (parts, body) = request.into_parts();
+    let headers = parts.headers;
     if !origin_allowed(&headers) {
         return json_response(
             StatusCode::FORBIDDEN,
             json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": "origin not allowed"}}),
         );
     }
+    if state.config.auth.required()
+        && let Err(error) = state.authorize(&headers)
+    {
+        return json_response(
+            StatusCode::UNAUTHORIZED,
+            json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32001, "message": error.body.message}}),
+        );
+    }
+
+    let body = match to_bytes(body, state.config.max_request_bytes).await {
+        Ok(body) => body,
+        Err(error) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": format!("body limit exceeded: {error}")}}),
+            );
+        }
+    };
 
     let message: Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -471,6 +745,14 @@ async fn mcp_post(State(state): State<AppState>, headers: HeaderMap, body: Bytes
 
     let method = message["method"].as_str().unwrap_or_default();
     let params = message.get("params").cloned().unwrap_or(Value::Null);
+    if matches!(method, "tools/list" | "tools/call")
+        && let Err(error) = state.authorize(&headers)
+    {
+        return json_response(
+            StatusCode::UNAUTHORIZED,
+            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32001, "message": error.body.message}}),
+        );
+    }
     let reply = match method {
         "initialize" => Ok(json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -531,12 +813,15 @@ async fn mcp_tools_call(
 
     match name {
         "get_capabilities" => Ok(json!({
-            "content": [{"type": "text", "text": capabilities_json().to_string()}],
+            "content": [{"type": "text", "text": capabilities_json(&state.config).to_string()}],
             "isError": false,
         })),
         "run_wasm" => {
             let request = mcp_run_wasm_request(&arguments)?;
-            tool_result(state.config.engine.execute(request))
+            let result = execute_sync(state, request)
+                .await
+                .map_err(api_error_to_rpc)?;
+            tool_result(result)
         }
         "run_python" => {
             let request = ExecuteRequest {
@@ -550,7 +835,10 @@ async fn mcp_tools_call(
                 policy: Policy::default(),
                 idempotency_key: None,
             };
-            tool_result(state.config.engine.execute(request))
+            let result = execute_sync(state, request)
+                .await
+                .map_err(api_error_to_rpc)?;
+            tool_result(result)
         }
         "run_javascript" => {
             let request = ExecuteRequest {
@@ -564,7 +852,10 @@ async fn mcp_tools_call(
                 policy: Policy::default(),
                 idempotency_key: None,
             };
-            tool_result(state.config.engine.execute(request))
+            let result = execute_sync(state, request)
+                .await
+                .map_err(api_error_to_rpc)?;
+            tool_result(result)
         }
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
@@ -611,21 +902,23 @@ fn mcp_run_wasm_request(arguments: &Value) -> Result<ExecuteRequest, (i64, Strin
     })
 }
 
-fn tool_result(result: Result<ExecutionResult, EngineError>) -> Result<Value, (i64, String)> {
-    match result {
-        Ok(result) => {
-            let text = serde_json::to_string(&result)
-                .map_err(|error| (-32000, format!("failed to encode result: {error}")))?;
-            Ok(json!({
-                "content": [{"type": "text", "text": text}],
-                "isError": false,
-            }))
-        }
-        Err(error) => Ok(json!({
-            "content": [{"type": "text", "text": error.error_body().message}],
-            "isError": true,
-        })),
-    }
+fn tool_result(result: ExecutionResult) -> Result<Value, (i64, String)> {
+    let text = serde_json::to_string(&result)
+        .map_err(|error| (-32000, format!("failed to encode result: {error}")))?;
+    Ok(json!({
+        "content": [{"type": "text", "text": text}],
+        "isError": false,
+    }))
+}
+
+fn api_error_to_rpc(error: ApiError) -> (i64, String) {
+    let code = match error.status {
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => -32602,
+        StatusCode::UNAUTHORIZED => -32001,
+        StatusCode::TOO_MANY_REQUESTS => -32004,
+        _ => -32000,
+    };
+    (code, format!("{}: {}", error.body.code, error.body.message))
 }
 
 fn json_response(status: StatusCode, body: Value) -> Response {
