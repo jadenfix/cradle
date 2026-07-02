@@ -1,0 +1,22 @@
+[package]
+name = "beater-connect"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Agent access layer: generate MCP, OpenAPI, A2A, crawl, and consent surfaces from one registry."
+repository = "https://github.com/jadenfix/beater-connect"
+
+[lib]
+name = "beater_connect"
+path = "src/lib.rs"
+
+[[bin]]
+name = "beater-connect"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
