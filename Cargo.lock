@@ -259,6 +259,7 @@ dependencies = [
  "beatbox-server",
  "clap",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

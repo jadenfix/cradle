@@ -56,8 +56,39 @@ async fn main() -> Result<()> {
     }
     let listener = tokio::net::TcpListener::bind(cli.addr).await?;
     println!("beatboxd listening on http://{}", cli.addr);
-    axum::serve(listener, router(config)).await?;
+    axum::serve(listener, router(config))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+/// Resolve on Ctrl-C or SIGTERM (the signal a deploy/orchestrator sends on
+/// restart) so axum stops accepting new connections and drains in-flight
+/// requests. Jobs still running in detached workers are reconciled to a
+/// terminal state by JobStore startup recovery on the next boot.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received; draining in-flight requests");
 }
 
 fn non_empty(value: String) -> Option<String> {

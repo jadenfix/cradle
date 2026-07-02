@@ -57,7 +57,41 @@ impl JobStore {
             CREATE UNIQUE INDEX IF NOT EXISTS jobs_idempotency_key_unique
                 ON jobs(idempotency_key)
                 WHERE idempotency_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS jobs_status_updated_at ON jobs(status, updated_at);
             "#,
+        )?;
+
+        // Recover jobs left non-terminal by a crash or restart. Workers are
+        // in-process tokio tasks, so anything still queued/running at startup has
+        // no worker and can never progress. Fail them (with a distinct code) so
+        // GET /v1/jobs/{id} and idempotent retries observe a terminal state
+        // instead of hanging forever on a wedged job.
+        let now = now();
+        let recovery_error = serde_json::to_string(&ErrorBody::new(
+            "daemon_restarted",
+            "daemon restarted before this job completed",
+        ))?;
+        conn.execute(
+            "UPDATE jobs SET status = ?1, error_json = ?2, updated_at = ?3 WHERE status IN (?4, ?5)",
+            params![
+                JobStatus::Failed.as_str(),
+                recovery_error,
+                now,
+                JobStatus::Queued.as_str(),
+                JobStatus::Running.as_str()
+            ],
+        )?;
+
+        // Bound table growth: an insert-only store grows without limit over a
+        // long-lived daemon. Evict terminal jobs older than the retention window.
+        conn.execute(
+            "DELETE FROM jobs WHERE status IN (?1, ?2, ?3) AND updated_at < ?4",
+            params![
+                JobStatus::Succeeded.as_str(),
+                JobStatus::Failed.as_str(),
+                JobStatus::Canceled.as_str(),
+                retention_cutoff()
+            ],
         )?;
         Ok(())
     }
@@ -216,6 +250,9 @@ impl JobStore {
     }
 }
 
+/// Terminal jobs older than this are pruned at startup to bound table growth.
+const TERMINAL_JOB_RETENTION_DAYS: i64 = 7;
+
 #[derive(Debug, Error)]
 pub enum JobStoreError {
     #[error(transparent)]
@@ -228,6 +265,8 @@ pub enum JobStoreError {
     InvalidStatus(String),
     #[error("idempotency key was already used for a different request")]
     IdempotencyConflict,
+    #[error("job store worker task failed: {0}")]
+    Worker(String),
 }
 
 fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobRecord> {
@@ -336,6 +375,10 @@ fn now() -> String {
     Utc::now().to_rfc3339()
 }
 
+fn retention_cutoff() -> String {
+    (Utc::now() - chrono::Duration::days(TERMINAL_JOB_RETENTION_DAYS)).to_rfc3339()
+}
+
 #[cfg(test)]
 mod tests {
     use beatbox_core::{Lane, Policy, Source};
@@ -370,6 +413,35 @@ mod tests {
             .get(&id)?
             .ok_or_else(|| std::io::Error::other("job exists"))?;
         assert_eq!(job.status, beatbox_core::JobStatus::Canceled);
+        Ok(())
+    }
+
+    #[test]
+    fn reopen_fails_jobs_left_non_terminal_by_restart()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let db_path =
+            std::env::temp_dir().join(format!("beatbox-recovery-{}.sqlite3", uuid::Uuid::new_v4()));
+        let request = request();
+
+        // Simulate a daemon that persisted a queued job then restarted before the
+        // worker finished (the job is never marked running/terminal).
+        let id = {
+            let store = JobStore::open(&db_path)?;
+            store.create(&request)?
+        };
+
+        // On reopen, startup recovery must move the wedged job to a terminal
+        // failed state with the daemon-restart code.
+        let reopened = JobStore::open(&db_path)?;
+        let job = reopened
+            .get(&id)?
+            .ok_or_else(|| std::io::Error::other("recovered job should still exist"))?;
+        assert_eq!(job.status, beatbox_core::JobStatus::Failed);
+        assert_eq!(
+            job.error.as_ref().map(|error| error.code.as_str()),
+            Some("daemon_restarted")
+        );
+        std::fs::remove_file(db_path).ok();
         Ok(())
     }
 

@@ -207,10 +207,12 @@ async fn create_job(
     state.authorize(&headers)?;
     let request = parse_json_body(&state, request).await?;
     admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
-    if let Some(job_id) = state
-        .config
-        .jobs
-        .find_idempotent(&request)
+    let request = Arc::new(request);
+
+    let store = state.config.jobs.clone();
+    let lookup = Arc::clone(&request);
+    if let Some(job_id) = blocking_store(move || store.find_idempotent(&lookup))
+        .await
         .map_err(ApiError::job_store)?
     {
         return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
@@ -224,13 +226,14 @@ async fn create_job(
             ),
         )
     })?;
-    let created = state
-        .config
-        .jobs
-        .create_or_get(&request)
+    let store = state.config.jobs.clone();
+    let create = Arc::clone(&request);
+    let created = blocking_store(move || store.create_or_get(&create))
+        .await
         .map_err(ApiError::job_store)?;
     let job_id = created.job_id;
     if created.inserted {
+        let request = Arc::try_unwrap(request).unwrap_or_else(|arc| (*arc).clone());
         spawn_job(state, job_id.clone(), request, permit);
     }
     Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })))
@@ -242,10 +245,10 @@ async fn get_job(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<JobRecord>, ApiError> {
     state.authorize(&headers)?;
-    state
-        .config
-        .jobs
-        .get(&id)
+    let store = state.config.jobs.clone();
+    let lookup_id = id.clone();
+    blocking_store(move || store.get(&lookup_id))
+        .await
         .map_err(ApiError::job_store)?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("unknown job: {id}")))
@@ -257,7 +260,11 @@ async fn cancel_job(
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, ApiError> {
     state.authorize(&headers)?;
-    let exists = state.config.jobs.cancel(&id).map_err(ApiError::job_store)?;
+    let store = state.config.jobs.clone();
+    let cancel_id = id.clone();
+    let exists = blocking_store(move || store.cancel(&cancel_id))
+        .await
+        .map_err(ApiError::job_store)?;
     if exists {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -273,14 +280,20 @@ fn spawn_job(
 ) {
     tokio::spawn(async move {
         let _permit = permit;
-        match state.config.jobs.mark_running(&job_id) {
+        let store = state.config.jobs.clone();
+        let mark_id = job_id.clone();
+        match blocking_store(move || store.mark_running(&mark_id)).await {
             Ok(true) => {}
             Ok(false) => {
                 tracing::info!(%job_id, "job was canceled before worker start");
                 return;
             }
             Err(error) => {
-                tracing::warn!(%job_id, %error, "failed to mark job running");
+                // Do not leave the job queued with no worker: fail it so callers
+                // (and idempotent retries) see a terminal state.
+                tracing::warn!(%job_id, %error, "failed to mark job running; failing job");
+                let body = ErrorBody::new("job_worker", format!("failed to start worker: {error}"));
+                fail_job(&state, &job_id, body).await;
                 return;
             }
         }
@@ -288,23 +301,30 @@ fn spawn_job(
         let result = tokio::task::spawn_blocking(move || engine.execute(request)).await;
         match result {
             Ok(Ok(result)) => {
-                if let Err(error) = state.config.jobs.complete(&job_id, &result) {
+                let store = state.config.jobs.clone();
+                let complete_id = job_id.clone();
+                if let Err(error) =
+                    blocking_store(move || store.complete(&complete_id, &result)).await
+                {
                     tracing::warn!(%job_id, %error, "failed to persist job result");
                 }
             }
             Ok(Err(error)) => {
-                if let Err(store_error) = state.config.jobs.fail(&job_id, &error.error_body()) {
-                    tracing::warn!(%job_id, %store_error, "failed to persist job failure");
-                }
+                fail_job(&state, &job_id, error.error_body()).await;
             }
             Err(error) => {
-                let body = ErrorBody::new("job_worker", error.to_string());
-                if let Err(store_error) = state.config.jobs.fail(&job_id, &body) {
-                    tracing::warn!(%job_id, %store_error, "failed to persist worker failure");
-                }
+                fail_job(&state, &job_id, ErrorBody::new("job_worker", error.to_string())).await;
             }
         }
     });
+}
+
+async fn fail_job(state: &AppState, job_id: &str, body: ErrorBody) {
+    let store = state.config.jobs.clone();
+    let fail_id = job_id.to_string();
+    if let Err(store_error) = blocking_store(move || store.fail(&fail_id, &body)).await {
+        tracing::warn!(%job_id, %store_error, "failed to persist job failure");
+    }
 }
 
 impl AppState {
@@ -451,6 +471,19 @@ async fn read_limited_body(state: &AppState, request: Request<Body>) -> Result<B
     to_bytes(request.into_body(), limit)
         .await
         .map_err(|error| ApiError::bad_request("body_limit", error.to_string()))
+}
+
+/// Run a synchronous job-store operation on a blocking thread so its
+/// `std::sync::Mutex` + SQLite I/O never stalls a tokio worker under contention.
+async fn blocking_store<T, F>(f: F) -> Result<T, JobStoreError>
+where
+    F: FnOnce() -> Result<T, JobStoreError> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(result) => result,
+        Err(join_error) => Err(JobStoreError::Worker(join_error.to_string())),
+    }
 }
 
 async fn execute_sync(
