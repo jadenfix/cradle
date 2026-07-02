@@ -19,6 +19,19 @@ Start the daemon:
 cargo run -p beatboxd -- --addr 127.0.0.1:7300
 ```
 
+Call the REST API with the example request body (computes `fib(10) = 55`):
+
+```sh
+curl -sS http://127.0.0.1:7300/v1/execute \
+  -H 'content-type: application/json' \
+  -d @examples/req-fib.json
+```
+
+Remote requests upload the module as inline WAT or base64 Wasm bytes;
+daemon-local `wasm_file` paths are rejected by design. Limits may be given
+partially (unspecified fields fall back to defaults), and unknown policy keys
+are rejected rather than silently ignored.
+
 Run tests:
 
 ```sh

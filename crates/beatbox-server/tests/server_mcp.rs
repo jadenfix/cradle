@@ -232,6 +232,35 @@ async fn auth_required_rejects_execute_before_json_parse() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
+async fn example_request_body_is_accepted_by_v1_execute()
+-> Result<(), Box<dyn std::error::Error>> {
+    // examples/req-fib.json is the repo's canonical HTTP request body; keep it a
+    // request the REST API actually accepts (regression for the old wasm_file
+    // example that /v1/execute rejected by design).
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/req-fib.json");
+    let body = std::fs::read(&path)?;
+    // It must be a valid ExecuteRequest under the strict (deny_unknown_fields) wire contract.
+    let _: ExecuteRequest = serde_json::from_slice(&body)?;
+
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(body))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let result: ExecutionResult = serde_json::from_slice(&body)?;
+    assert_eq!(result.status, ExecutionStatus::Ok);
+    assert_eq!(result.value, json!(55));
+    Ok(())
+}
+
+#[tokio::test]
 async fn v1_execute_rejects_unknown_policy_fields() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     // A typo'd policy key (`polcy`) while trying to tighten the sandbox must be a
