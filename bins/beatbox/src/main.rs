@@ -1,7 +1,9 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
+use base64::Engine as _;
 use beatbox_client::Client;
 use beatbox_core::{Determinism, ExecuteRequest, Lane, Policy, Source};
 use beatbox_engine::BeatboxEngine;
@@ -79,9 +81,14 @@ async fn run(
         Some(input) => serde_json::from_str(&input).context("--input must be valid JSON")?,
         None => serde_json::Value::Null,
     };
+    let source = if remote.is_some() {
+        source_for_remote(&path)?
+    } else {
+        Source::WasmFile { path }
+    };
     let request = ExecuteRequest {
         lane: Lane::Wasm,
-        source: Source::WasmFile { path },
+        source,
         entrypoint,
         input,
         stdin: String::new(),
@@ -101,6 +108,24 @@ async fn run(
 
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
+}
+
+fn source_for_remote(path: &Path) -> Result<Source> {
+    let bytes = wasm_bytes_from_path(path)?;
+    Ok(Source::WasmBytesBase64 {
+        bytes: base64::engine::general_purpose::STANDARD.encode(bytes),
+    })
+}
+
+fn wasm_bytes_from_path(path: &Path) -> Result<Vec<u8>> {
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if path.extension().and_then(|ext| ext.to_str()) == Some("wat") {
+        wat::parse_bytes(&bytes)
+            .map(|cow| cow.into_owned())
+            .with_context(|| format!("failed to parse WAT from {}", path.display()))
+    } else {
+        Ok(bytes)
+    }
 }
 
 fn apply_policy_items(policy: &mut Policy, items: &[String]) -> Result<()> {

@@ -9,6 +9,7 @@ description = "CLI for the beatbox sandbox."
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 beatbox-client.workspace = true
 beatbox-core.workspace = true
 beatbox-engine.workspace = true

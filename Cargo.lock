@@ -183,6 +183,7 @@ name = "beatbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "beatbox-client",
  "beatbox-core",
  "beatbox-engine",
@@ -242,6 +243,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
+ "url",
  "utoipa",
  "uuid",
 ]
