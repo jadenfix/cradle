@@ -234,6 +234,60 @@ async fn auth_required_rejects_execute_before_json_parse() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
+async fn v1_execute_rejects_unknown_policy_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    // A typo'd policy key (`polcy`) while trying to tighten the sandbox must be a
+    // hard error, not a silently-dropped field that runs under default policy.
+    let body = json!({
+        "lane": "wasm",
+        "source": {"kind": "wasm_wat", "text": add_one_wat()},
+        "input": {"n": 41},
+        "polcy": {"limits": {"wall_ms": 1}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_json");
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_execute_accepts_partial_limits() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    // A caller who wants to change one limit should not have to spell out all seven.
+    let body = json!({
+        "lane": "wasm",
+        "source": {"kind": "wasm_wat", "text": add_one_wat()},
+        "input": {"n": 41},
+        "policy": {"limits": {"wall_ms": 1000}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let result: ExecutionResult = serde_json::from_slice(&body)?;
+    assert_eq!(result.status, ExecutionStatus::Ok);
+    assert_eq!(result.value, json!(42));
+    Ok(())
+}
+
+#[tokio::test]
 async fn jobs_complete_and_persist_to_sqlite() -> Result<(), Box<dyn std::error::Error>> {
     let db_path =
         std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
