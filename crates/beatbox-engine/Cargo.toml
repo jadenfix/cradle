@@ -1,0 +1,29 @@
+[package]
+name = "beatbox-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Execution lanes and isolation internals for beatbox."
+
+[features]
+default = ["lane-wasi"]
+lane-wasi = ["dep:base64", "dep:hex", "dep:sha2", "dep:wasmtime", "dep:wat"]
+lane-python = []
+lane-js = []
+lane-exec = []
+
+[dependencies]
+base64 = { workspace = true, optional = true }
+beatbox-core.workspace = true
+hex = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
+thiserror.workspace = true
+wasmtime = { workspace = true, optional = true }
+wat = { workspace = true, optional = true }
+
+[lints]
+workspace = true

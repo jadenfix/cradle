@@ -1,0 +1,20 @@
+[package]
+name = "beatboxd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Daemon for the beatbox sandbox."
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+beatbox-engine.workspace = true
+beatbox-server.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

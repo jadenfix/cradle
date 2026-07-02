@@ -1,78 +1,72 @@
-# Beater Connect Architecture
+# beatbox architecture
 
-Beater Connect is the bridge between ordinary websites and agent-native
-interaction.
+`beatbox` is a secure agent sandbox. Its purpose is to run untrusted,
+agent-generated code without giving that code ambient filesystem, network,
+process, or environment access.
 
-## Product Role
+## role in the Beater ecosystem
 
-Beater has two existing anchors:
+The repository is standalone first. It exposes a CLI, `beatboxd` daemon, REST
+API, and MCP endpoint that can be used without `beater.js` or `beater-agents`
+present. Integrations with those siblings are protocol integrations, not source
+coupling.
 
-- `beater.js`: build and serve agent-ready apps.
-- `beater-agents`: observe, replay, evaluate, and improve agent behavior.
+The one planned source-level exception is `beatbox-client`, a tiny typed client
+over the HTTP API that re-exports `beatbox-core` wire types. It is intended to
+be published as a normal crate when the API stabilizes.
 
-Beater Connect sits between them. It describes what agents can read, search, and
-safely do inside an app, then generates the public and authenticated surfaces
-needed for interoperability.
+## workspace
 
-## Surfaces
-
-One registry emits:
-
-| Surface | Purpose |
+| path | responsibility |
 | --- | --- |
-| `/.well-known/beater.json` | Beater manifest and endpoint discovery. |
-| `/.well-known/agent-card.json` | A2A-style discovery for agent clients. |
-| `/openapi.json` | Standard HTTP API contract. |
-| `/mcp` | Tool/resource/prompt metadata for MCP transport integration. |
-| `/llms.txt` | Curated LLM navigation file. |
-| `/robots.txt` | Crawler policy and sitemap pointer. |
-| `/sitemap.xml` | Crawlable URL inventory. |
+| `crates/beatbox-core` | serde wire contract: `Policy`, `ExecuteRequest`, `ExecutionResult`, `Lane`, and shared error bodies. |
+| `crates/beatbox-engine` | isolation lanes and policy admission checks. The initial lane is Wasmtime with an empty linker, fuel, epoch interruption, and store limits. |
+| `crates/beatbox-server` | `axum` router for `/v1`, `/openapi.json`, and `/mcp`, plus auth and a rusqlite-backed job store. |
+| `crates/beatbox-client` | near-zero-abstraction `reqwest` client for `/v1`. |
+| `bins/beatbox` | local CLI. It can execute directly in-process or call a remote `beatboxd`. |
+| `bins/beatboxd` | daemon wrapper around `beatbox-server`. |
 
-## Registry Types
+## isolation model
 
-`Resource` describes agent-readable data: docs, products, support articles,
-orders, tickets, or any other object with stable URLs.
+Two substrates are planned:
 
-`Action` describes agent-callable operations: search, draft, add to cart, book a
-demo, create a ticket, send a message, purchase, delete, or publish.
+1. In-process Wasmtime for `wasm`, `python-wasi`, and `js-wasm`.
+2. OS jails for native Python, native JS, and generic exec.
 
-`Policy` is carried directly on actions through:
+The initial implementation covers the `wasm` lane for core Wasm modules. It
+rejects imports through an empty linker, consumes fuel, interrupts long
+wall-clock runs with Wasmtime epoch deadlines, caps linear-memory growth with
+`StoreLimits`, and records the actual mechanisms in every `ExecutionResult`.
+WASI command/component stdin/stdout support is the next expansion of this lane.
 
-- `Auth`
-- scopes
-- side-effect level
-- confirmation requirement
-- dry-run support
-- idempotency requirement
+## policy contract
 
-`Receipt` is not implemented yet, but the registry is designed so every action
-call can be traced and signed later with input/output hashes, approval state,
-actor identity, and Beater Agents trace IDs.
+Every execution receives one `Policy`. Lanes must reject policies they cannot
+enforce when the unsupported field would widen exposure. Safer-by-absence
+behavior, such as no process spawning in an in-process Wasmtime lane, is
+reported as enforced by construction.
 
-## Side-Effect Model
+No lane should inherit host environment variables or raw network access. Future
+egress will be routed through a logging localhost proxy with domain and port
+allowlists.
 
-The side-effect ladder is intentionally blunt:
+## milestones
 
-```text
-read -> draft -> write -> send -> purchase -> delete
-```
+M0: workspace scaffold, toolchain pin, core serde types, tests, and CI.
 
-Default policy:
+M1: WASI/Wasmtime lane through the CLI with fuel, wall-clock, memory, and output
+limits plus escape regression tests.
 
-- `read`: allowed when auth passes.
-- `draft`: safe to preview.
-- `write`: confirmation recommended.
-- `send`: confirmation required.
-- `purchase`: confirmation and spending limits required.
-- `delete`: confirmation and elevated scope required.
+M2: `beatboxd` REST/MCP API, auth, OpenAPI, and job persistence.
 
-The generator exposes this metadata to every surface so hosts can present clear
-approval UI.
+Current job cancellation is best-effort: `DELETE /v1/jobs/{id}` marks a queued
+or running record as canceled, and a running worker's later result is ignored.
+The underlying compute is still bounded by the execution policy until per-job
+engine interruption handles are added.
 
-## Next Milestones
+M3: `beater.js` Tier-4 integration through `beatbox-client`.
 
-1. Add a live MCP JSON-RPC adapter backed by this registry.
-2. Add OAuth/consent screens and action approval tokens.
-3. Add receipt storage and Beater Agents trace export.
-4. Add adapters for `beater.js`, Next.js, Express, Remix, and plain Rust Axum.
-5. Add structured search resources and markdown extraction for crawl views.
+M4: Python and JavaScript lanes, native OS jails, and honest per-OS capability
+grades.
+
+M5: stateful sessions over REST and MCP.

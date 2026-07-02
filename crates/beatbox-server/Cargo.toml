@@ -1,0 +1,29 @@
+[package]
+name = "beatbox-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP and MCP server surfaces for beatbox."
+
+[dependencies]
+axum.workspace = true
+beatbox-core.workspace = true
+beatbox-engine.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

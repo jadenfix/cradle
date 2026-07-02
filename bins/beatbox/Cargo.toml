@@ -1,0 +1,21 @@
+[package]
+name = "beatbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for the beatbox sandbox."
+
+[dependencies]
+anyhow.workspace = true
+beatbox-client.workspace = true
+beatbox-core.workspace = true
+beatbox-engine.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+wat.workspace = true
+
+[lints]
+workspace = true

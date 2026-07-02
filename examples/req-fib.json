@@ -1,0 +1,25 @@
+{
+  "lane": "wasm",
+  "source": {
+    "kind": "wasm_file",
+    "path": "examples/fib.wasm"
+  },
+  "input": {"n": 10},
+  "policy": {
+    "fs": {"workspace": null, "mounts": []},
+    "net": {"kind": "deny"},
+    "env": {},
+    "secrets": [],
+    "limits": {
+      "wall_ms": 5000,
+      "cpu_ms": 5000,
+      "memory_bytes": 67108864,
+      "output_bytes": 1048576,
+      "pids": 1,
+      "disk_bytes": 67108864,
+      "fuel": 10000000
+    },
+    "determinism": {"kind": "off"},
+    "double_jail": false
+  }
+}

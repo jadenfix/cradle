@@ -1,22 +1,51 @@
-[package]
-name = "beater-connect"
+[workspace]
+members = [
+    "crates/beatbox-core",
+    "crates/beatbox-engine",
+    "crates/beatbox-server",
+    "crates/beatbox-client",
+    "bins/beatbox",
+    "bins/beatboxd",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.94"
 license = "Apache-2.0"
-description = "Agent access layer: generate MCP, OpenAPI, A2A, crawl, and consent surfaces from one registry."
-repository = "https://github.com/jadenfix/beater-connect"
+repository = "https://github.com/jadenfix/beatbox"
 
-[lib]
-name = "beater_connect"
-path = "src/lib.rs"
+[workspace.dependencies]
+anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+beatbox-client = { path = "crates/beatbox-client" }
+beatbox-core = { path = "crates/beatbox-core" }
+beatbox-engine = { path = "crates/beatbox-engine" }
+beatbox-server = { path = "crates/beatbox-server" }
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+utoipa = "5"
+uuid = { version = "1", features = ["serde", "v4"] }
+wasmtime = { version = "45", default-features = false, features = ["runtime", "cranelift", "std", "component-model"] }
+wat = "1"
 
-[[bin]]
-name = "beater-connect"
-path = "src/main.rs"
-
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "forbid"
 
-[lints.clippy]
+[workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
