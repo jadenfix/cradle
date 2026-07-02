@@ -496,13 +496,55 @@ fn limit_exceeded(field: &'static str, actual: u64, max: u64) -> ApiError {
 }
 
 fn admit_remote_source(request: &ExecuteRequest) -> Result<(), ApiError> {
-    if matches!(&request.source, Source::WasmFile { .. }) {
-        return Err(ApiError::unprocessable_body(ErrorBody::new(
+    match (&request.lane, &request.source) {
+        (_, Source::WasmFile { .. }) => Err(ApiError::unprocessable_body(ErrorBody::new(
             "host_file_source_denied",
             "remote API requests cannot reference daemon-local source paths; upload WAT or base64 Wasm bytes",
-        )));
+        ))),
+        (_, Source::ModuleRef { .. }) => Err(ApiError::unprocessable_body(ErrorBody::new(
+            "module_ref_unavailable",
+            "module_ref storage is planned for M2.5 and is not implemented yet",
+        ))),
+        (Lane::Wasm, Source::WasmWat { .. } | Source::WasmBytesBase64 { .. }) => Ok(()),
+        (Lane::Wasm, Source::Inline { .. }) => Err(source_lane_mismatch(
+            &request.lane,
+            &request.source,
+            "wasm_wat or wasm_bytes_base64",
+        )),
+        (
+            Lane::PythonWasi | Lane::PythonNative | Lane::JsWasm | Lane::JsNative,
+            Source::Inline { .. },
+        ) => Ok(()),
+        (Lane::PythonWasi | Lane::PythonNative | Lane::JsWasm | Lane::JsNative, _) => Err(
+            source_lane_mismatch(&request.lane, &request.source, "inline source code"),
+        ),
+        (Lane::Exec, Source::Inline { .. }) => Ok(()),
+        (Lane::Exec, _) => Err(source_lane_mismatch(
+            &request.lane,
+            &request.source,
+            "inline exec source",
+        )),
     }
-    Ok(())
+}
+
+fn source_lane_mismatch(lane: &Lane, source: &Source, expected: &'static str) -> ApiError {
+    ApiError::unprocessable_body(ErrorBody::new(
+        "source_lane_mismatch",
+        format!(
+            "lane {lane:?} does not accept {} source; expected {expected}",
+            source_kind(source)
+        ),
+    ))
+}
+
+fn source_kind(source: &Source) -> &'static str {
+    match source {
+        Source::Inline { .. } => "inline",
+        Source::WasmFile { .. } => "wasm_file",
+        Source::WasmWat { .. } => "wasm_wat",
+        Source::WasmBytesBase64 { .. } => "wasm_bytes_base64",
+        Source::ModuleRef { .. } => "module_ref",
+    }
 }
 
 fn capabilities_json(config: &ServerConfig) -> Value {
@@ -782,19 +824,53 @@ fn mcp_tools() -> Value {
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
+                "oneOf": [{"required": ["wat"]}, {"required": ["wasm_base64"]}],
                 "properties": {
                     "wat": {"type": "string"},
                     "wasm_base64": {"type": "string"},
                     "input": {},
+                    "entrypoint": {"type": "string"},
                     "timeout_ms": {"type": "integer"},
                     "memory_bytes": {"type": "integer"},
                     "fuel": {"type": "integer"}
                 }
             }
         },
-        {"name": "run_python", "description": "Planned Python sandbox lane.", "inputSchema": {"type": "object"}},
-        {"name": "run_javascript", "description": "Planned JavaScript sandbox lane.", "inputSchema": {"type": "object"}},
-        {"name": "get_capabilities", "description": "Return beatbox lane availability.", "inputSchema": {"type": "object"}}
+        {
+            "name": "run_python",
+            "description": "Run Python source in the planned python-wasi lane.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code"],
+                "properties": {
+                    "code": {"type": "string"},
+                    "input": {},
+                    "timeout_ms": {"type": "integer"},
+                    "memory_bytes": {"type": "integer"}
+                }
+            }
+        },
+        {
+            "name": "run_javascript",
+            "description": "Run JavaScript source in the planned js-wasm lane.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code"],
+                "properties": {
+                    "code": {"type": "string"},
+                    "input": {},
+                    "timeout_ms": {"type": "integer"},
+                    "memory_bytes": {"type": "integer"}
+                }
+            }
+        },
+        {
+            "name": "get_capabilities",
+            "description": "Return beatbox lane availability.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        }
     ])
 }
 
@@ -812,10 +888,13 @@ async fn mcp_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     match name {
-        "get_capabilities" => Ok(json!({
-            "content": [{"type": "text", "text": capabilities_json(&state.config).to_string()}],
-            "isError": false,
-        })),
+        "get_capabilities" => {
+            mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
+            Ok(json!({
+                "content": [{"type": "text", "text": capabilities_json(&state.config).to_string()}],
+                "isError": false,
+            }))
+        }
         "run_wasm" => {
             let request = mcp_run_wasm_request(&arguments)?;
             let result = execute_sync(state, request)
@@ -824,34 +903,14 @@ async fn mcp_tools_call(
             tool_result(result)
         }
         "run_python" => {
-            let request = ExecuteRequest {
-                lane: Lane::PythonWasi,
-                source: Source::Inline {
-                    code: arguments["code"].as_str().unwrap_or_default().to_string(),
-                },
-                entrypoint: None,
-                input: arguments.get("input").cloned().unwrap_or(Value::Null),
-                stdin: String::new(),
-                policy: Policy::default(),
-                idempotency_key: None,
-            };
+            let request = mcp_run_code_request(&arguments, Lane::PythonWasi, "run_python")?;
             let result = execute_sync(state, request)
                 .await
                 .map_err(api_error_to_rpc)?;
             tool_result(result)
         }
         "run_javascript" => {
-            let request = ExecuteRequest {
-                lane: Lane::JsWasm,
-                source: Source::Inline {
-                    code: arguments["code"].as_str().unwrap_or_default().to_string(),
-                },
-                entrypoint: None,
-                input: arguments.get("input").cloned().unwrap_or(Value::Null),
-                stdin: String::new(),
-                policy: Policy::default(),
-                idempotency_key: None,
-            };
+            let request = mcp_run_code_request(&arguments, Lane::JsWasm, "run_javascript")?;
             let result = execute_sync(state, request)
                 .await
                 .map_err(api_error_to_rpc)?;
@@ -862,44 +921,144 @@ async fn mcp_tools_call(
 }
 
 fn mcp_run_wasm_request(arguments: &Value) -> Result<ExecuteRequest, (i64, String)> {
-    let source = if let Some(wat) = arguments.get("wat").and_then(Value::as_str) {
-        Source::WasmWat {
-            text: wat.to_string(),
-        }
-    } else if let Some(bytes) = arguments.get("wasm_base64").and_then(Value::as_str) {
-        Source::WasmBytesBase64 {
-            bytes: bytes.to_string(),
-        }
-    } else {
+    let arguments = mcp_tool_arguments(
+        arguments,
+        "run_wasm",
+        &[
+            "wat",
+            "wasm_base64",
+            "input",
+            "entrypoint",
+            "timeout_ms",
+            "memory_bytes",
+            "fuel",
+        ],
+    )?;
+    let has_wat = arguments.contains_key("wat");
+    let has_wasm_base64 = arguments.contains_key("wasm_base64");
+    if has_wat == has_wasm_base64 {
         return Err((
             -32602,
-            "run_wasm requires arguments.wat or arguments.wasm_base64".to_string(),
+            "run_wasm requires exactly one of arguments.wat or arguments.wasm_base64".to_string(),
         ));
+    }
+
+    let source = if has_wat {
+        Source::WasmWat {
+            text: mcp_string_arg(arguments, "wat", "run_wasm")?,
+        }
+    } else {
+        Source::WasmBytesBase64 {
+            bytes: mcp_string_arg(arguments, "wasm_base64", "run_wasm")?,
+        }
     };
 
     let mut policy = Policy::default();
-    if let Some(timeout_ms) = arguments.get("timeout_ms").and_then(Value::as_u64) {
+    if let Some(timeout_ms) = mcp_u64_arg(arguments, "timeout_ms", "run_wasm")? {
         policy.limits.wall_ms = timeout_ms;
     }
-    if let Some(memory_bytes) = arguments.get("memory_bytes").and_then(Value::as_u64) {
+    if let Some(memory_bytes) = mcp_u64_arg(arguments, "memory_bytes", "run_wasm")? {
         policy.limits.memory_bytes = memory_bytes;
     }
-    if let Some(fuel) = arguments.get("fuel").and_then(Value::as_u64) {
+    if let Some(fuel) = mcp_u64_arg(arguments, "fuel", "run_wasm")? {
         policy.limits.fuel = Some(fuel);
     }
 
     Ok(ExecuteRequest {
         lane: Lane::Wasm,
         source,
-        entrypoint: arguments
-            .get("entrypoint")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
+        entrypoint: mcp_optional_string_arg(arguments, "entrypoint", "run_wasm")?,
         input: arguments.get("input").cloned().unwrap_or(Value::Null),
         stdin: String::new(),
         policy,
         idempotency_key: None,
     })
+}
+
+fn mcp_run_code_request(
+    arguments: &Value,
+    lane: Lane,
+    tool: &'static str,
+) -> Result<ExecuteRequest, (i64, String)> {
+    let arguments = mcp_tool_arguments(
+        arguments,
+        tool,
+        &["code", "input", "timeout_ms", "memory_bytes"],
+    )?;
+    let mut policy = Policy::default();
+    if let Some(timeout_ms) = mcp_u64_arg(arguments, "timeout_ms", tool)? {
+        policy.limits.wall_ms = timeout_ms;
+    }
+    if let Some(memory_bytes) = mcp_u64_arg(arguments, "memory_bytes", tool)? {
+        policy.limits.memory_bytes = memory_bytes;
+    }
+
+    Ok(ExecuteRequest {
+        lane,
+        source: Source::Inline {
+            code: mcp_string_arg(arguments, "code", tool)?,
+        },
+        entrypoint: None,
+        input: arguments.get("input").cloned().unwrap_or(Value::Null),
+        stdin: String::new(),
+        policy,
+        idempotency_key: None,
+    })
+}
+
+fn mcp_tool_arguments<'a>(
+    arguments: &'a Value,
+    tool: &'static str,
+    allowed: &[&'static str],
+) -> Result<&'a serde_json::Map<String, Value>, (i64, String)> {
+    let object = arguments
+        .as_object()
+        .ok_or((-32602, format!("{tool} arguments must be an object")))?;
+    for key in object.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err((-32602, format!("{tool} does not accept argument `{key}`")));
+        }
+    }
+    Ok(object)
+}
+
+fn mcp_string_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<String, (i64, String)> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or((-32602, format!("{tool} argument `{key}` must be a string")))
+}
+
+fn mcp_optional_string_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<String>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|_| mcp_string_arg(arguments, key, tool))
+        .transpose()
+}
+
+fn mcp_u64_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<u64>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|value| {
+            value.as_u64().ok_or((
+                -32602,
+                format!("{tool} argument `{key}` must be an unsigned integer"),
+            ))
+        })
+        .transpose()
 }
 
 fn tool_result(result: ExecutionResult) -> Result<Value, (i64, String)> {

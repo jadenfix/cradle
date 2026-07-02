@@ -234,7 +234,7 @@ mod wasm {
 
     use base64::Engine as _;
     use beatbox_core::{MountMode, Policy};
-    use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+    use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store};
 
     use super::*;
 
@@ -244,7 +244,53 @@ mod wasm {
     }
 
     struct WasmState {
-        limits: StoreLimits,
+        limits: WasmStoreLimits,
+    }
+
+    struct WasmStoreLimits {
+        memory_size: usize,
+        instances: usize,
+        memories: usize,
+        tables: usize,
+    }
+
+    impl ResourceLimiter for WasmStoreLimits {
+        fn memory_growing(
+            &mut self,
+            _current: usize,
+            desired: usize,
+            _maximum: Option<usize>,
+        ) -> wasmtime::Result<bool> {
+            if desired > self.memory_size {
+                Err(wasmtime::format_err!(
+                    "beatbox memory limit exceeded: desired {desired} bytes exceeds policy limit {} bytes",
+                    self.memory_size
+                ))
+            } else {
+                Ok(true)
+            }
+        }
+
+        fn table_growing(
+            &mut self,
+            _current: usize,
+            _desired: usize,
+            _maximum: Option<usize>,
+        ) -> wasmtime::Result<bool> {
+            Ok(true)
+        }
+
+        fn instances(&self) -> usize {
+            self.instances
+        }
+
+        fn memories(&self) -> usize {
+            self.memories
+        }
+
+        fn tables(&self) -> usize {
+            self.tables
+        }
     }
 
     impl WasmLane {
@@ -306,16 +352,15 @@ mod wasm {
 
             let memory_limit =
                 usize::try_from(request.policy.limits.memory_bytes).unwrap_or(usize::MAX);
-            let store_limits = StoreLimitsBuilder::new()
-                .memory_size(memory_limit)
-                .instances(1)
-                .memories(1)
-                .tables(4)
-                .build();
             let mut store = Store::new(
                 &self.engine,
                 WasmState {
-                    limits: store_limits,
+                    limits: WasmStoreLimits {
+                        memory_size: memory_limit,
+                        instances: 1,
+                        memories: 1,
+                        tables: 4,
+                    },
                 },
             );
             store.limiter(|state| &mut state.limits);
@@ -372,7 +417,7 @@ mod wasm {
                         &request,
                         status,
                         serde_json::Value::Null,
-                        Some(ErrorBody::new(code, error)),
+                        Some(ErrorBody::new(code, error.message)),
                         metrics,
                         isolation,
                         inputs_digest,
@@ -512,36 +557,33 @@ mod wasm {
         linker: &Linker<WasmState>,
         module: &Module,
         request: &ExecuteRequest,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<serde_json::Value, WasmFailure> {
         let instance = linker
             .instantiate(&mut *store, module)
-            .map_err(|error| error.to_string())?;
+            .map_err(WasmFailure::runtime)?;
         let entrypoint = request.entrypoint.as_deref().unwrap_or("run");
 
         if let Ok(func) = instance.get_typed_func::<i64, i64>(&mut *store, entrypoint) {
-            let input = input_i64(&request.input)?;
+            let input = input_i64(&request.input).map_err(WasmFailure::guest)?;
             let value = func
                 .call(&mut *store, input)
-                .map_err(|error| error.to_string())?;
+                .map_err(WasmFailure::runtime)?;
             return Ok(serde_json::json!(value));
         }
 
         if let Ok(func) = instance.get_typed_func::<(), i64>(&mut *store, entrypoint) {
-            let value = func
-                .call(&mut *store, ())
-                .map_err(|error| error.to_string())?;
+            let value = func.call(&mut *store, ()).map_err(WasmFailure::runtime)?;
             return Ok(serde_json::json!(value));
         }
 
         if let Ok(func) = instance.get_typed_func::<(), ()>(&mut *store, entrypoint) {
-            func.call(&mut *store, ())
-                .map_err(|error| error.to_string())?;
+            func.call(&mut *store, ()).map_err(WasmFailure::runtime)?;
             return Ok(serde_json::Value::Null);
         }
 
-        Err(format!(
+        Err(WasmFailure::guest(format!(
             "missing supported entrypoint `{entrypoint}`; expected ()->(), ()->i64, or i64->i64"
-        ))
+        )))
     }
 
     fn input_i64(input: &serde_json::Value) -> Result<i64, String> {
@@ -557,20 +599,65 @@ mod wasm {
         Err("wasm i64 entrypoints require input as an integer or {\"n\": integer}".to_string())
     }
 
-    fn classify_wasm_error(message: &str) -> (ExecutionStatus, &'static str) {
-        let lower = message.to_ascii_lowercase();
+    enum WasmFailureSource {
+        Guest,
+        Runtime,
+    }
+
+    struct WasmFailure {
+        message: String,
+        source: WasmFailureSource,
+    }
+
+    impl WasmFailure {
+        fn guest(message: impl Into<String>) -> Self {
+            Self {
+                message: message.into(),
+                source: WasmFailureSource::Guest,
+            }
+        }
+
+        fn runtime(error: wasmtime::Error) -> Self {
+            Self {
+                message: error_chain_message(error),
+                source: WasmFailureSource::Runtime,
+            }
+        }
+    }
+
+    fn error_chain_message(error: wasmtime::Error) -> String {
+        let mut message = error.to_string();
+        for cause in error.chain().skip(1) {
+            message.push_str("\ncaused by: ");
+            message.push_str(&cause.to_string());
+        }
+        message
+    }
+
+    fn classify_wasm_error(error: &WasmFailure) -> (ExecutionStatus, &'static str) {
+        let lower = error.message.to_ascii_lowercase();
         if lower.contains("fuel") {
             (ExecutionStatus::Timeout, "fuel_exhausted")
         } else if lower.contains("epoch") || lower.contains("interrupt") {
             (ExecutionStatus::Timeout, "wall_timeout")
-        } else if lower.contains("memory")
-            || lower.contains("allocation")
-            || lower.contains("failed to grow")
+        } else if matches!(error.source, WasmFailureSource::Runtime)
+            && is_memory_limit_error(&lower)
         {
             (ExecutionStatus::Oom, "memory_limit")
         } else {
             (ExecutionStatus::Error, "wasm_trap")
         }
+    }
+
+    fn is_memory_limit_error(lower: &str) -> bool {
+        lower.contains("forcing trap when growing memory")
+            || lower.contains("forcing a memory growth failure to be a trap")
+            || lower.contains("failed to grow memory")
+            || lower.contains("memory limit exceeded")
+            || lower.contains("exceeds memory limits")
+            || lower.contains("exceeds memory limit")
+            || lower.contains("out of memory")
+            || lower.contains("memory allocation")
     }
 
     struct EpochTicker {
@@ -622,7 +709,7 @@ mod wasm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beatbox_core::Policy;
+    use beatbox_core::{Determinism, FsPolicy, Mount, MountMode, Policy, Secret, SecretExpose};
 
     fn request_for(wat: &str, input: serde_json::Value) -> ExecuteRequest {
         ExecuteRequest {
@@ -703,6 +790,117 @@ mod tests {
     }
 
     #[test]
+    fn wasi_capability_imports_are_denied_under_seeded_policy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let mut request = request_for(
+            r#"
+            (module
+              (import "wasi:clocks/wall-clock" "now" (func))
+              (import "wasi:random/random" "get-random-bytes" (func))
+              (import "wasi:sockets/tcp" "start-connect" (func))
+              (func (export "run")))
+            "#,
+            serde_json::Value::Null,
+        );
+        request.policy.determinism = Determinism::Seeded {
+            seed: 7,
+            epoch_ms: 0,
+        };
+
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Denied);
+        assert!(result.deterministic);
+        let error = result
+            .error
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("denied imports should include an error"))?;
+        assert_eq!(error.code, "host_import_denied");
+        assert!(result.stderr.contains("wasi:clocks/wall-clock::now"));
+        assert!(
+            result
+                .stderr
+                .contains("wasi:random/random::get-random-bytes")
+        );
+        assert!(result.stderr.contains("wasi:sockets/tcp::start-connect"));
+        Ok(())
+    }
+
+    #[test]
+    fn wasm_policy_expansion_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = Policy {
+            fs: FsPolicy {
+                workspace: Some(std::path::PathBuf::from("/tmp/beatbox-workspace")),
+                mounts: Vec::new(),
+            },
+            ..Policy::default()
+        };
+
+        let mounts = Policy {
+            fs: FsPolicy {
+                workspace: None,
+                mounts: vec![Mount {
+                    host: std::path::PathBuf::from("/tmp/host"),
+                    guest: std::path::PathBuf::from("/workspace"),
+                    mode: MountMode::Ro,
+                }],
+            },
+            ..Policy::default()
+        };
+
+        let net = Policy {
+            net: NetPolicy::Proxy {
+                allow_domains: vec!["example.com".to_string()],
+                allow_ports: vec![443],
+            },
+            ..Policy::default()
+        };
+
+        let env = Policy {
+            env: std::collections::BTreeMap::from([(
+                "AWS_ACCESS_KEY_ID".to_string(),
+                "must-not-leak".to_string(),
+            )]),
+            ..Policy::default()
+        };
+
+        let secrets = Policy {
+            secrets: vec![Secret {
+                name: "TOKEN".to_string(),
+                value_ref: "host-token".to_string(),
+                expose: SecretExpose::Env,
+            }],
+            ..Policy::default()
+        };
+
+        for (expected_field, policy) in [
+            ("fs.workspace", workspace),
+            ("fs.mounts", mounts),
+            ("net", net),
+            ("env", env),
+            ("secrets", secrets),
+        ] {
+            let mut request = request_for(
+                r#"
+                (module
+                  (func (export "run")))
+                "#,
+                serde_json::Value::Null,
+            );
+            request.policy = policy;
+            match BeatboxEngine::new()?.execute(request) {
+                Err(EngineError::PolicyUnenforceable { field, lane, .. }) => {
+                    assert_eq!(field, expected_field);
+                    assert_eq!(lane, Lane::Wasm);
+                }
+                other => panic!("expected {expected_field} policy rejection, got {other:?}"),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn error_body_respects_output_byte_limit() -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         let mut request = request_for(
@@ -746,6 +944,147 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Timeout);
         let code = result.error.map(|error| error.code);
         assert_eq!(code.as_deref(), Some("fuel_exhausted"));
+        Ok(())
+    }
+
+    #[test]
+    fn wasm_memory_minimum_hits_store_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let mut request = request_for(
+            r#"
+            (module
+              (memory 2)
+              (func (export "run") (result i64)
+                i64.const 1))
+            "#,
+            serde_json::Value::Null,
+        );
+        request.policy.limits.memory_bytes = 65_536;
+
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Oom, "{}", result.stderr);
+        let error = result
+            .error
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("oom should include an error"))?;
+        assert_eq!(error.code, "memory_limit");
+        Ok(())
+    }
+
+    #[test]
+    fn wasm_memory_grow_traps_at_store_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let mut request = request_for(
+            r#"
+            (module
+              (memory 1)
+              (func (export "run") (result i64)
+                i32.const 1
+                memory.grow
+                drop
+                i64.const 1))
+            "#,
+            serde_json::Value::Null,
+        );
+        request.policy.limits.memory_bytes = 65_536;
+
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Oom, "{}", result.stderr);
+        let error = result
+            .error
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("oom should include an error"))?;
+        assert_eq!(error.code, "memory_limit");
+        assert!(result.stderr.contains("beatbox memory limit exceeded"));
+        Ok(())
+    }
+
+    #[test]
+    fn wasm_memory_grow_preserves_module_max_failure_semantics()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let request = request_for(
+            r#"
+            (module
+              (memory 1 1)
+              (func (export "run") (result i64)
+                i32.const 1
+                memory.grow
+                i64.extend_i32_s))
+            "#,
+            serde_json::Value::Null,
+        );
+
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Ok);
+        assert_eq!(result.value, serde_json::json!(-1));
+        Ok(())
+    }
+
+    #[test]
+    fn guest_entrypoint_names_do_not_drive_memory_classification()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let mut request = request_for(
+            r#"
+            (module
+              (func (export "run") (result i64)
+                i64.const 1))
+            "#,
+            serde_json::Value::Null,
+        );
+        request.entrypoint = Some("grow".to_string());
+
+        let result = engine.execute(request)?;
+
+        assert_eq!(result.status, ExecutionStatus::Error);
+        assert_eq!(
+            result.error.as_ref().map(|error| error.code.as_str()),
+            Some("wasm_trap")
+        );
+        assert!(
+            result
+                .stderr
+                .contains("missing supported entrypoint `grow`")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unimplemented_lanes_are_denied_without_isolation_claims()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        for lane in [
+            Lane::PythonWasi,
+            Lane::PythonNative,
+            Lane::JsWasm,
+            Lane::JsNative,
+            Lane::Exec,
+        ] {
+            let request = ExecuteRequest {
+                lane: lane.clone(),
+                source: Source::Inline {
+                    code: "print('hello')".to_string(),
+                },
+                entrypoint: None,
+                input: serde_json::Value::Null,
+                stdin: String::new(),
+                policy: Policy::default(),
+                idempotency_key: None,
+            };
+            let result = engine.execute(request)?;
+
+            assert_eq!(result.status, ExecutionStatus::Denied);
+            assert!(!result.deterministic);
+            assert!(result.effective_isolation.mechanisms.is_empty());
+            let error = result.error.as_ref().ok_or_else(|| {
+                std::io::Error::other("unimplemented lane should include an error")
+            })?;
+            assert_eq!(error.code, "lane_unavailable");
+        }
         Ok(())
     }
 }

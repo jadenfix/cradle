@@ -2,8 +2,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionStatus, JobRecord, JobStatus, Lane,
-    Policy, Source,
+    CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord,
+    JobStatus, Lane, Policy, Source,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
@@ -75,6 +75,79 @@ async fn v1_execute_rejects_daemon_local_file_sources() -> Result<(), Box<dyn st
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let error: ErrorResponse = serde_json::from_slice(&body)?;
     assert_eq!(error.error.code, "host_file_source_denied");
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_execute_rejects_ambiguous_inline_wasm_sources() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let mut request = add_one_request(41);
+    request.source = Source::Inline {
+        code: add_one_wat().to_string(),
+    };
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "source_lane_mismatch");
+    assert!(error.error.message.contains("wasm_wat"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_execute_rejects_language_lane_wasm_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let mut request = add_one_request(41);
+    request.lane = Lane::PythonWasi;
+    request.source = Source::WasmWat {
+        text: add_one_wat().to_string(),
+    };
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "source_lane_mismatch");
+    assert!(error.error.message.contains("inline source code"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_execute_rejects_unimplemented_module_refs() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let mut request = add_one_request(41);
+    request.source = Source::ModuleRef {
+        sha256: "sha256:deadbeef".to_string(),
+    };
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/execute")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "module_ref_unavailable");
     Ok(())
 }
 
@@ -579,6 +652,40 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
+async fn mcp_get_capabilities_rejects_unknown_arguments() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_capabilities",
+            "arguments": {"ignored": true}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("ignored"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn mcp_run_wasm_rejects_over_sync_ceiling() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
@@ -611,6 +718,153 @@ async fn mcp_run_wasm_rejects_over_sync_ceiling() -> Result<(), Box<dyn std::err
         value["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("sync_limit_exceeded"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_run_wasm_rejects_ambiguous_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "run_wasm",
+            "arguments": {
+                "wat": add_one_wat(),
+                "wasm_base64": "AGFzbQE="
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("exactly one"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_run_wasm_rejects_mistyped_limits() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "run_wasm",
+            "arguments": {
+                "wat": add_one_wat(),
+                "fuel": "1000"
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unsigned integer"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_run_python_requires_code() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "run_python",
+            "arguments": {}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("code"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_run_python_reports_unavailable_lane() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "run_python",
+            "arguments": {
+                "code": "print(41 + 1)",
+                "timeout_ms": 1000,
+                "memory_bytes": 1048576
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let text = value["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or("missing MCP tool result text")?;
+    let result: ExecutionResult = serde_json::from_str(text)?;
+    assert_eq!(result.status, ExecutionStatus::Denied);
+    assert_eq!(result.lane, Lane::PythonWasi);
+    assert!(!result.deterministic);
+    assert_eq!(
+        result.error.as_ref().map(|error| error.code.as_str()),
+        Some("lane_unavailable")
     );
     Ok(())
 }
