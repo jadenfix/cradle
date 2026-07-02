@@ -29,7 +29,7 @@ impl Client {
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Result<Self, ClientError> {
-        self.http = reqwest::Client::builder().timeout(timeout).build()?;
+        self.http = http_client_builder().timeout(timeout).build()?;
         Ok(self)
     }
 
@@ -94,20 +94,21 @@ impl Client {
 
     fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.api_key {
-            Some(api_key) => request.bearer_auth(api_key),
+            Some(api_key) => request.header("x-beatbox-api-key", api_key),
             None => request,
         }
     }
 }
 
 fn default_http_client() -> reqwest::Client {
-    match reqwest::Client::builder()
-        .timeout(DEFAULT_HTTP_TIMEOUT)
-        .build()
-    {
+    match http_client_builder().timeout(DEFAULT_HTTP_TIMEOUT).build() {
         Ok(client) => client,
-        Err(_) => reqwest::Client::new(),
+        Err(error) => panic!("default beatbox HTTP client must construct: {error}"),
     }
+}
+
+fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
 }
 
 #[derive(Debug, Error)]
@@ -169,4 +170,105 @@ fn trim_base_url(mut value: String) -> String {
         value.pop();
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn api_key_header_is_not_forwarded_across_redirects()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let saw_redirect_target = Arc::new(AtomicBool::new(false));
+        let saw_key_on_redirect_target = Arc::new(AtomicBool::new(false));
+
+        let server_stop = Arc::clone(&stop);
+        let server_saw_redirect_target = Arc::clone(&saw_redirect_target);
+        let server_saw_key_on_redirect_target = Arc::clone(&saw_key_on_redirect_target);
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut handled_initial_request = false;
+            while Instant::now() < deadline
+                && (!server_stop.load(Ordering::SeqCst) || !handled_initial_request)
+            {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+                        let mut buffer = [0_u8; 4096];
+                        let bytes = stream.read(&mut buffer)?;
+                        let request = String::from_utf8_lossy(&buffer[..bytes]);
+                        let lower = request.to_ascii_lowercase();
+                        if request.starts_with("POST /v1/execute ") {
+                            handled_initial_request = true;
+                            if !lower.contains("x-beatbox-api-key: secret") {
+                                return Err(std::io::Error::other(
+                                    "initial request did not include API key header",
+                                ));
+                            }
+                            let response = format!(
+                                "HTTP/1.1 307 Temporary Redirect\r\nlocation: http://{addr}/leak\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                            );
+                            stream.write_all(response.as_bytes())?;
+                        } else if request.contains(" /leak ") {
+                            server_saw_redirect_target.store(true, Ordering::SeqCst);
+                            if lower.contains("x-beatbox-api-key") {
+                                server_saw_key_on_redirect_target.store(true, Ordering::SeqCst);
+                            }
+                            stream.write_all(
+                                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+                            )?;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}")).with_api_key("secret");
+        let request = ExecuteRequest {
+            lane: Lane::Wasm,
+            source: Source::WasmWat {
+                text: "(module)".to_string(),
+            },
+            entrypoint: None,
+            input: serde_json::Value::Null,
+            stdin: String::new(),
+            policy: Policy::default(),
+            idempotency_key: None,
+        };
+
+        let error = match client.execute(&request).await {
+            Ok(_) => return Err("redirect response should not decode as execution result".into()),
+            Err(error) => error,
+        };
+        match error {
+            ClientError::Api { status, .. } => {
+                assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+            }
+            ClientError::Http(error) => return Err(error.into()),
+        }
+
+        stop.store(true, Ordering::SeqCst);
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("redirect test server panicked".into()),
+        }
+        assert!(!saw_redirect_target.load(Ordering::SeqCst));
+        assert!(!saw_key_on_redirect_target.load(Ordering::SeqCst));
+        Ok(())
+    }
 }
