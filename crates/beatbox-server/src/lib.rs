@@ -277,20 +277,29 @@ impl AppState {
         match &self.config.auth {
             AuthMode::None => Ok(()),
             AuthMode::Required { token } => {
-                let expected = format!("Bearer {token}");
-                let actual = headers
-                    .get(AUTHORIZATION)
-                    .and_then(|value| value.to_str().ok());
-                if actual
-                    .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected.as_bytes()))
-                {
+                if api_key_authorized(headers, token) || bearer_authorized(headers, token) {
                     Ok(())
                 } else {
-                    Err(ApiError::unauthorized("missing or invalid bearer token"))
+                    Err(ApiError::unauthorized("missing or invalid API key"))
                 }
             }
         }
     }
+}
+
+fn api_key_authorized(headers: &HeaderMap, token: &str) -> bool {
+    headers
+        .get("x-beatbox-api-key")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|actual| constant_time_eq(actual.as_bytes(), token.as_bytes()))
+}
+
+fn bearer_authorized(headers: &HeaderMap, token: &str) -> bool {
+    let expected = format!("Bearer {token}");
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected.as_bytes()))
 }
 
 #[derive(Debug)]
@@ -758,6 +767,12 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
         return json_response(
             StatusCode::UNAUTHORIZED,
             json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32001, "message": error.body.message}}),
+        );
+    }
+    if let Err(error) = require_json_content_type(&headers) {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": error.body.message}}),
         );
     }
 

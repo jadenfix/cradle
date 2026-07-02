@@ -503,6 +503,26 @@ async fn auth_required_rejects_keyless_requests() -> Result<(), Box<dyn std::err
             Request::builder()
                 .method(Method::GET)
                 .uri("/v1/capabilities")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    Ok(())
+}
+
+#[tokio::test]
+async fn auth_required_keeps_bearer_compatibility() -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::Required {
+        token: "secret".to_string(),
+    };
+    let app = router(config);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/capabilities")
                 .header("authorization", "Bearer secret")
                 .body(Body::empty())?,
         )
@@ -648,6 +668,55 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     let tools = &value["result"]["tools"];
     assert!(tools.to_string().contains("run_wasm"));
     assert!(tools.to_string().contains("get_capabilities"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_rejects_missing_content_type() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32600);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("content-type"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_rejects_text_plain_json_posts() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "text/plain")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32600);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("content-type"))
+    );
     Ok(())
 }
 
