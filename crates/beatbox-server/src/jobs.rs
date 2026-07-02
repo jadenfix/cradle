@@ -417,8 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn reopen_fails_jobs_left_non_terminal_by_restart()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn reopen_fails_jobs_left_non_terminal_by_restart() -> Result<(), Box<dyn std::error::Error>> {
         let db_path =
             std::env::temp_dir().join(format!("beatbox-recovery-{}.sqlite3", uuid::Uuid::new_v4()));
         let request = request();

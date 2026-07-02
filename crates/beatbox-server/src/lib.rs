@@ -313,7 +313,12 @@ fn spawn_job(
                 fail_job(&state, &job_id, error.error_body()).await;
             }
             Err(error) => {
-                fail_job(&state, &job_id, ErrorBody::new("job_worker", error.to_string())).await;
+                fail_job(
+                    &state,
+                    &job_id,
+                    ErrorBody::new("job_worker", error.to_string()),
+                )
+                .await;
             }
         }
     });

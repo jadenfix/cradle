@@ -28,6 +28,10 @@ enum Command {
         remote: Option<String>,
         #[arg(long, env = "BEATBOX_API_KEY")]
         api_key: Option<String>,
+        /// Read the API key from a file instead of --api-key/BEATBOX_API_KEY so
+        /// the secret never appears in `ps`/`/proc/*/cmdline` or shell history.
+        #[arg(long, env = "BEATBOX_API_KEY_FILE")]
+        api_key_file: Option<PathBuf>,
         #[arg(long = "policy")]
         policy: Vec<String>,
     },
@@ -47,8 +51,20 @@ async fn main() -> Result<()> {
             entrypoint,
             remote,
             api_key,
+            api_key_file,
             policy,
-        }) => run(path, input, entrypoint, remote, api_key, policy).await,
+        }) => {
+            run(
+                path,
+                input,
+                entrypoint,
+                remote,
+                api_key,
+                api_key_file,
+                policy,
+            )
+            .await
+        }
         Some(Command::Compile { input, output }) => compile(input, output),
         None => {
             Cli::command().print_help()?;
@@ -73,8 +89,10 @@ async fn run(
     entrypoint: Option<String>,
     remote: Option<String>,
     api_key: Option<String>,
+    api_key_file: Option<PathBuf>,
     policy_items: Vec<String>,
 ) -> Result<()> {
+    let api_key = resolve_api_key(api_key, api_key_file)?;
     let mut policy = Policy::default();
     apply_policy_items(&mut policy, &policy_items)?;
     let input = match input {
@@ -108,6 +126,28 @@ async fn run(
 
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
+}
+
+/// Resolve the API key from at most one of the inline flag/env or a file path.
+/// Reading from a file keeps the secret out of the process argument list.
+fn resolve_api_key(inline: Option<String>, file: Option<PathBuf>) -> Result<Option<String>> {
+    match (inline, file) {
+        (Some(_), Some(_)) => bail!(
+            "pass only one of --api-key/BEATBOX_API_KEY or --api-key-file/BEATBOX_API_KEY_FILE"
+        ),
+        (Some(value), None) => Ok(non_empty(value)),
+        (None, Some(path)) => {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read API key file {}", path.display()))?;
+            Ok(non_empty(contents))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn source_for_remote(path: &Path) -> Result<Source> {

@@ -1131,8 +1131,8 @@ mod tests {
     }
 
     #[test]
-    fn oversized_wasm_source_is_denied_before_compilation()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn oversized_wasm_source_is_denied_before_compilation() -> Result<(), Box<dyn std::error::Error>>
+    {
         let engine = BeatboxEngine::new()?;
         // A WAT text larger than the engine cap is rejected without parsing or
         // compiling it (the compile-time DoS guard).

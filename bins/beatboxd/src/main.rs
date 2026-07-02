@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::{fs, io};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{AuthMode, ServerConfig, router};
 use clap::Parser;
@@ -14,6 +14,10 @@ struct Cli {
     addr: SocketAddr,
     #[arg(long, env = "BEATBOX_API_KEY")]
     api_key: Option<String>,
+    /// Read the API key from a file instead of --api-key/BEATBOX_API_KEY so the
+    /// secret never appears in `ps`/`/proc/*/cmdline` or shell history.
+    #[arg(long, env = "BEATBOX_API_KEY_FILE")]
+    api_key_file: Option<PathBuf>,
     #[arg(
         long,
         env = "BEATBOX_DB_PATH",
@@ -32,7 +36,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let api_key = cli.api_key.and_then(non_empty);
+    let api_key = resolve_api_key(cli.api_key, cli.api_key_file)?;
     if !cli.addr.ip().is_loopback() && api_key.is_none() && !cli.allow_unauthenticated_remote {
         bail!(
             "refusing to bind {} without BEATBOX_API_KEY; pass --allow-unauthenticated-remote only for isolated test networks",
@@ -89,6 +93,23 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!("shutdown signal received; draining in-flight requests");
+}
+
+/// Resolve the API key from at most one of the inline flag/env or a file path.
+/// Reading from a file keeps the secret out of the process argument list.
+fn resolve_api_key(inline: Option<String>, file: Option<PathBuf>) -> Result<Option<String>> {
+    match (inline, file) {
+        (Some(_), Some(_)) => bail!(
+            "pass only one of --api-key/BEATBOX_API_KEY or --api-key-file/BEATBOX_API_KEY_FILE"
+        ),
+        (Some(value), None) => Ok(non_empty(value)),
+        (None, Some(path)) => {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read API key file {}", path.display()))?;
+            Ok(non_empty(contents))
+        }
+        (None, None) => Ok(None),
+    }
 }
 
 fn non_empty(value: String) -> Option<String> {

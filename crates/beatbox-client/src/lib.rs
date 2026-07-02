@@ -202,7 +202,10 @@ mod tests {
         // A normal server-issued UUID passes through unchanged.
         let uuid = "550e8400-e29b-41d4-a716-446655440000";
         let url = client.job_url(uuid)?;
-        assert_eq!(url.as_str(), format!("http://localhost:7300/v1/jobs/{uuid}"));
+        assert_eq!(
+            url.as_str(),
+            format!("http://localhost:7300/v1/jobs/{uuid}")
+        );
 
         // `../execute` must not climb out of /v1/jobs/ — the `/` is encoded so it
         // stays a single segment (three literal slashes: /v1 /jobs /<id>).
