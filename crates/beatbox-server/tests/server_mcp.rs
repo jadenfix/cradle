@@ -639,6 +639,55 @@ async fn canceling_running_job_frees_the_concurrency_slot() -> Result<(), Box<dy
     Ok(())
 }
 
+#[tokio::test]
+async fn duplicate_submission_does_not_consume_a_permit() -> Result<(), Box<dyn std::error::Error>>
+{
+    // One slot, saturated by a long-running keyed job. A re-submit of the SAME
+    // idempotency key must dedupe to 202 (not 429) even though no permit is free.
+    let mut config = ServerConfig::new(BeatboxEngine::new()?).with_max_concurrent_jobs(1);
+    config.max_fuel = 100_000_000_000;
+    let app = router(config);
+
+    let mut long = spin_job_request();
+    long.idempotency_key = Some("dupe-key".to_string());
+    let created: CreateJobResponse = serde_json::from_slice(
+        &to_bytes(submit_job(&app, &long).await?.into_body(), usize::MAX).await?,
+    )?;
+
+    let mut running = false;
+    for _ in 0..80 {
+        if job_status(&app, &created.job_id).await? == JobStatus::Running {
+            running = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(running, "long job never started running");
+
+    // A brand-new job is refused (slot full)...
+    assert_eq!(
+        submit_job(&app, &add_one_request(1)).await?.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    // ...but a duplicate of the running job dedupes to the same id without a permit.
+    let dup = submit_job(&app, &long).await?;
+    assert_eq!(dup.status(), StatusCode::ACCEPTED);
+    let dup: CreateJobResponse =
+        serde_json::from_slice(&to_bytes(dup.into_body(), usize::MAX).await?)?;
+    assert_eq!(dup.job_id, created.job_id);
+
+    // Stop the long job so its worker doesn't run out the full wall budget.
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/v1/jobs/{}", created.job_id))
+                .body(Body::empty())?,
+        )
+        .await?;
+    Ok(())
+}
+
 async fn submit_job(
     app: &axum::Router,
     request: &ExecuteRequest,

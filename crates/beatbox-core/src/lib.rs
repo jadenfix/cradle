@@ -271,7 +271,10 @@ pub struct ExecutionResult {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Metrics {
     pub wall_time_ms: u64,
-    pub cpu_time_ms: u64,
+    /// CPU time in milliseconds, when the lane measures it separately from wall
+    /// time. The W0 wasm lane does not, so this is `None` there — use `fuel_used`
+    /// as the deterministic compute signal rather than treating wall time as CPU.
+    pub cpu_time_ms: Option<u64>,
     pub fuel_used: Option<u64>,
     pub peak_memory_bytes: Option<u64>,
 }

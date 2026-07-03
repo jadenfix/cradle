@@ -15,11 +15,28 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(base_url: impl Into<String>) -> Self {
-        Self {
+    /// Construct a client, returning an error if the underlying HTTP client
+    /// cannot be built. Prefer this over [`new`](Self::new) in library code that
+    /// must not panic.
+    pub fn try_new(base_url: impl Into<String>) -> Result<Self, ClientError> {
+        Ok(Self {
             base_url: trim_base_url(base_url.into()),
             api_key: None,
-            http: default_http_client(),
+            http: http_client_builder()
+                .timeout(DEFAULT_HTTP_TIMEOUT)
+                .build()?,
+        })
+    }
+
+    /// Construct a client with the default configuration.
+    ///
+    /// Panics only if the HTTP client cannot be built, which does not happen
+    /// with the pinned rustls/bundled-roots configuration. Use
+    /// [`try_new`](Self::try_new) for a non-panicking constructor.
+    pub fn new(base_url: impl Into<String>) -> Self {
+        match Self::try_new(base_url) {
+            Ok(client) => client,
+            Err(error) => panic!("default beatbox HTTP client must construct: {error}"),
         }
     }
 
@@ -119,13 +136,6 @@ impl Client {
     }
 }
 
-fn default_http_client() -> reqwest::Client {
-    match http_client_builder().timeout(DEFAULT_HTTP_TIMEOUT).build() {
-        Ok(client) => client,
-        Err(error) => panic!("default beatbox HTTP client must construct: {error}"),
-    }
-}
-
 fn http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
 }
@@ -202,6 +212,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn try_new_builds_without_panicking() -> Result<(), Box<dyn std::error::Error>> {
+        let client = Client::try_new("http://localhost:7300")?;
+        assert_eq!(client.base_url, "http://localhost:7300");
+        Ok(())
+    }
 
     #[test]
     fn job_url_percent_encodes_untrusted_ids() -> Result<(), Box<dyn std::error::Error>> {

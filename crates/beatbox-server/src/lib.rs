@@ -52,13 +52,14 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    pub fn new(engine: BeatboxEngine) -> Self {
-        let jobs = JobStore::in_memory()
-            .unwrap_or_else(|error| panic!("default in-memory JobStore must construct: {error}"));
-        Self {
+    /// Build a config with a default in-memory job store, returning an error if
+    /// the store cannot be constructed. Prefer this over [`new`](Self::new) in
+    /// library code that must not panic.
+    pub fn try_new(engine: BeatboxEngine) -> Result<Self, JobStoreError> {
+        Ok(Self {
             auth: AuthMode::None,
             engine,
-            jobs,
+            jobs: JobStore::in_memory()?,
             sync_wall_ms: DEFAULT_SYNC_WALL_MS,
             job_wall_ms: DEFAULT_JOB_WALL_MS,
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
@@ -67,6 +68,18 @@ impl ServerConfig {
             max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
             max_concurrent_sync: DEFAULT_MAX_CONCURRENT_SYNC,
             max_concurrent_jobs: DEFAULT_MAX_CONCURRENT_JOBS,
+        })
+    }
+
+    /// Build a config with a default in-memory job store.
+    ///
+    /// Panics only if the in-memory SQLite store cannot be constructed, which
+    /// does not happen in practice. Use [`try_new`](Self::try_new) for a
+    /// non-panicking constructor.
+    pub fn new(engine: BeatboxEngine) -> Self {
+        match Self::try_new(engine) {
+            Ok(config) => config,
+            Err(error) => panic!("default in-memory JobStore must construct: {error}"),
         }
     }
 
@@ -215,6 +228,7 @@ async fn create_job(
     admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
     let request = Arc::new(request);
 
+    // Fast-path dedupe for an already-known idempotency key.
     let store = state.config.jobs.clone();
     let lookup = Arc::clone(&request);
     if let Some(job_id) = blocking_store(move || store.find_idempotent(&lookup))
@@ -223,25 +237,63 @@ async fn create_job(
     {
         return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
     }
-    let permit = state.job_permits.clone().try_acquire_owned().map_err(|_| {
-        ApiError::too_many(
-            "job_concurrency_exceeded",
-            format!(
-                "maximum concurrent jobs ({}) are already running",
-                state.config.max_concurrent_jobs
-            ),
-        )
-    })?;
+
+    // Insert-or-dedupe atomically. A duplicate (inserted == false) returns here
+    // *without* consuming a concurrency permit, so a concurrent same-key
+    // submission never spuriously 429s just because it lost a race for a permit.
     let store = state.config.jobs.clone();
     let create = Arc::clone(&request);
     let created = blocking_store(move || store.create_or_get(&create))
         .await
         .map_err(ApiError::job_store)?;
     let job_id = created.job_id;
-    if created.inserted {
-        let request = Arc::try_unwrap(request).unwrap_or_else(|arc| (*arc).clone());
-        spawn_job(state, job_id.clone(), request, permit);
+    if !created.inserted {
+        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
     }
+
+    // Genuinely new job: reserve a worker slot. If the cap is hit, roll back the
+    // row we just inserted, then report 429.
+    let permit = match state.job_permits.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            let store = state.config.jobs.clone();
+            let cleanup_id = job_id.clone();
+            // A keyless row can't be referenced by anyone else, so just delete it.
+            // A keyed row may already have been handed to a concurrent same-key
+            // request via dedupe; deleting it would 404 that client, so instead
+            // fail it (releasing the key so a retry re-runs) — a terminal,
+            // retrievable state rather than a vanished id.
+            let has_key = request
+                .idempotency_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|key| !key.is_empty());
+            blocking_store(move || {
+                if has_key {
+                    store.fail_queued_and_release_key(
+                        &cleanup_id,
+                        &ErrorBody::new(
+                            "job_capacity",
+                            "no worker slot was available; retry later",
+                        ),
+                    )
+                } else {
+                    store.delete_queued(&cleanup_id)
+                }
+            })
+            .await
+            .map_err(ApiError::job_store)?;
+            return Err(ApiError::too_many(
+                "job_concurrency_exceeded",
+                format!(
+                    "maximum concurrent jobs ({}) are already running",
+                    state.config.max_concurrent_jobs
+                ),
+            ));
+        }
+    };
+    let request = Arc::try_unwrap(request).unwrap_or_else(|arc| (*arc).clone());
+    spawn_job(state, job_id.clone(), request, permit);
     Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })))
 }
 

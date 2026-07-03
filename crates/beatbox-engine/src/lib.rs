@@ -81,6 +81,8 @@ impl BeatboxEngine {
 }
 
 impl Default for BeatboxEngine {
+    /// Panics if the engine cannot be constructed. Use the fallible
+    /// [`BeatboxEngine::new`] in library code that must not panic.
     fn default() -> Self {
         match Self::new() {
             Ok(engine) => engine,
@@ -178,9 +180,12 @@ fn result(
     effective_isolation: EffectiveIsolation,
     inputs_digest: String,
 ) -> ExecutionResult {
-    // The initial wasm lane is W0: an empty linker denies every host import, so
-    // core modules are deterministic by construction. Revisit this when W1
-    // capability-scoped WASI is added under Lane::Wasm.
+    // `deterministic` reports *construction-level* determinism, not an echo of
+    // the requested `Determinism` policy. The W0 wasm lane uses an empty linker
+    // that denies every host import (no clocks, no RNG), so a core module is
+    // deterministic regardless of what `Determinism` the caller sent. Revisit
+    // when W1 capability-scoped WASI (which can expose nondeterminism) is added
+    // under Lane::Wasm — then this must reflect the actual policy.
     let deterministic = matches!(request.lane, Lane::Wasm);
     let (error, stderr, stderr_truncated) =
         truncate_error(error, request.policy.limits.output_bytes);
@@ -301,6 +306,9 @@ mod wasm {
         // the linear-memory budget on top, several times the intended ceiling.
         linear_bytes: usize,
         table_bytes: usize,
+        // High-water mark of linear + table bytes actually granted, reported as
+        // the execution's peak_memory_bytes metric.
+        peak_bytes: usize,
         instances: usize,
         memories: usize,
         tables: usize,
@@ -324,6 +332,7 @@ mod wasm {
                 ))
             } else {
                 self.linear_bytes = desired;
+                self.peak_bytes = self.peak_bytes.max(total);
                 Ok(true)
             }
         }
@@ -353,6 +362,7 @@ mod wasm {
                 ))
             } else {
                 self.table_bytes = new_table_bytes;
+                self.peak_bytes = self.peak_bytes.max(total);
                 Ok(true)
             }
         }
@@ -467,6 +477,7 @@ mod wasm {
                         memory_size: memory_limit,
                         linear_bytes: 0,
                         table_bytes: 0,
+                        peak_bytes: 0,
                         instances: 1,
                         memories: 1,
                         tables: 4,
@@ -504,11 +515,15 @@ mod wasm {
             let fuel_exhausted = remaining_fuel == Some(0);
             let fuel_used =
                 remaining_fuel.map(|remaining| requested_fuel.saturating_sub(remaining));
+            let peak_memory_bytes = u64::try_from(store.data().limits.peak_bytes).ok();
             let metrics = Metrics {
                 wall_time_ms: elapsed_ms(started),
-                cpu_time_ms: elapsed_ms(started),
+                // cpu_time_ms is None: the W0 wasm lane does not measure CPU time
+                // separately from wall time. `fuel_used` is the deterministic
+                // compute signal; reporting wall time as "cpu time" would be a lie.
+                cpu_time_ms: None,
                 fuel_used,
-                peak_memory_bytes: None,
+                peak_memory_bytes,
             };
 
             match value {
@@ -884,14 +899,6 @@ mod wasm {
             handle: Some(handle),
         }
     }
-
-    #[allow(dead_code)]
-    fn source_path(source: &Source) -> Option<&Path> {
-        match source {
-            Source::WasmFile { path } => Some(path.as_path()),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -911,6 +918,26 @@ mod tests {
             policy: Policy::default(),
             idempotency_key: None,
         }
+    }
+
+    #[test]
+    fn metrics_report_peak_memory_and_no_fabricated_cpu_time()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let result = engine.execute(request_for(
+            r#"
+            (module
+              (memory 1)
+              (func (export "run") (result i64) i64.const 1))
+            "#,
+            serde_json::Value::Null,
+        ))?;
+        assert_eq!(result.status, ExecutionStatus::Ok);
+        // One page of linear memory is granted and reflected in the high-water mark.
+        assert_eq!(result.metrics.peak_memory_bytes, Some(64 * 1024));
+        // cpu_time_ms is not fabricated from wall time.
+        assert_eq!(result.metrics.cpu_time_ms, None);
+        Ok(())
     }
 
     #[test]
