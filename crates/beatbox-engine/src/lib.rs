@@ -561,11 +561,9 @@ mod wasm {
                 wat::parse_str(code).map_err(|error| EngineError::ParseWat(error.to_string()))
             }
             Source::WasmFile { path } => {
-                let bytes = std::fs::read(path).map_err(|source| EngineError::ReadSource {
-                    path: path.display().to_string(),
-                    source,
-                })?;
-                guard_source_len(bytes.len())?;
+                // Read at most the cap (+1 to detect overflow) so a huge file is
+                // rejected without slurping it all into memory first.
+                let bytes = read_file_capped(path)?;
                 if path.extension().and_then(|ext| ext.to_str()) == Some("wat") {
                     wat::parse_bytes(&bytes)
                         .map(|cow| cow.into_owned())
@@ -586,6 +584,24 @@ mod wasm {
                     .to_string(),
             }),
         }
+    }
+
+    fn read_file_capped(path: &Path) -> Result<Vec<u8>, EngineError> {
+        use std::io::Read;
+
+        let read_error = |source| EngineError::ReadSource {
+            path: path.display().to_string(),
+            source,
+        };
+        let file = std::fs::File::open(path).map_err(read_error)?;
+        // take(cap + 1): if the file is larger than the cap, we read cap+1 bytes
+        // and guard_source_len rejects it; memory use stays bounded either way.
+        let mut bytes = Vec::new();
+        file.take(MAX_WASM_MODULE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(read_error)?;
+        guard_source_len(bytes.len())?;
+        Ok(bytes)
     }
 
     fn guard_source_len(len: usize) -> Result<(), EngineError> {
@@ -1196,6 +1212,35 @@ mod tests {
                 assert!(reason.contains("exceeding the engine limit"), "{reason}");
             }
             other => panic!("expected oversized source rejection, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_wasm_file_is_denied_by_capped_read() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        // A file-source larger than the cap must be rejected via the bounded read
+        // rather than slurped whole into memory first.
+        let path = std::env::temp_dir().join("beatbox-oversized-file-source.bin");
+        std::fs::write(&path, vec![0_u8; 16 * 1024 * 1024 + 1])?;
+
+        let request = ExecuteRequest {
+            lane: Lane::Wasm,
+            source: Source::WasmFile { path: path.clone() },
+            entrypoint: None,
+            input: serde_json::Value::Null,
+            stdin: String::new(),
+            policy: Policy::default(),
+            idempotency_key: None,
+        };
+        let result = engine.execute(request);
+        std::fs::remove_file(&path).ok();
+
+        match result {
+            Err(EngineError::InvalidSource { reason, .. }) => {
+                assert!(reason.contains("exceeding the engine limit"), "{reason}");
+            }
+            other => panic!("expected oversized file rejection, got {other:?}"),
         }
         Ok(())
     }
