@@ -1,0 +1,79 @@
+# beatbox SDKs
+
+Hand-written, idiomatic client SDKs for the [beatbox](https://github.com/jadenfix/beatbox)
+sandbox daemon, in seven languages. Every SDK implements the same contract —
+same methods, same config, same auth gating, same error model, same wire field
+names — so an agent that knows one knows them all.
+
+| Language | Directory | Package | Install |
+| --- | --- | --- | --- |
+| TypeScript | [`typescript/`](./typescript) | `beatbox` (npm) | `npm install beatbox` |
+| Python | [`python/`](./python) | `beatbox` (PyPI) | `pip install beatbox` |
+| Go | [`go/`](./go) | `github.com/jadenfix/beatbox/sdks/go` | `go get github.com/jadenfix/beatbox/sdks/go` |
+| Java | [`java/`](./java) | `ai.beatbox:beatbox` (Maven) | Maven/Gradle coordinate |
+| Ruby | [`ruby/`](./ruby) | `beatbox` (RubyGems) | `gem install beatbox` |
+| PHP | [`php/`](./php) | `beatbox/beatbox` (Packagist) | `composer require beatbox/beatbox` |
+| C# | [`csharp/`](./csharp) | `Beatbox` (NuGet) | `dotnet add package Beatbox` |
+
+All SDKs are **zero / minimal dependency** (only Java pulls in Jackson, because
+the JDK ships no JSON). None uses a code-gen runtime.
+
+## The contract
+
+The human-readable design contract is [`BRIEF.md`](./BRIEF.md). The canonical
+machine-readable API spec is [`openapi.json`](./openapi.json). Every SDK exposes
+the same seven methods:
+
+| Method | HTTP | Auth |
+| --- | --- | --- |
+| `health` | `GET /v1/health` | no |
+| `capabilities` | `GET /v1/capabilities` | yes |
+| `execute` | `POST /v1/execute` | yes |
+| `create_job` | `POST /v1/jobs` | yes |
+| `get_job` | `GET /v1/jobs/{id}` | yes |
+| `cancel_job` | `DELETE /v1/jobs/{id}` | yes |
+| `openapi` | `GET /openapi.json` | no |
+
+The API key is sent only as the `x-beatbox-api-key` header, and never on the
+unauthenticated `health`/`openapi` routes, never in a URL, and never in an error
+message.
+
+## How the fleet stays correct (the rollout pipeline)
+
+This is a Stainless-style pipeline: one source of truth, drift-checked, and a
+gated release.
+
+1. **Source of truth.** `openapi.json` is generated from the Rust server's
+   `utoipa` annotations. The server test `beatbox-server::tests/openapi_drift`
+   regenerates it and asserts the committed copy matches **byte-for-byte**, so
+   the spec can never silently diverge from the daemon that implements it. Runs
+   in the main `ci` workflow. Re-bless after an intentional API change with:
+
+   ```bash
+   BEATBOX_BLESS_OPENAPI=1 cargo test -p beatbox-server --test openapi_drift
+   ```
+
+2. **Per-language CI.** [`.github/workflows/sdk-ci.yml`](../.github/workflows/sdk-ci.yml)
+   builds, lints, and tests each SDK on its native toolchain, plus a
+   version-consistency gate ([`scripts/check-sdk-versions.sh`](../scripts/check-sdk-versions.sh))
+   that requires every manifest to declare the same version as `openapi.json`.
+
+3. **Gated release.** [`.github/workflows/sdk-release.yml`](../.github/workflows/sdk-release.yml)
+   is a manual, dry-run-by-default rollout to the language registries, gated
+   behind a `release` GitHub Environment. See [`RELEASING.md`](./RELEASING.md).
+
+## Quickstart (shape is identical in every language)
+
+```python
+from beatbox import Client, ExecuteRequest
+
+client = Client(base_url="http://127.0.0.1:7300", api_key="…")
+result = client.execute(ExecuteRequest.wasm_wat(
+    '(module (func (export "run") (param i64) (result i64) '
+    'local.get 0 i64.const 1 i64.add))',
+    input={"n": 41}))
+print(result.value)  # 42
+```
+
+Each SDK's own `README.md` has the language-native version, install, auth, and
+error-handling details.
