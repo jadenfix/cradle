@@ -229,14 +229,39 @@ impl JobStore {
         Ok(())
     }
 
-    /// Remove a still-queued job. Used to roll back a row that was inserted but
-    /// could not be given a worker (e.g. the concurrency cap was hit), so a later
-    /// retry starts clean. Only deletes queued rows, never one a worker owns.
+    /// Remove a still-queued job. Used to roll back a keyless row that was
+    /// inserted but could not be given a worker (e.g. the concurrency cap was
+    /// hit). Only deletes queued rows, never one a worker owns.
     pub fn delete_queued(&self, id: &str) -> Result<(), JobStoreError> {
         let conn = self.lock()?;
         conn.execute(
             "DELETE FROM jobs WHERE id = ?1 AND status = ?2",
             params![id, JobStatus::Queued.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Fail a still-queued job and release its idempotency key. Used to roll back
+    /// a keyed row that could not be given a worker: a concurrent same-key request
+    /// may already have been handed this id via dedupe, so it must resolve to a
+    /// terminal state (not vanish), and releasing the key lets a retry re-run.
+    pub fn fail_queued_and_release_key(
+        &self,
+        id: &str,
+        error: &ErrorBody,
+    ) -> Result<(), JobStoreError> {
+        let now = now();
+        let error_json = serde_json::to_string(error)?;
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE jobs SET status = ?1, error_json = ?2, updated_at = ?3, idempotency_key = NULL WHERE id = ?4 AND status = ?5",
+            params![
+                JobStatus::Failed.as_str(),
+                error_json,
+                now,
+                id,
+                JobStatus::Queued.as_str()
+            ],
         )?;
         Ok(())
     }
@@ -599,6 +624,33 @@ mod tests {
         retry.idempotency_key = Some("run-a".to_string());
         assert_ne!(store.create(&retry)?, id_a);
         std::fs::remove_file(db_path).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn fail_queued_and_release_key_terminalizes_and_frees_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store = JobStore::in_memory()?;
+        let mut req = request();
+        req.idempotency_key = Some("cap-key".to_string());
+        let id = store.create(&req)?;
+
+        store.fail_queued_and_release_key(
+            &id,
+            &beatbox_core::ErrorBody::new("job_capacity", "no slot"),
+        )?;
+
+        // The original resolves to a terminal failed state (not a 404/vanished id).
+        let job = store
+            .get(&id)?
+            .ok_or_else(|| std::io::Error::other("job should still exist"))?;
+        assert_eq!(job.status, beatbox_core::JobStatus::Failed);
+        assert_eq!(
+            job.error.as_ref().map(|error| error.code.as_str()),
+            Some("job_capacity")
+        );
+        // The key is released, so a retry re-runs as a fresh job.
+        assert_ne!(store.create(&req)?, id);
         Ok(())
     }
 

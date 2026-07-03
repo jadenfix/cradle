@@ -252,15 +252,37 @@ async fn create_job(
     }
 
     // Genuinely new job: reserve a worker slot. If the cap is hit, roll back the
-    // row we just inserted so a later retry starts clean, then report 429.
+    // row we just inserted, then report 429.
     let permit = match state.job_permits.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
             let store = state.config.jobs.clone();
             let cleanup_id = job_id.clone();
-            blocking_store(move || store.delete_queued(&cleanup_id))
-                .await
-                .map_err(ApiError::job_store)?;
+            // A keyless row can't be referenced by anyone else, so just delete it.
+            // A keyed row may already have been handed to a concurrent same-key
+            // request via dedupe; deleting it would 404 that client, so instead
+            // fail it (releasing the key so a retry re-runs) — a terminal,
+            // retrievable state rather than a vanished id.
+            let has_key = request
+                .idempotency_key
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|key| !key.is_empty());
+            blocking_store(move || {
+                if has_key {
+                    store.fail_queued_and_release_key(
+                        &cleanup_id,
+                        &ErrorBody::new(
+                            "job_capacity",
+                            "no worker slot was available; retry later",
+                        ),
+                    )
+                } else {
+                    store.delete_queued(&cleanup_id)
+                }
+            })
+            .await
+            .map_err(ApiError::job_store)?;
             return Err(ApiError::too_many(
                 "job_concurrency_exceeded",
                 format!(
