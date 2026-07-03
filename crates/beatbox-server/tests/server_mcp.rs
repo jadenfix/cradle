@@ -888,6 +888,39 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_object()
             .is_some_and(|paths| paths.contains_key("/v1/jobs"))
     );
+
+    // The spec now carries full component schemas so SDKs can be generated from it.
+    let schemas = value["components"]["schemas"]
+        .as_object()
+        .ok_or("openapi should expose components.schemas")?;
+    for expected in [
+        "ExecuteRequest",
+        "ExecutionResult",
+        "Policy",
+        "Limits",
+        "Source",
+        "Metrics",
+        "JobRecord",
+        "ErrorResponse",
+    ] {
+        assert!(schemas.contains_key(expected), "missing schema: {expected}");
+    }
+    // The execute path references the ExecutionResult schema, not just a status code.
+    let execute_200 = &value["paths"]["/v1/execute"]["post"]["responses"]["200"];
+    let schema_ref = execute_200["content"]["application/json"]["schema"]["$ref"]
+        .as_str()
+        .ok_or("execute 200 should reference a schema")?;
+    assert!(schema_ref.ends_with("/ExecutionResult"), "got {schema_ref}");
+
+    // cpu_time_ms is nullable in the schema (honest metrics), not a plain integer.
+    let cpu = &schemas["Metrics"]["properties"]["cpu_time_ms"];
+    assert!(
+        cpu.get("type").is_none()
+            || cpu["type"]
+                .as_array()
+                .is_some_and(|t| t.iter().any(|v| v == "null")),
+        "cpu_time_ms should be nullable, got {cpu}"
+    );
     Ok(())
 }
 
