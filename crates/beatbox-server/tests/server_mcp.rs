@@ -534,21 +534,38 @@ async fn jobs_reject_when_concurrency_cap_is_exhausted() -> Result<(), Box<dyn s
 }
 
 #[tokio::test]
-async fn jobs_can_be_canceled() -> Result<(), Box<dyn std::error::Error>> {
+async fn canceling_terminal_job_conflicts() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
-    let request = add_one_request(41);
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/v1/jobs")
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::to_vec(&request)?))?,
+    let created: CreateJobResponse = serde_json::from_slice(
+        &to_bytes(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/v1/jobs")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&add_one_request(41))?))?,
+                )
+                .await?
+                .into_body(),
+            usize::MAX,
         )
-        .await?;
-    let body = to_bytes(response.into_body(), usize::MAX).await?;
-    let created: CreateJobResponse = serde_json::from_slice(&body)?;
+        .await?,
+    )?;
+
+    // Wait for the fast job to finish, then a DELETE must report 409 (nothing to
+    // cancel) rather than a spurious 204.
+    let mut succeeded = false;
+    for _ in 0..40 {
+        let job = job_status(&app, &created.job_id).await?;
+        if job == JobStatus::Succeeded {
+            succeeded = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(succeeded, "job did not complete");
+
     let response = app
         .oneshot(
             Request::builder()
@@ -557,8 +574,121 @@ async fn jobs_can_be_canceled() -> Result<(), Box<dyn std::error::Error>> {
                 .body(Body::empty())?,
         )
         .await?;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let error: ErrorResponse =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+    assert_eq!(error.error.code, "job_already_terminal");
     Ok(())
+}
+
+#[tokio::test]
+async fn canceling_running_job_frees_the_concurrency_slot() -> Result<(), Box<dyn std::error::Error>>
+{
+    // One job slot, and a high fuel/wall ceiling so a spin job stays running
+    // (rather than fuel-exhausting) long enough to be canceled mid-flight.
+    let mut config = ServerConfig::new(BeatboxEngine::new()?).with_max_concurrent_jobs(1);
+    config.max_fuel = 100_000_000_000;
+    let app = router(config);
+
+    let long = spin_job_request();
+    let created: CreateJobResponse = serde_json::from_slice(
+        &to_bytes(submit_job(&app, &long).await?.into_body(), usize::MAX).await?,
+    )?;
+
+    // Wait until the worker has taken the slot (job is running).
+    let mut running = false;
+    for _ in 0..80 {
+        if job_status(&app, &created.job_id).await? == JobStatus::Running {
+            running = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(running, "long job never started running");
+
+    // A second submission is refused: the only slot is held.
+    let refused = submit_job(&app, &add_one_request(1)).await?;
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // Cancel the running job.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/v1/jobs/{}", created.job_id))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // The interrupted worker must release its permit promptly: a new submission
+    // succeeds well before the 60s wall budget the canceled job would have run.
+    let mut freed = false;
+    for _ in 0..120 {
+        if submit_job(&app, &add_one_request(2)).await?.status() == StatusCode::ACCEPTED {
+            freed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(
+        freed,
+        "canceling the running job did not free the concurrency slot"
+    );
+    Ok(())
+}
+
+async fn submit_job(
+    app: &axum::Router,
+    request: &ExecuteRequest,
+) -> Result<axum::http::Response<Body>, Box<dyn std::error::Error>> {
+    Ok(app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/jobs")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(request)?))?,
+        )
+        .await?)
+}
+
+async fn job_status(
+    app: &axum::Router,
+    job_id: &str,
+) -> Result<JobStatus, Box<dyn std::error::Error>> {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/jobs/{job_id}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let job: JobRecord =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+    Ok(job.status)
+}
+
+fn spin_job_request() -> ExecuteRequest {
+    let mut request = ExecuteRequest {
+        lane: Lane::Wasm,
+        source: Source::WasmWat {
+            text: r#"(module (func (export "run") (param i64) (result i64) (loop br 0) (i64.const 0)))"#
+                .to_string(),
+        },
+        entrypoint: None,
+        input: json!({"n": 0}),
+        stdin: String::new(),
+        policy: Policy::default(),
+        idempotency_key: None,
+    };
+    request.policy.limits.wall_ms = 60_000;
+    request.policy.limits.fuel = Some(50_000_000_000);
+    request
 }
 
 #[tokio::test]

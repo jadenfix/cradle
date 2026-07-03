@@ -1,8 +1,9 @@
 mod jobs;
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::body::{Body, to_bytes};
@@ -16,10 +17,10 @@ use beatbox_core::{
     CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus,
     JobRecord, Lane, Policy, Source,
 };
-use beatbox_engine::{BeatboxEngine, EngineError};
+use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
 pub use jobs::JobStore;
-use jobs::JobStoreError;
+use jobs::{CancelOutcome, JobStoreError};
 use serde_json::{Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::{Host, Url};
@@ -151,6 +152,10 @@ struct AppState {
     config: ServerConfig,
     sync_permits: Arc<Semaphore>,
     job_permits: Arc<Semaphore>,
+    // Cancel handles for jobs whose worker is in flight, so DELETE can interrupt
+    // a running execution instead of only flipping the DB row. Entries are added
+    // in spawn_job and removed when the worker finishes.
+    job_cancels: Arc<Mutex<HashMap<String, CancelFlag>>>,
 }
 
 pub fn router(config: ServerConfig) -> Router {
@@ -161,6 +166,7 @@ pub fn router(config: ServerConfig) -> Router {
         config,
         sync_permits,
         job_permits,
+        job_cancels: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
         .route("/v1/health", get(health))
@@ -262,13 +268,22 @@ async fn cancel_job(
     state.authorize(&headers)?;
     let store = state.config.jobs.clone();
     let cancel_id = id.clone();
-    let exists = blocking_store(move || store.cancel(&cancel_id))
+    match blocking_store(move || store.cancel(&cancel_id))
         .await
-        .map_err(ApiError::job_store)?;
-    if exists {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found(format!("unknown job: {id}")))
+        .map_err(ApiError::job_store)?
+    {
+        CancelOutcome::Canceled => {
+            // Interrupt the in-flight worker (if any) so it stops promptly and
+            // releases its concurrency permit instead of running to its full
+            // wall/fuel budget. No-op if the job was still queued or already done.
+            state.trip_cancel(&id);
+            Ok(StatusCode::NO_CONTENT)
+        }
+        CancelOutcome::AlreadyTerminal => Err(ApiError::conflict(
+            "job_already_terminal",
+            format!("job {id} already finished and cannot be canceled"),
+        )),
+        CancelOutcome::NotFound => Err(ApiError::not_found(format!("unknown job: {id}"))),
     }
 }
 
@@ -278,8 +293,16 @@ fn spawn_job(
     request: ExecuteRequest,
     permit: OwnedSemaphorePermit,
 ) {
+    // Register the cancel handle synchronously (before the task is scheduled) so a
+    // DELETE arriving right after the 202 can always find it.
+    let cancel = state.register_cancel(&job_id);
     tokio::spawn(async move {
         let _permit = permit;
+        // Ensures the cancel entry is removed on every exit path.
+        let _cancel_guard = CancelGuard {
+            state: state.clone(),
+            job_id: job_id.clone(),
+        };
         let store = state.config.jobs.clone();
         let mark_id = job_id.clone();
         match blocking_store(move || store.mark_running(&mark_id)).await {
@@ -298,7 +321,8 @@ fn spawn_job(
             }
         }
         let engine = state.config.engine.clone();
-        let result = tokio::task::spawn_blocking(move || engine.execute(request)).await;
+        let result =
+            tokio::task::spawn_blocking(move || engine.execute_cancellable(request, &cancel)).await;
         match result {
             Ok(Ok(result)) => {
                 let store = state.config.jobs.clone();
@@ -324,6 +348,18 @@ fn spawn_job(
     });
 }
 
+/// Removes a job's cancel handle from the registry when its worker finishes.
+struct CancelGuard {
+    state: AppState,
+    job_id: String,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        self.state.unregister_cancel(&self.job_id);
+    }
+}
+
 async fn fail_job(state: &AppState, job_id: &str, body: ErrorBody) {
     let store = state.config.jobs.clone();
     let fail_id = job_id.to_string();
@@ -333,6 +369,28 @@ async fn fail_job(state: &AppState, job_id: &str, body: ErrorBody) {
 }
 
 impl AppState {
+    fn register_cancel(&self, job_id: &str) -> CancelFlag {
+        let flag = CancelFlag::new();
+        if let Ok(mut map) = self.job_cancels.lock() {
+            map.insert(job_id.to_string(), flag.clone());
+        }
+        flag
+    }
+
+    fn unregister_cancel(&self, job_id: &str) {
+        if let Ok(mut map) = self.job_cancels.lock() {
+            map.remove(job_id);
+        }
+    }
+
+    fn trip_cancel(&self, job_id: &str) {
+        if let Ok(map) = self.job_cancels.lock()
+            && let Some(flag) = map.get(job_id)
+        {
+            flag.cancel();
+        }
+    }
+
     fn authorize(&self, headers: &HeaderMap) -> Result<(), ApiError> {
         match &self.config.auth {
             AuthMode::None => Ok(()),
@@ -392,6 +450,13 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             body: ErrorBody::new("not_found", message),
+        }
+    }
+
+    fn conflict(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: ErrorBody::new(code, message),
         }
     }
 
@@ -750,9 +815,10 @@ mod openapi_paths {
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
-            (status = 204, description = "Canceled job"),
+            (status = 204, description = "Canceled job (or already canceled)"),
             (status = 401, description = "Missing or invalid bearer token"),
-            (status = 404, description = "Unknown job")
+            (status = 404, description = "Unknown job"),
+            (status = 409, description = "Job already finished and cannot be canceled")
         )
     )]
     pub fn cancel_job() {}

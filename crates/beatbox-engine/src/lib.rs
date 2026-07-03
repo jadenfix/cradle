@@ -12,6 +12,27 @@ pub struct BeatboxEngine {
     wasm: wasm::WasmLane,
 }
 
+/// Cooperative cancellation handle for an in-flight execution. Cloning shares the
+/// same flag; setting it (`cancel`) trips the wasm epoch interrupt at the next
+/// interruptible point so a running guest stops promptly instead of running to
+/// its full wall/fuel budget.
+#[derive(Clone, Default)]
+pub struct CancelFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl CancelFlag {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn is_canceled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 impl BeatboxEngine {
     pub fn new() -> Result<Self, EngineError> {
         Ok(Self {
@@ -21,11 +42,22 @@ impl BeatboxEngine {
     }
 
     pub fn execute(&self, request: ExecuteRequest) -> Result<ExecutionResult, EngineError> {
+        self.execute_cancellable(request, &CancelFlag::new())
+    }
+
+    /// Like [`execute`](Self::execute) but interruptible: setting `cancel` trips
+    /// the wasm epoch deadline so a running execution unwinds promptly.
+    pub fn execute_cancellable(
+        &self,
+        request: ExecuteRequest,
+        cancel: &CancelFlag,
+    ) -> Result<ExecutionResult, EngineError> {
+        let _ = cancel;
         match request.lane.clone() {
             Lane::Wasm => {
                 #[cfg(feature = "lane-wasi")]
                 {
-                    self.wasm.execute(request)
+                    self.wasm.execute(request, cancel)
                 }
                 #[cfg(not(feature = "lane-wasi"))]
                 {
@@ -356,7 +388,11 @@ mod wasm {
             Ok(Self {})
         }
 
-        pub fn execute(&self, request: ExecuteRequest) -> Result<ExecutionResult, EngineError> {
+        pub fn execute(
+            &self,
+            request: ExecuteRequest,
+            cancel: &CancelFlag,
+        ) -> Result<ExecutionResult, EngineError> {
             admit_wasm_policy(&request.policy)?;
             let started = Instant::now();
             let engine = build_engine()?;
@@ -455,7 +491,11 @@ mod wasm {
             }
 
             store.set_epoch_deadline(1);
-            let stop_ticker = epoch_ticker(engine.clone(), request.policy.limits.wall_ms);
+            let stop_ticker = epoch_ticker(
+                engine.clone(),
+                request.policy.limits.wall_ms,
+                cancel.clone(),
+            );
             let linker = Linker::new(&engine);
             let value = run_entrypoint(&mut store, &linker, &module, &request);
             stop_ticker.stop();
@@ -571,7 +611,9 @@ mod wasm {
                 field: "limits.pids",
                 lane: Lane::Wasm,
                 os,
-                reason: "the W0 wasm lane runs no host processes; a pids ceiling cannot be enforced".to_string(),
+                reason:
+                    "the W0 wasm lane runs no host processes; a pids ceiling cannot be enforced"
+                        .to_string(),
             });
         }
         if policy.limits.disk_bytes != defaults.disk_bytes {
@@ -814,7 +856,7 @@ mod wasm {
         }
     }
 
-    fn epoch_ticker(engine: Engine, wall_ms: u64) -> EpochTicker {
+    fn epoch_ticker(engine: Engine, wall_ms: u64, cancel: CancelFlag) -> EpochTicker {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let sleep_for = Duration::from_millis(wall_ms.max(1));
@@ -824,6 +866,12 @@ mod wasm {
             while started.elapsed() < sleep_for {
                 if thread_stop.load(Ordering::SeqCst) {
                     return;
+                }
+                // A cancel trips the epoch early (fall through to increment_epoch),
+                // so a running guest is interrupted rather than pinning its worker
+                // for the full wall/fuel budget.
+                if cancel.is_canceled() {
+                    break;
                 }
                 thread::sleep(tick);
             }
@@ -1351,6 +1399,46 @@ mod tests {
             result
                 .stderr
                 .contains("missing supported entrypoint `grow`")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cancel_flag_interrupts_running_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        let cancel = CancelFlag::new();
+        let setter = cancel.clone();
+
+        // An infinite loop with a huge wall/fuel budget would otherwise run for
+        // ~30s; a cancel must interrupt it in well under that.
+        let mut request = request_for(
+            r#"
+            (module
+              (func (export "run") (param i64) (result i64)
+                (loop br 0)
+                (i64.const 0)))
+            "#,
+            serde_json::json!({ "n": 0 }),
+        );
+        request.policy.limits.wall_ms = 30_000;
+        request.policy.limits.fuel = Some(2_000_000_000);
+
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            setter.cancel();
+        });
+
+        let started = std::time::Instant::now();
+        let result = engine.execute_cancellable(request, &cancel)?;
+        let elapsed = started.elapsed();
+        canceller
+            .join()
+            .map_err(|_| std::io::Error::other("canceller thread panicked"))?;
+
+        assert_eq!(result.status, ExecutionStatus::Timeout);
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "cancel should interrupt promptly, took {elapsed:?}"
         );
         Ok(())
     }

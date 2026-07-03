@@ -17,6 +17,18 @@ pub struct CreatedJob {
     pub inserted: bool,
 }
 
+/// Result of a cancel request, so the caller can map each case to the right HTTP
+/// status instead of reporting "canceled" for a job that was already finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// The job was queued/running and is now canceled (or was already canceled).
+    Canceled,
+    /// The job already reached a terminal succeeded/failed state; nothing to cancel.
+    AlreadyTerminal,
+    /// No job with this id exists.
+    NotFound,
+}
+
 impl JobStore {
     pub fn in_memory() -> Result<Self, JobStoreError> {
         Self::from_connection(Connection::open_in_memory()?)
@@ -211,7 +223,7 @@ impl JobStore {
         Ok(())
     }
 
-    pub fn cancel(&self, id: &str) -> Result<bool, JobStoreError> {
+    pub fn cancel(&self, id: &str) -> Result<CancelOutcome, JobStoreError> {
         let now = now();
         let conn = self.lock()?;
         let rows = conn.execute(
@@ -225,14 +237,23 @@ impl JobStore {
             ],
         )?;
         if rows > 0 {
-            return Ok(true);
+            return Ok(CancelOutcome::Canceled);
         }
-        let exists: Option<String> = conn
-            .query_row("SELECT id FROM jobs WHERE id = ?1", params![id], |row| {
-                row.get(0)
-            })
+        // No queued/running row transitioned. Distinguish an idempotent re-cancel
+        // from a completed job (which can't be canceled) and an unknown id, so the
+        // handler doesn't report a 204 "canceled" for a job that already finished.
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM jobs WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
             .optional()?;
-        Ok(exists.is_some())
+        match status.as_deref() {
+            None => Ok(CancelOutcome::NotFound),
+            Some("canceled") => Ok(CancelOutcome::Canceled),
+            Some(_) => Ok(CancelOutcome::AlreadyTerminal),
+        }
     }
 
     fn find_by_idempotency_key(
@@ -384,7 +405,7 @@ mod tests {
     use beatbox_core::{Lane, Policy, Source};
     use serde_json::json;
 
-    use super::JobStore;
+    use super::{CancelOutcome, JobStore};
 
     fn request() -> beatbox_core::ExecuteRequest {
         beatbox_core::ExecuteRequest {
@@ -406,13 +427,51 @@ mod tests {
         let request = request();
         let id = store.create(&request)?;
 
-        assert!(store.cancel(&id)?);
+        assert_eq!(store.cancel(&id)?, CancelOutcome::Canceled);
+        // Re-canceling is idempotent, not a spurious "already terminal".
+        assert_eq!(store.cancel(&id)?, CancelOutcome::Canceled);
         assert!(!store.mark_running(&id)?);
 
         let job = store
             .get(&id)?
             .ok_or_else(|| std::io::Error::other("job exists"))?;
         assert_eq!(job.status, beatbox_core::JobStatus::Canceled);
+        Ok(())
+    }
+
+    #[test]
+    fn cancel_reports_outcomes_distinctly() -> Result<(), Box<dyn std::error::Error>> {
+        let store = JobStore::in_memory()?;
+        assert_eq!(store.cancel("no-such-id")?, CancelOutcome::NotFound);
+
+        let id = store.create(&request())?;
+        store.mark_running(&id)?;
+        let result = beatbox_core::ExecutionResult {
+            status: beatbox_core::ExecutionStatus::Ok,
+            value: json!(1),
+            exit_code: None,
+            stdout: String::new(),
+            stdout_truncated: false,
+            stderr: String::new(),
+            stderr_truncated: false,
+            error: None,
+            metrics: beatbox_core::Metrics::default(),
+            lane: Lane::Wasm,
+            deterministic: true,
+            inputs_digest: "sha256:test".to_string(),
+            engine_version: "test".to_string(),
+            beatbox_version: "test".to_string(),
+            effective_isolation: beatbox_core::EffectiveIsolation {
+                os: "test".to_string(),
+                mechanisms: Vec::new(),
+                landlock_abi: None,
+                downgrades: Vec::new(),
+            },
+            egress: Vec::new(),
+        };
+        store.complete(&id, &result)?;
+        // A succeeded job cannot be canceled.
+        assert_eq!(store.cancel(&id)?, CancelOutcome::AlreadyTerminal);
         Ok(())
     }
 
