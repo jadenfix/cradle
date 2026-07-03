@@ -1027,6 +1027,8 @@ async fn mcp_run_python_reports_unavailable_lane() -> Result<(), Box<dyn std::er
     let text = value["result"]["content"][0]["text"]
         .as_str()
         .ok_or("missing MCP tool result text")?;
+    // An unavailable lane is a failed tool call, not a silent success.
+    assert_eq!(value["result"]["isError"], serde_json::json!(true));
     let result: ExecutionResult = serde_json::from_str(text)?;
     assert_eq!(result.status, ExecutionStatus::Denied);
     assert_eq!(result.lane, Lane::PythonWasi);
@@ -1035,6 +1037,63 @@ async fn mcp_run_python_reports_unavailable_lane() -> Result<(), Box<dyn std::er
         result.error.as_ref().map(|error| error.code.as_str()),
         Some("lane_unavailable")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_run_wasm_reports_is_error_on_trap() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "run_wasm",
+            "arguments": {
+                "wat": r#"(module (func (export "run") (result i64) unreachable))"#
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    // A trapping guest must surface isError:true rather than looking successful.
+    assert_eq!(value["result"]["isError"], serde_json::json!(true));
+    let text = value["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or("missing MCP tool result text")?;
+    let result: ExecutionResult = serde_json::from_str(text)?;
+    assert_eq!(result.status, ExecutionStatus::Error);
+
+    // A successful run still reports isError:false.
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let ok_request = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "run_wasm", "arguments": {"wat": add_one_wat(), "input": {"n": 41}}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(ok_request.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["result"]["isError"], serde_json::json!(false));
     Ok(())
 }
 

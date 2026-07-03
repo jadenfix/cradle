@@ -13,8 +13,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord, Lane,
-    Policy, Source,
+    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus,
+    JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, EngineError};
 use bytes::Bytes;
@@ -1151,11 +1151,15 @@ fn mcp_u64_arg(
 }
 
 fn tool_result(result: ExecutionResult) -> Result<Value, (i64, String)> {
+    // Per the MCP spec, a tool that fails must set isError so the calling agent
+    // can branch on it. A trap, fuel/wall timeout, OOM, or denied (e.g. an
+    // unavailable lane, or a host-import denial) is not a success.
+    let is_error = !matches!(result.status, ExecutionStatus::Ok);
     let text = serde_json::to_string(&result)
         .map_err(|error| (-32000, format!("failed to encode result: {error}")))?;
     Ok(json!({
         "content": [{"type": "text", "text": text}],
-        "isError": false,
+        "isError": is_error,
     }))
 }
 
