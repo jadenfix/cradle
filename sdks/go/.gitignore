@@ -1,0 +1,22 @@
+# Binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/addone
+bin/
+
+# Test / coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Editor / OS cruft
+.idea/
+.vscode/
+.DS_Store

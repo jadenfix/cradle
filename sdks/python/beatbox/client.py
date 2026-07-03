@@ -1,0 +1,171 @@
+"""HTTP client for the beatbox sandbox REST API.
+
+Zero dependencies: built on :mod:`urllib.request` and :mod:`json` from the
+standard library. Works on Python 3.9+.
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, Optional, Tuple
+
+from .errors import BeatboxApiError, BeatboxTransportError
+from .models import (
+    CreateJobResponse,
+    ExecuteRequest,
+    ExecutionResult,
+    JobRecord,
+)
+
+__all__ = ["Client"]
+
+DEFAULT_TIMEOUT = 65.0
+_API_KEY_HEADER = "x-beatbox-api-key"
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects so the API key cannot leak cross-origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _encode_job_id(job_id: str) -> str:
+    """Percent-encode a job id as a single path segment.
+
+    Rejects ``""``, ``"."`` and ``".."`` because they could retarget the
+    request onto a different resource.
+    """
+    if job_id in ("", ".", ".."):
+        raise ValueError(f"invalid job id: {job_id!r}")
+    return urllib.parse.quote(job_id, safe="")
+
+
+class Client:
+    """A client for a single beatbox daemon.
+
+    Args:
+        base_url: Daemon base URL, e.g. ``http://127.0.0.1:7300``. Trailing
+            slashes are trimmed.
+        api_key: Optional API key. When set it is sent as the
+            ``x-beatbox-api-key`` header on every request except ``health`` and
+            ``openapi``.
+        timeout: Per-request timeout in seconds (default 65.0).
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = timeout
+        self._opener = urllib.request.build_opener(_NoRedirectHandler)
+
+    # -- public API ---------------------------------------------------------
+
+    def health(self) -> Dict[str, Any]:
+        """GET /v1/health (unauthenticated). Returns raw JSON."""
+        return self._request("GET", "/v1/health", auth=False)
+
+    def capabilities(self) -> Dict[str, Any]:
+        """GET /v1/capabilities. Returns raw JSON."""
+        return self._request("GET", "/v1/capabilities", auth=True)
+
+    def execute(self, request: ExecuteRequest) -> ExecutionResult:
+        """POST /v1/execute. Returns an :class:`ExecutionResult`."""
+        body = self._request("POST", "/v1/execute", auth=True, body=request.to_dict())
+        return ExecutionResult.from_dict(body)
+
+    def create_job(self, request: ExecuteRequest) -> CreateJobResponse:
+        """POST /v1/jobs. Returns a :class:`CreateJobResponse` (HTTP 202)."""
+        body = self._request("POST", "/v1/jobs", auth=True, body=request.to_dict())
+        return CreateJobResponse.from_dict(body)
+
+    def get_job(self, job_id: str) -> JobRecord:
+        """GET /v1/jobs/{id}. Returns a :class:`JobRecord`."""
+        path = "/v1/jobs/" + _encode_job_id(job_id)
+        body = self._request("GET", path, auth=True)
+        return JobRecord.from_dict(body)
+
+    def cancel_job(self, job_id: str) -> None:
+        """DELETE /v1/jobs/{id}. Returns nothing (HTTP 204)."""
+        path = "/v1/jobs/" + _encode_job_id(job_id)
+        self._request("DELETE", path, auth=True)
+
+    def openapi(self) -> Dict[str, Any]:
+        """GET /openapi.json (unauthenticated). Returns raw JSON."""
+        return self._request("GET", "/openapi.json", auth=False)
+
+    # -- internals ----------------------------------------------------------
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        auth: bool,
+        body: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        url = self.base_url + path
+        data: Optional[bytes] = None
+        headers: Dict[str, str] = {}
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["content-type"] = "application/json"
+        if auth and self.api_key:
+            headers[_API_KEY_HEADER] = self.api_key
+
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+
+        try:
+            with self._opener.open(req, timeout=self.timeout) as resp:
+                status = resp.status
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            raise self._api_error(exc) from None
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            raise BeatboxTransportError(self._transport_reason(exc)) from None
+
+        return self._parse_body(status, raw)
+
+    @staticmethod
+    def _parse_body(status: int, raw: bytes) -> Any:
+        if status == 204 or not raw:
+            return None
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise BeatboxTransportError(f"invalid JSON in response: {exc}") from None
+
+    @staticmethod
+    def _api_error(exc: urllib.error.HTTPError) -> BeatboxApiError:
+        status = exc.code
+        code: Optional[str] = None
+        message = exc.reason if isinstance(exc.reason, str) else str(exc.reason)
+        try:
+            raw = exc.read()
+        except Exception:
+            raw = b""
+        if raw:
+            try:
+                parsed = json.loads(raw.decode("utf-8"))
+                err = parsed.get("error") if isinstance(parsed, dict) else None
+                if isinstance(err, dict):
+                    code = err.get("code")
+                    message = err.get("message", message)
+            except (ValueError, UnicodeDecodeError, AttributeError):
+                pass
+        return BeatboxApiError(status, code, message)
+
+    @staticmethod
+    def _transport_reason(exc: Exception) -> str:
+        if isinstance(exc, urllib.error.URLError):
+            return str(exc.reason)
+        return str(exc)
