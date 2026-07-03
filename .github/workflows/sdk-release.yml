@@ -32,8 +32,9 @@ on:
         default: true
         type: boolean
 
+# Least privilege by default; only the publish job is granted write (for tags).
 permissions:
-  contents: write   # needed to push Go/PHP release tags
+  contents: read
 
 jobs:
   validate:
@@ -41,6 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       langs: ${{ steps.select.outputs.langs }}
+    # Bind the free-form dispatch input to an env var so it is never
+    # interpolated into a shell command line (avoids ${{ }} script injection).
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Version consistency
@@ -48,8 +53,8 @@ jobs:
       - name: Requested version matches the manifests
         run: |
           canonical="$(python3 -c 'import json; print(json.load(open("sdks/openapi.json"))["info"]["version"])')"
-          if [ "${{ inputs.version }}" != "$canonical" ]; then
-            echo "Requested ${{ inputs.version }} but the fleet is at $canonical."
+          if [ "$VERSION" != "$canonical" ]; then
+            echo "Requested $VERSION but the fleet is at $canonical."
             echo "Bump every manifest (see scripts/check-sdk-versions.sh) and re-run."
             exit 1
           fi
@@ -136,6 +141,8 @@ jobs:
         run: dotnet pack src/Beatbox/beatbox.csproj -c Release -o nupkg
 
       - name: Upload artifact
+        # Go and PHP are released by git tag, not a built artifact.
+        if: matrix.lang != 'go' && matrix.lang != 'php'
         uses: actions/upload-artifact@v4
         with:
           name: sdk-${{ matrix.lang }}-${{ inputs.version }}
@@ -154,11 +161,18 @@ jobs:
     # Configure this environment with required reviewers to gate the push, and
     # attach the registry secrets referenced below. Approval happens here.
     environment: release
+    # Only this job gets write, and only for pushing Go/PHP release tags.
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         lang: ${{ fromJSON(needs.validate.outputs.langs) }}
+    # Bind the free-form version input to an env var so it is never inlined into
+    # a shell command (avoids ${{ }} injection with secrets/token in scope).
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -192,7 +206,7 @@ jobs:
         run: |
           # Go modules publish by tag; the module path is .../sdks/go so the tag
           # must be prefixed with the subdirectory.
-          tag="sdks/go/v${{ inputs.version }}"
+          tag="sdks/go/v$VERSION"
           if git rev-parse "$tag" >/dev/null 2>&1; then echo "$tag exists — skipping"; exit 0; fi
           git tag "$tag"
           git push origin "$tag"
@@ -217,13 +231,13 @@ jobs:
         run: |
           if [ -z "$GEM_HOST_API_KEY" ]; then echo "::warning::RUBYGEMS_API_KEY unset — skipping gem push"; exit 0; fi
           gem build beatbox.gemspec
-          gem push "beatbox-${{ inputs.version }}.gem"
+          gem push "beatbox-$VERSION.gem"
 
       - if: matrix.lang == 'php'
         name: tag for packagist
         run: |
           # Packagist publishes from a git tag (a webhook syncs the release).
-          tag="sdks/php/v${{ inputs.version }}"
+          tag="sdks/php/v$VERSION"
           if git rev-parse "$tag" >/dev/null 2>&1; then echo "$tag exists — skipping"; exit 0; fi
           git tag "$tag"
           git push origin "$tag"
