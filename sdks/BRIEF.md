@@ -107,3 +107,26 @@ result = client.execute(ExecuteRequest.wasm_wat(
     input={"n": 41}))
 print(result.value)  # 42
 ```
+
+## Fleet consistency notes (intentional idiomatic differences)
+
+All 7 SDKs share the same method surface, config, auth gating, error split,
+job-id handling, and wire field names. A few differences are deliberate, to stay
+idiomatic per language rather than uniform for its own sake:
+
+- **Policy typing.** `Limits` is a typed, partial model in every SDK. The rarely
+  used nested policy sections (`fs`, `net`, `determinism`, `secrets`) are fully
+  typed model classes in the statically-typed SDKs (TypeScript, Go, Java, C#) and
+  accepted as native maps/dicts/arrays in the dynamically-typed SDKs (Python,
+  Ruby, PHP). Both serialize to the same wire shape.
+- **Explicit `input: null`.** The dynamic SDKs plus TypeScript use a sentinel to
+  distinguish an omitted `input` from an explicit JSON `null`. Go and C# omit a
+  null `input` (it is optional on the wire, so no real request is affected).
+- **PHP `ApiError`.** PHP's `Throwable::getCode()` is `final`, so the string API
+  error code is exposed as `getErrorCode()` (with `getCode()` returning the HTTP
+  status). Every other SDK exposes `code` directly.
+- **C# enum forward-compat.** A follow-up will add a tolerant enum fallback so an
+  unrecognized future enum value degrades instead of throwing (as the other SDKs
+  already do); tracked for when the SDK CI can compile C#.
+
+Repository/homepage in every manifest points at `https://github.com/jadenfix/beatbox`.

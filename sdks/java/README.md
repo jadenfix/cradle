@@ -1,6 +1,6 @@
 # beatbox — Java SDK
 
-Official Java SDK for the [beatbox](https://github.com/beatbox-sandbox/beatbox) sandbox REST API.
+Official Java SDK for the [beatbox](https://github.com/jadenfix/beatbox) sandbox REST API.
 Run untrusted code (WebAssembly, Python, JS, ...) in an isolated daemon over HTTP.
 
 - Java 17+

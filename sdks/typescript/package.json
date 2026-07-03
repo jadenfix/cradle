@@ -21,7 +21,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/roe-ai/beatbox",
+    "url": "https://github.com/jadenfix/beatbox",
     "directory": "sdks/typescript"
   },
   "scripts": {

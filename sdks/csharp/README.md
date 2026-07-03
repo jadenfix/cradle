@@ -1,6 +1,6 @@
 # Beatbox .NET SDK
 
-A zero-dependency .NET client for the [beatbox](https://github.com/roe-ai/beatbox)
+A zero-dependency .NET client for the [beatbox](https://github.com/jadenfix/beatbox)
 sandbox REST API. Targets `net8.0` and uses only the base class library
 (`System.Net.Http.HttpClient` + `System.Text.Json`) — no third-party packages.
 

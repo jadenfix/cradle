@@ -18,8 +18,8 @@
     <Company>Beatbox</Company>
     <Description>Zero-dependency .NET client for the beatbox sandbox REST API.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/roe-ai/beatbox</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/roe-ai/beatbox</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/jadenfix/beatbox</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/jadenfix/beatbox</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>beatbox;sandbox;wasm;sdk</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

@@ -11,7 +11,7 @@
 
   <name>beatbox</name>
   <description>Official Java SDK for the beatbox sandbox REST API.</description>
-  <url>https://github.com/beatbox-sandbox/beatbox</url>
+  <url>https://github.com/jadenfix/beatbox</url>
 
   <licenses>
     <license>

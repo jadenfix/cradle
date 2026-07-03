@@ -14,8 +14,8 @@ keywords = ["beatbox", "sandbox", "wasm", "sdk"]
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/beatbox/beatbox"
-Repository = "https://github.com/beatbox/beatbox"
+Homepage = "https://github.com/jadenfix/beatbox"
+Repository = "https://github.com/jadenfix/beatbox"
 
 [tool.setuptools.packages.find]
 where = ["."]

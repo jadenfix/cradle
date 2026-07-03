@@ -4,7 +4,7 @@
     "type": "library",
     "version": "0.1.0",
     "license": "Apache-2.0",
-    "homepage": "https://github.com/beatbox-sandbox/beatbox",
+    "homepage": "https://github.com/jadenfix/beatbox",
     "require": {
         "php": ">=8.1",
         "ext-curl": "*",

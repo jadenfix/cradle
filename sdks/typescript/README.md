@@ -1,6 +1,6 @@
 # beatbox — TypeScript SDK
 
-Zero-dependency TypeScript SDK for the [beatbox](https://github.com/roe-ai/beatbox)
+Zero-dependency TypeScript SDK for the [beatbox](https://github.com/jadenfix/beatbox)
 sandbox REST API. Built on the platform-global `fetch` / `AbortController`
 (Node 18+, Node 22 recommended) — no `axios`, no `node-fetch`, no code-gen
 runtime.

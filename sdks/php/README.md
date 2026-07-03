@@ -1,6 +1,6 @@
 # beatbox PHP SDK
 
-Zero-dependency PHP client for the [beatbox](https://github.com/beatbox-sandbox/beatbox)
+Zero-dependency PHP client for the [beatbox](https://github.com/jadenfix/beatbox)
 sandbox REST API. Uses only the bundled `curl` and `json` extensions. PHP 8.1+.
 
 One of a fleet of 7 language SDKs that share the same method names, configuration,

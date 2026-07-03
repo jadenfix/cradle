@@ -1,6 +1,6 @@
 # beatbox (Ruby SDK)
 
-Idiomatic, **zero-dependency** Ruby client for the [beatbox](https://github.com/beatbox-sh/beatbox)
+Idiomatic, **zero-dependency** Ruby client for the [beatbox](https://github.com/jadenfix/beatbox)
 sandbox REST API. Standard library only (`net/http`, `uri`, `json`); Ruby 3.0+.
 
 Part of the 7-language beatbox SDK fleet — same method names, config, and error

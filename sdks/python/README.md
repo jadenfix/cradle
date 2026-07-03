@@ -1,6 +1,6 @@
 # beatbox — Python SDK
 
-Zero-dependency Python client for the [beatbox](https://github.com/beatbox/beatbox)
+Zero-dependency Python client for the [beatbox](https://github.com/jadenfix/beatbox)
 sandbox REST API. Standard library only (`urllib` + `json`); works on Python 3.9+.
 
 This is one of a 7-language SDK fleet (TypeScript, Python, Go, Java, Ruby, PHP,

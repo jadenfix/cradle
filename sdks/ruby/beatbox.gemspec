@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.description = "Zero-dependency, idiomatic Ruby client for the beatbox " \
                      "sandbox daemon: execute wasm/python/js/exec workloads, " \
                      "manage async jobs, and read capabilities."
-  spec.homepage = "https://github.com/beatbox-sh/beatbox"
+  spec.homepage = "https://github.com/jadenfix/beatbox"
   spec.license = "Apache-2.0"
   spec.required_ruby_version = ">= 3.0"
 
