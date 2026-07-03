@@ -1,0 +1,21 @@
+{
+    "name": "beatbox/beatbox",
+    "description": "Zero-dependency PHP SDK for the beatbox sandbox REST API.",
+    "type": "library",
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/beatbox-sandbox/beatbox",
+    "require": {
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Beatbox\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "php test/run.php"
+    }
+}
