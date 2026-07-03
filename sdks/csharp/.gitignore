@@ -1,0 +1,8 @@
+## .NET build output
+bin/
+obj/
+
+## Test / tool artifacts
+[Tt]est[Rr]esults/
+*.user
+.vs/

@@ -1,0 +1,20 @@
+# Ruby build artifacts
+/pkg/
+/tmp/
+/doc/
+/.yardoc/
+*.gem
+*.rbc
+
+# Bundler
+/.bundle/
+/vendor/bundle/
+Gemfile.lock
+
+# Coverage / test
+/coverage/
+/.rspec_status
+
+# Editors / OS
+.DS_Store
+*.swp
