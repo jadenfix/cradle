@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Lane {
     Wasm,
@@ -14,7 +14,7 @@ pub enum Lane {
     Exec,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     #[serde(default)]
@@ -33,24 +33,27 @@ pub struct Policy {
     pub double_jail: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FsPolicy {
     #[serde(default)]
+    #[schema(value_type = Option<String>)]
     pub workspace: Option<PathBuf>,
     #[serde(default)]
     pub mounts: Vec<Mount>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Mount {
+    #[schema(value_type = String)]
     pub host: PathBuf,
+    #[schema(value_type = String)]
     pub guest: PathBuf,
     pub mode: MountMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MountMode {
     Ro,
@@ -62,7 +65,7 @@ pub enum MountMode {
 // internally-tagged enum — `{"kind":"deny","allow_domains":[...]}` would be
 // accepted and the extra keys dropped. An empty struct variant is validated, so
 // unknown keys on `deny` are rejected like every other variant.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetPolicy {
     Deny {},
@@ -80,7 +83,7 @@ impl Default for NetPolicy {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Secret {
     pub name: String,
@@ -88,14 +91,14 @@ pub struct Secret {
     pub expose: SecretExpose,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretExpose {
     Env,
     File,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     #[serde(default = "default_wall_ms")]
@@ -159,7 +162,7 @@ impl Default for Limits {
 // `Off` is an empty struct variant for the same reason as `NetPolicy::Deny`:
 // `deny_unknown_fields` is a no-op on unit variants of an internally-tagged
 // enum, so `{"kind":"off","seed":5}` would be silently accepted.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Determinism {
     Off {},
@@ -172,7 +175,7 @@ impl Default for Determinism {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExecuteRequest {
     pub lane: Lane,
@@ -189,7 +192,7 @@ pub struct ExecuteRequest {
     pub idempotency_key: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     Queued,
@@ -211,12 +214,12 @@ impl JobStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateJobResponse {
     pub job_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct JobRecord {
     pub job_id: String,
     pub status: JobStatus,
@@ -227,17 +230,28 @@ pub struct JobRecord {
     pub updated_at: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
-    Inline { code: String },
-    WasmFile { path: PathBuf },
-    WasmWat { text: String },
-    WasmBytesBase64 { bytes: String },
-    ModuleRef { sha256: String },
+    Inline {
+        code: String,
+    },
+    WasmFile {
+        #[schema(value_type = String)]
+        path: PathBuf,
+    },
+    WasmWat {
+        text: String,
+    },
+    WasmBytesBase64 {
+        bytes: String,
+    },
+    ModuleRef {
+        sha256: String,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStatus {
     Ok,
@@ -248,7 +262,7 @@ pub enum ExecutionStatus {
     Denied,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExecutionResult {
     pub status: ExecutionStatus,
     pub value: serde_json::Value,
@@ -268,7 +282,7 @@ pub struct ExecutionResult {
     pub egress: Vec<EgressRecord>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Metrics {
     pub wall_time_ms: u64,
     /// CPU time in milliseconds, when the lane measures it separately from wall
@@ -279,7 +293,7 @@ pub struct Metrics {
     pub peak_memory_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ErrorBody {
     pub code: String,
     pub message: String,
@@ -294,7 +308,7 @@ impl ErrorBody {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EffectiveIsolation {
     pub os: String,
     pub mechanisms: Vec<String>,
@@ -302,14 +316,14 @@ pub struct EffectiveIsolation {
     pub downgrades: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EgressRecord {
     pub domain: String,
     pub port: u16,
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ErrorResponse {
     pub error: ErrorBody,
 }

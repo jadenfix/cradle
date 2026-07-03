@@ -797,6 +797,30 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
         openapi_paths::cancel_job,
         openapi_paths::mcp_post
     ),
+    components(schemas(
+        ExecuteRequest,
+        beatbox_core::Lane,
+        Source,
+        beatbox_core::Policy,
+        beatbox_core::FsPolicy,
+        beatbox_core::Mount,
+        beatbox_core::MountMode,
+        beatbox_core::NetPolicy,
+        beatbox_core::Secret,
+        beatbox_core::SecretExpose,
+        beatbox_core::Limits,
+        beatbox_core::Determinism,
+        ExecutionResult,
+        beatbox_core::ExecutionStatus,
+        beatbox_core::Metrics,
+        beatbox_core::EffectiveIsolation,
+        beatbox_core::EgressRecord,
+        ErrorBody,
+        ErrorResponse,
+        CreateJobResponse,
+        JobRecord,
+        beatbox_core::JobStatus,
+    )),
     tags(
         (name = "v1", description = "beatbox REST API"),
         (name = "mcp", description = "stateless MCP JSON-RPC endpoint")
@@ -806,6 +830,10 @@ struct ApiDoc;
 
 #[allow(dead_code)]
 mod openapi_paths {
+    use beatbox_core::{
+        CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord,
+    };
+
     #[utoipa::path(
         get,
         path = "/v1/health",
@@ -829,10 +857,11 @@ mod openapi_paths {
         post,
         path = "/v1/execute",
         tag = "v1",
+        request_body = ExecuteRequest,
         responses(
-            (status = 200, description = "ExecutionResult"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 422, description = "Protocol, source, policy, or sync-limit rejection")
+            (status = 200, description = "ExecutionResult", body = ExecutionResult),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 422, description = "Protocol, source, policy, or sync-limit rejection", body = ErrorResponse)
         )
     )]
     pub fn execute() {}
@@ -841,9 +870,13 @@ mod openapi_paths {
         post,
         path = "/v1/jobs",
         tag = "v1",
+        request_body = ExecuteRequest,
         responses(
-            (status = 202, description = "Created asynchronous job"),
-            (status = 401, description = "Missing or invalid bearer token")
+            (status = 202, description = "Created asynchronous job", body = CreateJobResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 409, description = "Idempotency key reused with a different payload", body = ErrorResponse),
+            (status = 422, description = "Protocol, source, policy, or job-limit rejection", body = ErrorResponse),
+            (status = 429, description = "Concurrency cap exhausted", body = ErrorResponse)
         )
     )]
     pub fn create_job() {}
@@ -854,9 +887,9 @@ mod openapi_paths {
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
-            (status = 200, description = "JobRecord"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 404, description = "Unknown job")
+            (status = 200, description = "JobRecord", body = JobRecord),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 404, description = "Unknown job", body = ErrorResponse)
         )
     )]
     pub fn get_job() {}
