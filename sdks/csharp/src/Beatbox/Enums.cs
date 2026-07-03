@@ -1,9 +1,12 @@
 namespace Beatbox;
 
-// Enum members serialize to their snake_case wire form via the
-// JsonStringEnumConverter registered with a snake_case naming policy in
-// BeatboxJson.Options. Do not annotate these enums with [JsonConverter]: an
-// explicit converter attribute would bypass that naming policy.
+// Enum members serialize to their snake_case wire form via TolerantEnumConverter,
+// registered per type in BeatboxJson.Options. That converter also degrades an
+// unrecognized wire value to the enum's `Unknown` member instead of throwing, so
+// a newer server can add values without breaking this client. Each enum therefore
+// ends with an `Unknown` sentinel (which is never sent — serializing it throws).
+// Do not annotate these enums with [JsonConverter]: an attribute would bypass the
+// registered converter and its snake_case + tolerant behavior.
 
 /// <summary>Execution lane requested for a run.</summary>
 public enum Lane
@@ -25,6 +28,13 @@ public enum Lane
 
     /// <summary><c>exec</c></summary>
     Exec,
+
+    /// <summary>
+    /// A lane value returned by a newer server that this client does not
+    /// recognize. Deserialization degrades to this instead of throwing;
+    /// serializing it throws.
+    /// </summary>
+    Unknown,
 }
 
 /// <summary>Terminal status of a single execution.</summary>
@@ -47,6 +57,12 @@ public enum ExecutionStatus
 
     /// <summary><c>denied</c></summary>
     Denied,
+
+    /// <summary>
+    /// A status returned by a newer server that this client does not recognize.
+    /// Deserialization degrades to this instead of throwing; serializing it throws.
+    /// </summary>
+    Unknown,
 }
 
 /// <summary>Lifecycle status of an asynchronous job.</summary>
@@ -66,6 +82,12 @@ public enum JobStatus
 
     /// <summary><c>canceled</c></summary>
     Canceled,
+
+    /// <summary>
+    /// A status returned by a newer server that this client does not recognize.
+    /// Deserialization degrades to this instead of throwing; serializing it throws.
+    /// </summary>
+    Unknown,
 }
 
 /// <summary>Mount access mode.</summary>
@@ -76,6 +98,13 @@ public enum MountMode
 
     /// <summary><c>rw</c></summary>
     Rw,
+
+    /// <summary>
+    /// An unrecognized mode from a newer server (e.g. echoed back in a job's
+    /// request). Deserialization degrades to this instead of throwing;
+    /// serializing it throws.
+    /// </summary>
+    Unknown,
 }
 
 /// <summary>How a secret is exposed to the guest.</summary>
@@ -86,4 +115,11 @@ public enum SecretExpose
 
     /// <summary><c>file</c></summary>
     File,
+
+    /// <summary>
+    /// An unrecognized exposure from a newer server (e.g. echoed back in a job's
+    /// request). Deserialization degrades to this instead of throwing;
+    /// serializing it throws.
+    /// </summary>
+    Unknown,
 }
