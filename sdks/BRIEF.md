@@ -125,8 +125,11 @@ idiomatic per language rather than uniform for its own sake:
 - **PHP `ApiError`.** PHP's `Throwable::getCode()` is `final`, so the string API
   error code is exposed as `getErrorCode()` (with `getCode()` returning the HTTP
   status). Every other SDK exposes `code` directly.
-- **C# enum forward-compat.** A follow-up will add a tolerant enum fallback so an
-  unrecognized future enum value degrades instead of throwing (as the other SDKs
-  already do); tracked for when the SDK CI can compile C#.
+- **C# enum forward-compat.** Like every other SDK, C# degrades an unrecognized
+  future enum value instead of throwing — via a tolerant per-enum converter that
+  maps an unknown wire value to an `Unknown` sentinel member. (The string-backed
+  SDKs — Python/Go/Ruby/PHP/TypeScript — instead preserve the raw unknown string;
+  C#'s hard enums use the sentinel.) Serializing `Unknown` throws, so the client
+  can never send a value the server would not understand.
 
 Repository/homepage in every manifest points at `https://github.com/jadenfix/beatbox`.
