@@ -785,6 +785,23 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
 
+/// The canonical OpenAPI document, pretty-printed exactly as it is served at
+/// `GET /openapi.json` and checked into `sdks/openapi.json`.
+///
+/// This is the single source of truth the SDK fleet is generated/synced
+/// against. A drift test (`tests/openapi_drift.rs`) asserts the committed
+/// `sdks/openapi.json` matches this byte-for-byte, so the spec can never
+/// silently diverge from the server that implements it.
+pub fn openapi_spec_json() -> String {
+    match ApiDoc::openapi().to_pretty_json() {
+        // Match the on-disk convention: pretty JSON with a trailing newline.
+        Ok(json) => format!("{json}\n"),
+        // The document is a compile-time-fixed tree of plain data, so JSON
+        // serialization of it cannot fail; a failure here is a build bug.
+        Err(e) => panic!("beatbox OpenAPI document failed to serialize: {e}"),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     info(title = "beatbox API", version = "0.1.0"),

@@ -1,0 +1,239 @@
+name: sdk-release
+
+# Gated, Stainless-style rollout of the SDK fleet to language registries.
+#
+# This workflow is MANUAL (workflow_dispatch) and defaults to a dry run. A real
+# publish requires two things the repo owner controls:
+#   1. A `release` GitHub Environment with required reviewers  -> manual approval
+#      gate before anything is pushed to a registry.
+#   2. The registry secrets listed under each job below. Until a secret is set,
+#      that language's publish step is skipped (never fails the run), so the
+#      pipeline is safe to land and exercise before any credentials exist.
+#
+# Flow: validate -> package (always, uploads artifacts) -> publish (gated).
+# A dry run stops after `package`, so you can inspect the built artifacts on the
+# run summary without any possibility of a push.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (must match the SDK manifests, e.g. 0.1.0)'
+        required: true
+        type: string
+      languages:
+        description: 'Which SDKs to roll out'
+        required: true
+        default: all
+        type: choice
+        options: [all, typescript, python, go, java, ruby, php, csharp]
+      dry_run:
+        description: 'Dry run: build and upload artifacts but do NOT publish'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write   # needed to push Go/PHP release tags
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    outputs:
+      langs: ${{ steps.select.outputs.langs }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version consistency
+        run: ./scripts/check-sdk-versions.sh
+      - name: Requested version matches the manifests
+        run: |
+          canonical="$(python3 -c 'import json; print(json.load(open("sdks/openapi.json"))["info"]["version"])')"
+          if [ "${{ inputs.version }}" != "$canonical" ]; then
+            echo "Requested ${{ inputs.version }} but the fleet is at $canonical."
+            echo "Bump every manifest (see scripts/check-sdk-versions.sh) and re-run."
+            exit 1
+          fi
+          echo "Releasing $canonical."
+      - name: Select languages
+        id: select
+        run: |
+          if [ "${{ inputs.languages }}" = "all" ]; then
+            echo 'langs=["typescript","python","go","java","ruby","php","csharp"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'langs=["${{ inputs.languages }}"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  package:
+    name: package (${{ matrix.lang }})
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: ${{ fromJSON(needs.validate.outputs.langs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- language toolchains (only the matching one runs) ---
+      - if: matrix.lang == 'typescript'
+        uses: actions/setup-node@v4
+        with: { node-version: '20', cache: npm, cache-dependency-path: sdks/typescript/package-lock.json }
+      - if: matrix.lang == 'python'
+        uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - if: matrix.lang == 'go'
+        uses: actions/setup-go@v5
+        with: { go-version: '1.21' }
+      - if: matrix.lang == 'java'
+        uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17', cache: maven }
+      - if: matrix.lang == 'ruby'
+        uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3' }
+      - if: matrix.lang == 'php'
+        uses: shivammathur/setup-php@v2
+        with: { php-version: '8.1', extensions: 'curl, json', tools: none }
+      - if: matrix.lang == 'csharp'
+        uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+
+      # --- build the publishable artifact ---
+      - if: matrix.lang == 'typescript'
+        name: build npm tarball
+        working-directory: sdks/typescript
+        run: |
+          npm ci
+          npm run build
+          npm pack
+      - if: matrix.lang == 'python'
+        name: build sdist + wheel
+        working-directory: sdks/python
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - if: matrix.lang == 'go'
+        name: verify go module
+        working-directory: sdks/go
+        env: { GOPROXY: 'off', GOFLAGS: '-mod=mod' }
+        run: |
+          go build ./...
+          go test ./...
+      - if: matrix.lang == 'java'
+        name: build jar
+        working-directory: sdks/java
+        run: mvn -B -ntp package
+      - if: matrix.lang == 'ruby'
+        name: build gem
+        working-directory: sdks/ruby
+        run: gem build beatbox.gemspec
+      - if: matrix.lang == 'php'
+        name: validate php package
+        working-directory: sdks/php
+        run: php test/run.php
+      - if: matrix.lang == 'csharp'
+        name: pack nuget
+        working-directory: sdks/csharp
+        run: dotnet pack src/Beatbox/beatbox.csproj -c Release -o nupkg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.lang }}-${{ inputs.version }}
+          path: |
+            sdks/typescript/*.tgz
+            sdks/python/dist/*
+            sdks/java/target/*.jar
+            sdks/ruby/*.gem
+            sdks/csharp/nupkg/*.nupkg
+          if-no-files-found: ignore
+
+  publish:
+    name: publish (${{ matrix.lang }})
+    needs: [validate, package]
+    if: ${{ inputs.dry_run == false }}
+    # Configure this environment with required reviewers to gate the push, and
+    # attach the registry secrets referenced below. Approval happens here.
+    environment: release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: ${{ fromJSON(needs.validate.outputs.langs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.lang == 'typescript'
+        name: npm publish
+        working-directory: sdks/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "::warning::NPM_TOKEN unset — skipping npm publish"; exit 0; fi
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm ci && npm run build
+          npm publish --access public
+
+      - if: matrix.lang == 'python'
+        name: twine upload
+        working-directory: sdks/python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then echo "::warning::PYPI_API_TOKEN unset — skipping PyPI upload"; exit 0; fi
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine upload dist/*
+
+      - if: matrix.lang == 'go'
+        name: tag go module
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Go modules publish by tag; the module path is .../sdks/go so the tag
+          # must be prefixed with the subdirectory.
+          tag="sdks/go/v${{ inputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then echo "$tag exists — skipping"; exit 0; fi
+          git tag "$tag"
+          git push origin "$tag"
+
+      - if: matrix.lang == 'java'
+        name: maven deploy
+        working-directory: sdks/java
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+        run: |
+          if [ -z "$OSSRH_TOKEN" ]; then echo "::warning::OSSRH_TOKEN unset — skipping Maven Central deploy"; exit 0; fi
+          # Requires a <distributionManagement> + signing profile in pom.xml and
+          # a GPG key in secrets.MAVEN_GPG_PRIVATE_KEY. See sdks/RELEASING.md.
+          mvn -B -ntp -DskipTests deploy
+
+      - if: matrix.lang == 'ruby'
+        name: gem push
+        working-directory: sdks/ruby
+        env:
+          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          if [ -z "$GEM_HOST_API_KEY" ]; then echo "::warning::RUBYGEMS_API_KEY unset — skipping gem push"; exit 0; fi
+          gem build beatbox.gemspec
+          gem push "beatbox-${{ inputs.version }}.gem"
+
+      - if: matrix.lang == 'php'
+        name: tag for packagist
+        run: |
+          # Packagist publishes from a git tag (a webhook syncs the release).
+          tag="sdks/php/v${{ inputs.version }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then echo "$tag exists — skipping"; exit 0; fi
+          git tag "$tag"
+          git push origin "$tag"
+
+      - if: matrix.lang == 'csharp'
+        name: nuget push
+        working-directory: sdks/csharp
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then echo "::warning::NUGET_API_KEY unset — skipping NuGet push"; exit 0; fi
+          dotnet pack src/Beatbox/beatbox.csproj -c Release -o nupkg
+          dotnet nuget push "nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

@@ -1,0 +1,151 @@
+name: sdk-ci
+
+# Build, lint, and test every SDK in the fleet on its native toolchain.
+# Path-filtered so it only runs when the SDKs, their spec, or this pipeline
+# change — the Rust build is covered by ci.yml (which also runs the
+# spec-drift guard that keeps sdks/openapi.json in sync with the server).
+on:
+  push:
+    paths:
+      - 'sdks/**'
+      - 'scripts/check-sdk-versions.sh'
+      - '.github/workflows/sdk-ci.yml'
+  pull_request:
+    paths:
+      - 'sdks/**'
+      - 'scripts/check-sdk-versions.sh'
+      - '.github/workflows/sdk-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check-sdk-versions.sh
+
+  typescript:
+    name: typescript
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: build (sdist + wheel)
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: test
+        run: python -m unittest discover -s tests -t .
+
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    env:
+      # The SDK is standard-library only; enforce it by disabling the proxy.
+      GOPROXY: 'off'
+      GOFLAGS: '-mod=mod'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt -w:"; echo "$unformatted"; exit 1
+          fi
+
+  java:
+    name: java
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: mvn -B -ntp verify
+
+  ruby:
+    name: ruby
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/ruby
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: build gem
+        run: gem build beatbox.gemspec
+      - name: test
+        run: ruby -Ilib -Itest -e 'Dir.glob("test/**/*_test.rb").each { |f| require File.expand_path(f) }'
+
+  php:
+    name: php
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: curl, json
+          tools: none
+      - name: validate composer.json
+        run: php -r "json_decode(file_get_contents('composer.json'), false, 512, JSON_THROW_ON_ERROR); echo 'composer.json ok';"
+      - name: test
+        run: php test/run.php
+
+  csharp:
+    name: csharp
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/csharp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet build Beatbox.sln -c Release
+      - run: dotnet test Beatbox.sln -c Release --no-build
