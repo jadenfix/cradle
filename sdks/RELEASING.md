@@ -44,9 +44,10 @@ manual, dry-run by default, and gated behind a human approval.
    - `sdks/csharp/src/Beatbox/beatbox.csproj` → `<Version>`
    - Go has no manifest version — it is released by the tag the workflow pushes.
 
-   The API version in `openapi.json` comes from the Rust workspace
-   (`info(version = …)` on `ApiDoc`), so bump that too if the release changes
-   the API surface, and re-bless the spec:
+   The API version in `openapi.json` is the `info(version = …)` literal on
+   `ApiDoc` in `crates/beatbox-server/src/lib.rs` (it is intentionally
+   independent of the Rust crate version). Bump that literal too if the release
+   changes the API surface, and re-bless the spec:
 
    ```bash
    BEATBOX_BLESS_OPENAPI=1 cargo test -p beatbox-server --test openapi_drift

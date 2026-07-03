@@ -31,7 +31,9 @@ fn committed_openapi_matches_server() {
     let generated = beatbox_server::openapi_spec_json();
     let path = spec_path();
 
-    if std::env::var_os("BEATBOX_BLESS_OPENAPI").is_some() {
+    // Re-bless only on a non-empty value, so `BEATBOX_BLESS_OPENAPI=` (empty)
+    // does not silently overwrite the committed spec.
+    if std::env::var("BEATBOX_BLESS_OPENAPI").is_ok_and(|v| !v.is_empty()) {
         if let Err(e) = std::fs::write(&path, &generated) {
             panic!("failed to write blessed {}: {e}", path.display());
         }
