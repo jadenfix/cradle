@@ -548,6 +548,48 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn recovery_releases_keys_of_running_jobs_and_tolerates_multiple()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let db_path =
+            std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
+
+        // Two keyed jobs left *running* by a restart. Recovery must fail both and
+        // release both keys — exercising the running-row path and confirming the
+        // partial unique index tolerates several NULL keys at once.
+        let (id_a, id_b) = {
+            let store = JobStore::open(&db_path)?;
+            let mut a = request();
+            a.idempotency_key = Some("run-a".to_string());
+            let mut b = request();
+            b.idempotency_key = Some("run-b".to_string());
+            let id_a = store.create(&a)?;
+            let id_b = store.create(&b)?;
+            store.mark_running(&id_a)?;
+            store.mark_running(&id_b)?;
+            (id_a, id_b)
+        };
+
+        // Reopen triggers recovery of both running rows without a unique-index error.
+        let store = JobStore::open(&db_path)?;
+        for id in [&id_a, &id_b] {
+            let job = store
+                .get(id)?
+                .ok_or_else(|| std::io::Error::other("recovered job should exist"))?;
+            assert_eq!(job.status, beatbox_core::JobStatus::Failed);
+            assert_eq!(
+                job.error.as_ref().map(|error| error.code.as_str()),
+                Some("daemon_restarted")
+            );
+        }
+        // Retrying either released key produces a fresh job.
+        let mut retry = request();
+        retry.idempotency_key = Some("run-a".to_string());
+        assert_ne!(store.create(&retry)?, id_a);
+        std::fs::remove_file(db_path).ok();
+        Ok(())
+    }
+
     fn sample_result() -> beatbox_core::ExecutionResult {
         beatbox_core::ExecutionResult {
             status: beatbox_core::ExecutionStatus::Ok,

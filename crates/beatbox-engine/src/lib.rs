@@ -1352,6 +1352,43 @@ mod tests {
     }
 
     #[test]
+    fn max_size_wasm_file_passes_the_size_guard() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = BeatboxEngine::new()?;
+        // A file of exactly the cap must clear the size guard (strict `>`), failing
+        // later at compilation rather than being rejected as oversized.
+        let path = std::env::temp_dir().join("beatbox-max-size-file-source.bin");
+        std::fs::write(&path, vec![0_u8; 16 * 1024 * 1024])?;
+
+        let request = ExecuteRequest {
+            lane: Lane::Wasm,
+            source: Source::WasmFile { path: path.clone() },
+            entrypoint: None,
+            input: serde_json::Value::Null,
+            stdin: String::new(),
+            policy: Policy::default(),
+            idempotency_key: None,
+        };
+        let result = engine.execute(request);
+        std::fs::remove_file(&path).ok();
+
+        // Not rejected for size; garbage bytes fail at Module::new (wasm_compile).
+        match result {
+            Ok(execution) => {
+                assert_eq!(execution.status, ExecutionStatus::Error);
+                assert_eq!(
+                    execution.error.as_ref().map(|error| error.code.as_str()),
+                    Some("wasm_compile")
+                );
+            }
+            Err(EngineError::InvalidSource { reason, .. }) => {
+                panic!("exactly-max file should pass the size guard, got: {reason}")
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn wasm_memory_grow_preserves_module_max_failure_semantics()
     -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
