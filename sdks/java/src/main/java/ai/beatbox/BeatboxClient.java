@@ -184,11 +184,22 @@ public final class BeatboxClient {
         if (status / 100 == 2) {
             return;
         }
+        throw apiExceptionFor(status, response.body(), mapper);
+    }
+
+    /**
+     * Builds the typed error for a non-2xx response. Any error body shape must
+     * still yield a {@link BeatboxApiException} carrying the status — an empty,
+     * non-JSON, or unexpectedly-shaped body (including the JSON literal {@code
+     * null}) falls back to a generic message rather than throwing.
+     */
+    static BeatboxApiException apiExceptionFor(int status, byte[] body, ObjectMapper mapper) {
         String code = null;
         String message = null;
         try {
-            ErrorResponse parsed = mapper.readValue(response.body(), ErrorResponse.class);
-            if (parsed.error() != null) {
+            ErrorResponse parsed = mapper.readValue(body, ErrorResponse.class);
+            // readValue("null", ...) returns null; guard before dereferencing.
+            if (parsed != null && parsed.error() != null) {
                 code = parsed.error().code();
                 message = parsed.error().message();
             }
@@ -198,7 +209,7 @@ public final class BeatboxClient {
         if (message == null || message.isBlank()) {
             message = "HTTP " + status;
         }
-        throw new BeatboxApiException(status, code, message);
+        return new BeatboxApiException(status, code, message);
     }
 
     private <T> T decode(HttpResponse<byte[]> response, Class<T> type) {
