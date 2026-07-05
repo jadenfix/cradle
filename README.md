@@ -43,3 +43,9 @@ Wasmtime-backed `wasm` lane, a local CLI, a daemon router, a typed HTTP client,
 OpenAPI JSON, MCP tools, and rusqlite-backed async jobs. Native Python, JS,
 exec jails, stateful sessions, and the `beater.js` integration remain later
 milestones.
+
+## Ecosystem
+
+beatbox is part of the [ecosystem](https://github.com/jadenfix/ecosystem) — a family of Rust-first, local-first agent-infrastructure projects. It is fully standalone by design: the CLI, daemon, REST API, and MCP endpoint run on their own, and siblings plug in only over those protocol boundaries. Within the family it can connect for:
+
+- the sandboxed-execution lane for [beater.js](https://github.com/jadenfix/beater.js) untrusted code, [tempo](https://github.com/jadenfix/tempo) tool execution, and [beaterOS](https://github.com/jadenfix/beaterOS) auditable side effects
