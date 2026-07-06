@@ -633,6 +633,100 @@
           }
         }
       },
+      "BrowserAdapterCompletionProofRequirement": {
+        "type": "object",
+        "required": [
+          "proof_id",
+          "label",
+          "evidence_field",
+          "required_invariant"
+        ],
+        "properties": {
+          "evidence_field": {
+            "type": "string",
+            "description": "Required evidence field path in BrowserAdapterCompletionReport.",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable compatibility label retained for older manifest fields.",
+            "minLength": 1
+          },
+          "proof_id": {
+            "type": "string",
+            "description": "Stable machine-readable proof name. Adapters must echo this in reports.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "required_invariant": {
+            "type": "string",
+            "description": "Runtime invariant Beatbox expects before trusting completion.",
+            "minLength": 1
+          }
+        }
+      },
+      "BrowserAdapterCompletionReport": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "adapter_id",
+          "contract_version",
+          "process_terminated",
+          "temporary_profile_removed",
+          "plaintext_artifacts_removed",
+          "egress_log_sealed_or_discarded",
+          "sealed_artifact_handles",
+          "proof_ids",
+          "notes"
+        ],
+        "properties": {
+          "adapter_id": {
+            "type": "string",
+            "description": "Must match the trusted adapter id chosen for launch.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "contract_version": {
+            "type": "string"
+          },
+          "egress_log_sealed_or_discarded": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plaintext_artifacts_removed": {
+            "type": "boolean"
+          },
+          "process_terminated": {
+            "type": "boolean"
+          },
+          "proof_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Must match the BrowserAdapterLaunchRequest request_id.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "sealed_artifact_handles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "temporary_profile_removed": {
+            "type": "boolean"
+          }
+        }
+      },
       "BrowserAdapterConformanceCase": {
         "type": "object",
         "required": [
@@ -795,9 +889,16 @@
           "handoff_fields",
           "required_guard_fields",
           "required_completion_proofs",
+          "completion_proof_contract",
           "unavailable_reason"
         ],
         "properties": {
+          "completion_proof_contract": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterCompletionProofRequirement"
+            }
+          },
           "handoff_fields": {
             "type": "array",
             "items": {
@@ -890,9 +991,16 @@
           "handoff_fields",
           "launch_request_template",
           "required_completion_proofs",
+          "completion_proof_contract",
           "unavailable_reason"
         ],
         "properties": {
+          "completion_proof_contract": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterCompletionProofRequirement"
+            }
+          },
           "contract_version": {
             "type": "string"
           },
@@ -940,6 +1048,8 @@
           "requested_controls",
           "guard_plan",
           "required_completion_proofs",
+          "completion_proof_contract",
+          "completion_report_template",
           "same_user_capability_required",
           "endpoint_network_policy_binding_required",
           "notes"
@@ -959,6 +1069,15 @@
           },
           "artifact_mode": {
             "$ref": "#/components/schemas/BrowserArtifactMode"
+          },
+          "completion_proof_contract": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterCompletionProofRequirement"
+            }
+          },
+          "completion_report_template": {
+            "$ref": "#/components/schemas/BrowserAdapterCompletionReport"
           },
           "contract_version": {
             "type": "string"

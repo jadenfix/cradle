@@ -80,14 +80,16 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 (including `target_origins`, `credential_mode`, `artifact_mode`,
 `required_controls`, profile `controls`, `missing_controls`, and
 `intent_warnings`, plus the browser admission `guard_plan` and
-`adapter_handoff` with its `launch_request_template`; raw JSON return is
-acceptable until each language adds typed convenience models),
+`adapter_handoff` with its `launch_request_template`,
+`completion_proof_contract`, and `completion_report_template`; raw JSON return
+is acceptable until each language adds typed convenience models),
 `BrowserAdapterManifestRequest`,
 `BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
 `BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,
 `BrowserAdapterRegistrationResponse`, `BrowserAdapterRegistrationDecision`,
 `BrowserAdapterManifestResponse` (including `conformance_profile`),
 `BrowserAdapterConformanceProfile`, `BrowserAdapterLaunchRequest`,
+`BrowserAdapterCompletionProofRequirement`, `BrowserAdapterCompletionReport`,
 `BrowserAdapterConformanceCase`, `BrowserAdapterConformanceExpectation`,
 `BrowserAdapterValidationDecision`,
 `ExecutionResult` (status, value,

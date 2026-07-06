@@ -1152,6 +1152,36 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .iter()
             .any(|proof| proof.contains("temporary profile directory"))
     );
+    assert!(
+        decision
+            .adapter_handoff
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "temporary_profile_removed"
+                && proof.evidence_field == "temporary_profile_removed")
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .completion_report_template
+            .request_id,
+        decision.adapter_handoff.launch_request_template.request_id
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .completion_report_template
+            .proof_ids,
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .completion_proof_contract
+            .iter()
+            .map(|proof| proof.proof_id.clone())
+            .collect::<Vec<_>>()
+    );
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
     assert!(
@@ -1335,6 +1365,29 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .endpoint_network_policy_binding_required
     );
     assert!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "egress_log_sealed_or_discarded")
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .completion_report_template
+            .adapter_id,
+        "tempo-conformance-adapter-v1"
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .completion_report_template
+            .temporary_profile_removed
+    );
+    assert!(
         !validation
             .conformance_profile
             .field_complete_expectation
@@ -1435,6 +1488,14 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
     assert_eq!(contract.adapter_contract.launch_endpoint, None);
     assert!(
         contract
+            .adapter_contract
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "browser_process_terminated"
+                && proof.evidence_field == "process_terminated")
+    );
+    assert!(
+        contract
             .required_levels
             .contains(&BrowserSandboxLevel::OsIsolated)
     );
@@ -1479,6 +1540,15 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
             .required_completion_proofs
             .iter()
             .any(|proof| proof.contains("temporary profile directory"))
+    );
+    assert_eq!(
+        contract
+            .conformance_profile
+            .field_complete_launch_request
+            .completion_report_template
+            .proof_ids
+            .len(),
+        contract.adapter_contract.completion_proof_contract.len()
     );
     assert!(
         contract
@@ -2376,6 +2446,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserIntegrationContract",
         "BrowserAdapterCapabilityIssueRequest",
         "BrowserAdapterCapabilityIssueResponse",
+        "BrowserAdapterCompletionReport",
+        "BrowserAdapterCompletionProofRequirement",
         "BrowserAdapterContract",
         "BrowserAdapterContractResponse",
         "BrowserAdapterConformanceCase",
@@ -2492,8 +2564,11 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_array()
             .is_some_and(|required| required
                 .iter()
-                .any(|field| field == "launch_request_template")),
-        "adapter handoff should require the launch request template"
+                .any(|field| field == "launch_request_template")
+                && required
+                    .iter()
+                    .any(|field| field == "completion_proof_contract")),
+        "adapter handoff should require the launch request and proof templates"
     );
     assert!(
         schemas["BrowserAdapterConformanceProfile"]["required"]
@@ -2512,12 +2587,44 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required.iter().any(|field| field == "guard_plan")
                     && required
                         .iter()
+                        .any(|field| field == "completion_proof_contract")
+                    && required
+                        .iter()
+                        .any(|field| field == "completion_report_template")
+                    && required
+                        .iter()
                         .any(|field| field == "same_user_capability_required")
                     && required
                         .iter()
                         .any(|field| field == "endpoint_network_policy_binding_required")
             ),
         "launch request schema should expose the full adapter handoff envelope"
+    );
+    assert!(
+        schemas["BrowserAdapterContract"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "completion_proof_contract")),
+        "adapter contract should publish typed completion proof requirements"
+    );
+    assert!(
+        schemas["BrowserAdapterCompletionReport"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "request_id")
+                    && required.iter().any(|field| field == "process_terminated")
+                    && required.iter().any(|field| field == "proof_ids")
+            ),
+        "completion report schema should require teardown proof evidence"
+    );
+    assert!(
+        schemas["BrowserAdapterCompletionProofRequirement"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "proof_id")
+                && required.iter().any(|field| field == "evidence_field")
+                && required.iter().any(|field| field == "required_invariant")),
+        "completion proof requirement schema should be self-contained"
     );
     assert!(
         schemas["BrowserAdapterConformanceCase"]["required"]
@@ -3027,6 +3134,24 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
                 .as_str()
                 .is_some_and(|proof| proof.contains("temporary profile directory"))))
     );
+    assert!(
+        result["structuredContent"]["adapter_handoff"]["completion_proof_contract"]
+            .as_array()
+            .is_some_and(|proofs| proofs
+                .iter()
+                .any(|proof| proof["proof_id"] == "temporary_profile_removed"
+                    && proof["evidence_field"] == "temporary_profile_removed"))
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["completion_report_template"]
+            ["request_id"],
+        "browser-admission-launch-template-v1"
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["completion_report_template"]
+            ["proof_ids"][0],
+        "browser_process_terminated"
+    );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
     assert!(
         result["structuredContent"]["reasons"]
@@ -3142,6 +3267,18 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
                 .iter()
                 .any(|field| field == "guard_plan.network.deny_metadata_endpoints"))
     );
+    assert!(
+        result["structuredContent"]["adapter_contract"]["completion_proof_contract"]
+            .as_array()
+            .is_some_and(|proofs| proofs.iter().any(|proof| proof["proof_id"]
+                == "egress_log_sealed_or_discarded"
+                && proof["evidence_field"] == "egress_log_sealed_or_discarded"))
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["completion_report_template"]
+            ["adapter_id"],
+        "tempo-conformance-adapter-v1"
+    );
     Ok(())
 }
 
@@ -3219,6 +3356,20 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
         result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["guard_plan"]
             ["network"]["allowed_origins"],
         serde_json::json!(["https://example.com"])
+    );
+    assert!(
+        result["structuredContent"]["adapter_contract"]["completion_proof_contract"]
+            .as_array()
+            .is_some_and(|proofs| proofs.iter().any(|proof| proof["proof_id"]
+                == "temporary_profile_removed"
+                && proof["required_invariant"]
+                    .as_str()
+                    .is_some_and(|invariant| invariant.contains("profile directory"))))
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["completion_report_template"]
+            ["proof_ids"][1],
+        "temporary_profile_removed"
     );
     assert!(
         result["structuredContent"]["conformance_profile"]["required_cases"]

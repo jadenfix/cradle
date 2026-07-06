@@ -15,19 +15,19 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
     BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
-    BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
-    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
-    BrowserAdapterHandoff, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
-    BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
-    BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
-    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
-    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
-    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
-    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
-    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
-    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
-    ExecutionStatus, JobRecord, Lane, Policy, Source,
+    BrowserAdapterCompletionReport, BrowserAdapterConformanceCase,
+    BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
+    BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchRequest,
+    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
+    BrowserAdapterRegistrationDecision, BrowserAdapterRegistrationRequest,
+    BrowserAdapterRegistrationResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
+    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
+    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
+    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
+    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
+    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1122,6 +1122,7 @@ fn browser_adapter_handoff(
         handoff_fields: adapter.handoff_fields,
         launch_request_template,
         required_completion_proofs: adapter.required_completion_proofs,
+        completion_proof_contract: adapter.completion_proof_contract,
         unavailable_reason: adapter.unavailable_reason,
     }
 }
@@ -1133,10 +1134,11 @@ fn browser_adapter_launch_request_template(
     guard_plan: &BrowserAdmissionGuardPlan,
     required_completion_proofs: Vec<String>,
 ) -> BrowserAdapterLaunchRequest {
+    let adapter_contract = BrowserAdapterContract::default();
     BrowserAdapterLaunchRequest {
         request_id: request_id.to_string(),
-        adapter_id,
-        contract_version: BrowserAdapterContract::default().version,
+        adapter_id: adapter_id.clone(),
+        contract_version: adapter_contract.version.clone(),
         requested_level: request.requested_level.clone(),
         actor: request.actor.clone(),
         sensitivity: request.sensitivity.clone(),
@@ -1146,12 +1148,48 @@ fn browser_adapter_launch_request_template(
         requested_controls: request.required_controls.clone(),
         guard_plan: guard_plan.clone(),
         required_completion_proofs,
+        completion_proof_contract: adapter_contract.completion_proof_contract.clone(),
+        completion_report_template: browser_adapter_completion_report_template(
+            request_id,
+            adapter_id.as_deref(),
+            &adapter_contract,
+        ),
         same_user_capability_required: true,
         endpoint_network_policy_binding_required: true,
         notes: vec![
             "launch request template only; beatbox does not currently call adapter launch endpoints"
                 .to_string(),
             "do not treat this envelope as a registration, trust, or launch grant".to_string(),
+        ],
+    }
+}
+
+fn browser_adapter_completion_report_template(
+    request_id: &str,
+    adapter_id: Option<&str>,
+    adapter_contract: &BrowserAdapterContract,
+) -> BrowserAdapterCompletionReport {
+    BrowserAdapterCompletionReport {
+        request_id: request_id.to_string(),
+        adapter_id: adapter_id
+            .unwrap_or("adapter-id-bound-at-registration")
+            .to_string(),
+        contract_version: adapter_contract.version.clone(),
+        process_terminated: true,
+        temporary_profile_removed: true,
+        plaintext_artifacts_removed: true,
+        egress_log_sealed_or_discarded: true,
+        sealed_artifact_handles: Vec::new(),
+        proof_ids: adapter_contract
+            .completion_proof_contract
+            .iter()
+            .map(|proof| proof.proof_id.clone())
+            .collect(),
+        notes: vec![
+            "template only; not evidence of a real browser session".to_string(),
+            "production completion must verify these booleans on the teardown path".to_string(),
+            "sealed_artifact_handles must contain only storage handles, never raw secrets or browser state"
+                .to_string(),
         ],
     }
 }
@@ -2313,6 +2351,8 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserIntegrationContract,
         beatbox_core::BrowserAdapterCapabilityIssueRequest,
         beatbox_core::BrowserAdapterCapabilityIssueResponse,
+        beatbox_core::BrowserAdapterCompletionReport,
+        beatbox_core::BrowserAdapterCompletionProofRequirement,
         beatbox_core::BrowserAdapterContract,
         beatbox_core::BrowserAdapterContractResponse,
         beatbox_core::BrowserAdapterConformanceCase,

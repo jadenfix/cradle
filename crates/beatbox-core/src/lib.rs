@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -86,11 +86,15 @@ pub struct BrowserAdapterContract {
     pub handoff_fields: Vec<String>,
     pub required_guard_fields: Vec<String>,
     pub required_completion_proofs: Vec<String>,
+    #[serde(default = "browser_adapter_completion_proof_contract")]
+    #[schema(required = true)]
+    pub completion_proof_contract: Vec<BrowserAdapterCompletionProofRequirement>,
     pub unavailable_reason: String,
 }
 
 impl Default for BrowserAdapterContract {
     fn default() -> Self {
+        let completion_proof_contract = browser_adapter_completion_proof_contract();
         Self {
             version: "browser-adapter-v1".to_string(),
             status: BrowserSandboxAvailability::Unavailable,
@@ -108,6 +112,8 @@ impl Default for BrowserAdapterContract {
                 "requested_controls".to_string(),
                 "guard_plan".to_string(),
                 "required_completion_proofs".to_string(),
+                "completion_proof_contract".to_string(),
+                "completion_report_template".to_string(),
             ],
             required_guard_fields: vec![
                 "guard_plan.network.allowed_origins".to_string(),
@@ -135,6 +141,7 @@ impl Default for BrowserAdapterContract {
                 "plaintext artifacts outside the explicit allowlist removed".to_string(),
                 "egress proxy log sealed or discarded according to artifact_mode".to_string(),
             ],
+            completion_proof_contract,
             unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon"
                 .to_string(),
         }
@@ -275,6 +282,140 @@ impl Default for BrowserAdmissionGuardPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterCompletionProofRequirement {
+    /// Stable machine-readable proof name. Adapters must echo this in reports.
+    #[schema(min_length = 1, max_length = 128)]
+    pub proof_id: String,
+    /// Human-readable compatibility label retained for older manifest fields.
+    #[schema(min_length = 1)]
+    pub label: String,
+    /// Required evidence field path in BrowserAdapterCompletionReport.
+    #[schema(min_length = 1)]
+    pub evidence_field: String,
+    /// Runtime invariant Beatbox expects before trusting completion.
+    #[schema(min_length = 1)]
+    pub required_invariant: String,
+}
+
+impl Default for BrowserAdapterCompletionProofRequirement {
+    fn default() -> Self {
+        Self {
+            proof_id: "browser_process_terminated".to_string(),
+            label: "browser process exited or was killed".to_string(),
+            evidence_field: "process_terminated".to_string(),
+            required_invariant:
+                "browser process is no longer running before completion is reported".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterCompletionReport {
+    /// Must match the BrowserAdapterLaunchRequest request_id.
+    #[schema(min_length = 1, max_length = 128)]
+    pub request_id: String,
+    /// Must match the trusted adapter id chosen for launch.
+    #[schema(min_length = 1, max_length = 128)]
+    pub adapter_id: String,
+    pub contract_version: String,
+    pub process_terminated: bool,
+    pub temporary_profile_removed: bool,
+    pub plaintext_artifacts_removed: bool,
+    pub egress_log_sealed_or_discarded: bool,
+    pub sealed_artifact_handles: Vec<String>,
+    pub proof_ids: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+impl Default for BrowserAdapterCompletionReport {
+    fn default() -> Self {
+        let adapter = BrowserAdapterContract::default();
+        Self {
+            request_id: "browser-adapter-launch-template-v1".to_string(),
+            adapter_id: "tempo-conformance-adapter-v1".to_string(),
+            contract_version: adapter.version.clone(),
+            process_terminated: true,
+            temporary_profile_removed: true,
+            plaintext_artifacts_removed: true,
+            egress_log_sealed_or_discarded: true,
+            sealed_artifact_handles: Vec::new(),
+            proof_ids: adapter
+                .completion_proof_contract
+                .into_iter()
+                .map(|proof| proof.proof_id)
+                .collect(),
+            notes: vec![
+                "template only; not evidence of a real browser session".to_string(),
+                "production completion must verify these booleans on the teardown path".to_string(),
+            ],
+        }
+    }
+}
+
+fn browser_adapter_completion_proof_contract() -> Vec<BrowserAdapterCompletionProofRequirement> {
+    vec![
+        BrowserAdapterCompletionProofRequirement {
+            proof_id: "browser_process_terminated".to_string(),
+            label: "browser process exited or was killed".to_string(),
+            evidence_field: "process_terminated".to_string(),
+            required_invariant:
+                "browser process is no longer running before completion is reported".to_string(),
+        },
+        BrowserAdapterCompletionProofRequirement {
+            proof_id: "temporary_profile_removed".to_string(),
+            label: "temporary profile directory removed".to_string(),
+            evidence_field: "temporary_profile_removed".to_string(),
+            required_invariant: "fresh profile directory is removed before completion is trusted"
+                .to_string(),
+        },
+        BrowserAdapterCompletionProofRequirement {
+            proof_id: "plaintext_artifacts_removed".to_string(),
+            label: "plaintext artifacts outside the explicit allowlist removed".to_string(),
+            evidence_field: "plaintext_artifacts_removed".to_string(),
+            required_invariant:
+                "non-allowlisted plaintext browser artifacts are removed or never persisted"
+                    .to_string(),
+        },
+        BrowserAdapterCompletionProofRequirement {
+            proof_id: "egress_log_sealed_or_discarded".to_string(),
+            label: "egress proxy log sealed or discarded according to artifact_mode".to_string(),
+            evidence_field: "egress_log_sealed_or_discarded".to_string(),
+            required_invariant:
+                "network logs follow the requested discard or sealed-artifact storage posture"
+                    .to_string(),
+        },
+    ]
+}
+
+fn browser_adapter_completion_report_template_for_launch(
+    request_id: &str,
+    adapter_id: Option<&str>,
+    contract_version: &str,
+    completion_proof_contract: &[BrowserAdapterCompletionProofRequirement],
+) -> BrowserAdapterCompletionReport {
+    BrowserAdapterCompletionReport {
+        request_id: request_id.to_string(),
+        adapter_id: adapter_id
+            .unwrap_or("adapter-id-bound-at-registration")
+            .to_string(),
+        contract_version: contract_version.to_string(),
+        process_terminated: true,
+        temporary_profile_removed: true,
+        plaintext_artifacts_removed: true,
+        egress_log_sealed_or_discarded: true,
+        sealed_artifact_handles: Vec::new(),
+        proof_ids: completion_proof_contract
+            .iter()
+            .map(|proof| proof.proof_id.clone())
+            .collect(),
+        notes: vec![
+            "template only; not evidence of a real browser session".to_string(),
+            "production completion must verify these booleans on the teardown path".to_string(),
+        ],
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct BrowserAdapterLaunchRequest {
     /// Server-issued request identifier for adapter logs and completion proofs.
     #[schema(min_length = 1, max_length = 128)]
@@ -295,9 +436,80 @@ pub struct BrowserAdapterLaunchRequest {
     pub requested_controls: Vec<BrowserSandboxControl>,
     pub guard_plan: BrowserAdmissionGuardPlan,
     pub required_completion_proofs: Vec<String>,
+    #[serde(default = "browser_adapter_completion_proof_contract")]
+    #[schema(required = true)]
+    pub completion_proof_contract: Vec<BrowserAdapterCompletionProofRequirement>,
+    #[serde(default = "BrowserAdapterCompletionReport::default")]
+    #[schema(required = true)]
+    pub completion_report_template: BrowserAdapterCompletionReport,
     pub same_user_capability_required: bool,
     pub endpoint_network_policy_binding_required: bool,
     pub notes: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            request_id: String,
+            #[serde(default)]
+            adapter_id: Option<String>,
+            contract_version: String,
+            requested_level: BrowserSandboxLevel,
+            actor: BrowserSessionActor,
+            sensitivity: BrowserSensitivity,
+            #[serde(default)]
+            target_origins: Vec<String>,
+            credential_mode: BrowserCredentialMode,
+            artifact_mode: BrowserArtifactMode,
+            #[serde(default)]
+            requested_controls: Vec<BrowserSandboxControl>,
+            guard_plan: BrowserAdmissionGuardPlan,
+            #[serde(default)]
+            required_completion_proofs: Vec<String>,
+            #[serde(default = "browser_adapter_completion_proof_contract")]
+            completion_proof_contract: Vec<BrowserAdapterCompletionProofRequirement>,
+            #[serde(default)]
+            completion_report_template: Option<BrowserAdapterCompletionReport>,
+            same_user_capability_required: bool,
+            endpoint_network_policy_binding_required: bool,
+            #[serde(default)]
+            notes: Vec<String>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let completion_report_template = wire.completion_report_template.unwrap_or_else(|| {
+            browser_adapter_completion_report_template_for_launch(
+                &wire.request_id,
+                wire.adapter_id.as_deref(),
+                &wire.contract_version,
+                &wire.completion_proof_contract,
+            )
+        });
+
+        Ok(Self {
+            request_id: wire.request_id,
+            adapter_id: wire.adapter_id,
+            contract_version: wire.contract_version,
+            requested_level: wire.requested_level,
+            actor: wire.actor,
+            sensitivity: wire.sensitivity,
+            target_origins: wire.target_origins,
+            credential_mode: wire.credential_mode,
+            artifact_mode: wire.artifact_mode,
+            requested_controls: wire.requested_controls,
+            guard_plan: wire.guard_plan,
+            required_completion_proofs: wire.required_completion_proofs,
+            completion_proof_contract: wire.completion_proof_contract,
+            completion_report_template,
+            same_user_capability_required: wire.same_user_capability_required,
+            endpoint_network_policy_binding_required: wire.endpoint_network_policy_binding_required,
+            notes: wire.notes,
+        })
+    }
 }
 
 impl Default for BrowserAdapterLaunchRequest {
@@ -309,7 +521,7 @@ impl Default for BrowserAdapterLaunchRequest {
         Self {
             request_id: "browser-adapter-launch-template-v1".to_string(),
             adapter_id: None,
-            contract_version: adapter.version,
+            contract_version: adapter.version.clone(),
             requested_level: BrowserSandboxLevel::OsIsolated,
             actor: BrowserSessionActor::Agent,
             sensitivity: BrowserSensitivity::Sensitive,
@@ -325,6 +537,13 @@ impl Default for BrowserAdapterLaunchRequest {
             ],
             guard_plan,
             required_completion_proofs: adapter.required_completion_proofs,
+            completion_proof_contract: adapter.completion_proof_contract.clone(),
+            completion_report_template: browser_adapter_completion_report_template_for_launch(
+                "browser-adapter-launch-template-v1",
+                None,
+                &adapter.version,
+                &adapter.completion_proof_contract,
+            ),
             same_user_capability_required: true,
             endpoint_network_policy_binding_required: true,
             notes: vec![
@@ -347,6 +566,9 @@ pub struct BrowserAdapterHandoff {
     #[schema(required = true)]
     pub launch_request_template: BrowserAdapterLaunchRequest,
     pub required_completion_proofs: Vec<String>,
+    #[serde(default = "browser_adapter_completion_proof_contract")]
+    #[schema(required = true)]
+    pub completion_proof_contract: Vec<BrowserAdapterCompletionProofRequirement>,
     pub unavailable_reason: String,
 }
 
@@ -360,6 +582,7 @@ impl Default for BrowserAdapterHandoff {
             handoff_fields: adapter.handoff_fields,
             launch_request_template: BrowserAdapterLaunchRequest::default(),
             required_completion_proofs: adapter.required_completion_proofs,
+            completion_proof_contract: adapter.completion_proof_contract,
             unavailable_reason:
                 "fresh server-issued browser adapter handoff required before launch".to_string(),
         }
@@ -1192,6 +1415,27 @@ mod tests {
                 .launch_request_template
                 .endpoint_network_policy_binding_required
         );
+        assert!(
+            response
+                .adapter_handoff
+                .completion_proof_contract
+                .iter()
+                .any(|proof| proof.proof_id == "temporary_profile_removed")
+        );
+        assert_eq!(
+            response
+                .adapter_handoff
+                .launch_request_template
+                .completion_report_template
+                .proof_ids,
+            response
+                .adapter_handoff
+                .launch_request_template
+                .completion_proof_contract
+                .iter()
+                .map(|proof| proof.proof_id.clone())
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             response
                 .adapter_handoff
@@ -1211,6 +1455,178 @@ mod tests {
                 .contains("fresh server-issued browser adapter handoff")
         );
         assert!(!response.level_satisfies_requested_controls);
+        Ok(())
+    }
+
+    #[test]
+    fn browser_adapter_launch_request_backfills_completion_report_from_sibling_fields()
+    -> Result<(), serde_json::Error> {
+        let request: BrowserAdapterLaunchRequest = serde_json::from_str(
+            r#"{
+                "request_id": "old-launch-123",
+                "adapter_id": "tempo-old-adapter",
+                "contract_version": "browser-adapter-v1",
+                "requested_level": "os_isolated",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "target_origins": ["https://example.com"],
+                "credential_mode": "no_credentials",
+                "artifact_mode": "discard",
+                "requested_controls": ["teardown_proof"],
+                "guard_plan": {
+                    "network": {
+                        "allowed_origins": ["https://example.com"],
+                        "deny_private_networks": true,
+                        "deny_localhost": true,
+                        "deny_metadata_endpoints": true,
+                        "require_dns_rebinding_protection": true,
+                        "require_redirect_revalidation": true,
+                        "require_proxy_enforcement": true,
+                        "outbound_network_disabled_without_proxy": true
+                    },
+                    "credentials": {
+                        "mode": "no_credentials",
+                        "ambient_credentials_allowed": false,
+                        "user_mediation_required": false,
+                        "scoped_secret_channel_required": false
+                    },
+                    "storage": {
+                        "mode": "discard",
+                        "plaintext_persistence_allowed": false,
+                        "explicit_artifact_allowlist_required": false,
+                        "encryption_required_for_persistence": false,
+                        "teardown_proof_required": true
+                    },
+                    "required_runtime_guards": ["fresh guard plan"]
+                },
+                "required_completion_proofs": ["temporary profile directory removed"],
+                "same_user_capability_required": true,
+                "endpoint_network_policy_binding_required": true,
+                "notes": ["old payload"]
+            }"#,
+        )?;
+
+        assert_eq!(request.request_id, "old-launch-123");
+        assert_eq!(request.adapter_id.as_deref(), Some("tempo-old-adapter"));
+        assert!(
+            request
+                .completion_proof_contract
+                .iter()
+                .any(|proof| proof.proof_id == "temporary_profile_removed")
+        );
+        assert_eq!(
+            request.completion_report_template.request_id,
+            request.request_id
+        );
+        assert_eq!(
+            request.completion_report_template.adapter_id,
+            "tempo-old-adapter"
+        );
+        assert_eq!(
+            request.completion_report_template.proof_ids,
+            request
+                .completion_proof_contract
+                .iter()
+                .map(|proof| proof.proof_id.clone())
+                .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn browser_adapter_nested_old_payloads_backfill_non_empty_proof_contracts()
+    -> Result<(), serde_json::Error> {
+        let handoff: BrowserAdapterHandoff = serde_json::from_str(
+            r#"{
+                "contract_version": "browser-adapter-v1",
+                "launch_endpoint": null,
+                "launchable": false,
+                "handoff_fields": ["request_id", "guard_plan"],
+                "launch_request_template": {
+                    "request_id": "old-handoff-launch",
+                    "adapter_id": null,
+                    "contract_version": "browser-adapter-v1",
+                    "requested_level": "network_suppressed",
+                    "actor": "human",
+                    "sensitivity": "sensitive",
+                    "target_origins": ["https://bank.example"],
+                    "credential_mode": "user_mediated",
+                    "artifact_mode": "explicit_downloads",
+                    "requested_controls": ["egress_policy"],
+                    "guard_plan": {
+                        "network": {
+                            "allowed_origins": ["https://bank.example"],
+                            "deny_private_networks": true,
+                            "deny_localhost": true,
+                            "deny_metadata_endpoints": true,
+                            "require_dns_rebinding_protection": true,
+                            "require_redirect_revalidation": true,
+                            "require_proxy_enforcement": true,
+                            "outbound_network_disabled_without_proxy": true
+                        },
+                        "credentials": {
+                            "mode": "user_mediated",
+                            "ambient_credentials_allowed": false,
+                            "user_mediation_required": true,
+                            "scoped_secret_channel_required": false
+                        },
+                        "storage": {
+                            "mode": "explicit_downloads",
+                            "plaintext_persistence_allowed": false,
+                            "explicit_artifact_allowlist_required": true,
+                            "encryption_required_for_persistence": true,
+                            "teardown_proof_required": true
+                        },
+                        "required_runtime_guards": ["fresh guard plan"]
+                    },
+                    "required_completion_proofs": ["temporary profile directory removed"],
+                    "same_user_capability_required": true,
+                    "endpoint_network_policy_binding_required": true,
+                    "notes": []
+                },
+                "required_completion_proofs": ["temporary profile directory removed"],
+                "unavailable_reason": "old payload"
+            }"#,
+        )?;
+
+        assert!(
+            handoff
+                .completion_proof_contract
+                .iter()
+                .any(|proof| proof.proof_id == "browser_process_terminated")
+        );
+        assert_eq!(
+            handoff
+                .launch_request_template
+                .completion_report_template
+                .request_id,
+            "old-handoff-launch"
+        );
+        assert_eq!(
+            handoff
+                .launch_request_template
+                .completion_report_template
+                .adapter_id,
+            "adapter-id-bound-at-registration"
+        );
+
+        let contract: BrowserAdapterContract = serde_json::from_str(
+            r#"{
+                "version": "browser-adapter-v1",
+                "status": "planned",
+                "launch_endpoint": null,
+                "handoff_fields": ["guard_plan"],
+                "required_guard_fields": ["guard_plan.network.deny_metadata_endpoints"],
+                "required_completion_proofs": ["temporary profile directory removed"],
+                "unavailable_reason": "old payload"
+            }"#,
+        )?;
+        assert!(
+            contract
+                .completion_proof_contract
+                .iter()
+                .any(|proof| proof.proof_id == "temporary_profile_removed")
+        );
         Ok(())
     }
 

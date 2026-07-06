@@ -37,7 +37,11 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   The `adapter_handoff` contract remains fail-closed: `launchable` is false and
   `launch_endpoint` is null until a production launcher, teardown path, and
   proof channel exist. Its `launch_request_template` is a secret-free fixture
-  for adapter authors and must not be interpreted as a launch grant.
+  for adapter authors and must not be interpreted as a launch grant. Its
+  `completion_proof_contract` and `completion_report_template` are contract
+  fixtures only; the booleans are not evidence until production teardown checks
+  derive and verify them from the actual browser process, profile directory,
+  artifact store, and egress log path.
   Direct adapter contract discovery through `/v1/browser/adapter/contract` and
   MCP `get_browser_adapter_contract` is authenticated control-plane metadata
   only. It publishes the planned contract and conformance fixtures without
@@ -58,8 +62,9 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   binding false because DNS/proxy/redirect/retry binding is not implemented; a
   field-complete manifest is still untrusted metadata rather than permission to
   launch browser automation. The returned `conformance_profile`, including
-  `field_complete_launch_request`, is safe to use as a compatibility fixture
-  because all cases remain fail-closed and no case grants adapter trust.
+  `field_complete_launch_request` and its completion-report fixture, is safe to
+  use as a compatibility fixture because all cases remain fail-closed and no
+  case grants adapter trust.
 
 ## current grades
 

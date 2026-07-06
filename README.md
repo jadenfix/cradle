@@ -69,10 +69,14 @@ and runtime guards a future browser adapter must enforce before the request can
 become runnable. They also include an `adapter_handoff` block with the
 canonical fields and teardown proofs a future Tempo-side adapter must bind; its
 `launch_request_template` is a typed, secret-free envelope showing the exact
-future adapter launch request shape for the validated intent. Its
-`launch_endpoint` is currently `null` and `launchable` is `false`. The current
-implementation always rejects admission and explains which production pieces or
-requested controls are still missing.
+future adapter launch request shape for the validated intent. The handoff also
+publishes `adapter_handoff.completion_proof_contract`; the nested
+`adapter_handoff.launch_request_template.completion_report_template` shows the
+matching completion report shape so adapter authors can wire teardown and
+storage evidence to stable machine-readable proof ids instead of guessing from
+display labels. Its `launch_endpoint` is currently `null` and `launchable` is
+`false`. The current implementation always rejects admission and explains which
+production pieces or requested controls are still missing.
 `GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
 return the same planned adapter contract plus the `conformance_profile` without
 requiring a submitted manifest. This is authenticated compatibility metadata
@@ -99,9 +103,10 @@ only syntax-checks launch endpoints; DNS, proxy, redirect, retry, and request
 builder binding remain unimplemented, so it still returns `manifest_complete:
 false` and `launchable: false` until a trusted registration and launch path
 exists. Validation responses include a `conformance_profile` with a canonical
-field-complete manifest, a `field_complete_launch_request` fixture, plus
-protocol-specific REST/MCP expectations and required negative cases so Tempo
-and adapter authors can test compatibility without guessing.
+field-complete manifest, a `field_complete_launch_request` fixture, typed
+completion-proof requirements, a completion-report fixture, plus
+protocol-specific REST/MCP expectations and required negative cases so Tempo and
+adapter authors can test compatibility without guessing.
 
 ## Ecosystem
 

@@ -81,9 +81,13 @@ non-launchable handoff contract that names the exact admission fields and
 completion proofs a Tempo-side adapter must bind before any future launch path
 can be trusted. The handoff includes `launch_request_template`, a concrete
 future adapter request envelope derived from the validated admission intent and
-guard plan; it is a compatibility fixture, not permission to launch. Admission
-is the authoritative decision and currently always rejects because Beatbox has
-no runnable browser launcher or isolation substrate.
+guard plan; it is a compatibility fixture, not permission to launch. It also
+publishes a typed `adapter_handoff.completion_proof_contract`, while
+`adapter_handoff.launch_request_template.completion_report_template` shows the
+matching report shape, binding each proof label to a stable proof id, evidence
+field, and invariant expected on the eventual teardown path. Admission is the
+authoritative decision and currently always rejects because Beatbox has no
+runnable browser launcher or isolation substrate.
 
 `GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
 publish the planned adapter contract and conformance profile directly for
@@ -119,7 +123,8 @@ false`, `endpoint_network_policy_bound: false`, `launchable: false`, and
 `trusted_for_sensitive_work: false` until Beatbox has production trust,
 endpoint binding, and launch paths. The same response includes a
 `conformance_profile` with a canonical field-complete manifest,
-`field_complete_launch_request`, and required accepted-but-rejected and
+`field_complete_launch_request`, typed completion proof requirements, a
+completion report fixture, and required accepted-but-rejected and
 parser-rejected cases, including separate REST and MCP expectations. That
 profile is the adapter author test fixture for protocol compatibility, not a
 registration credential.
