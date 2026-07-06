@@ -56,7 +56,12 @@ Browser automation is a separate integration surface from code execution lanes.
 `GET /v1/browser/profiles` returns the typed profile catalog that Tempo or
 another browser-capable caller can use to decide whether Beatbox currently has a
 usable browser sandbox for sensitive work. The same payload is embedded under
-`browser_sandbox` in `/v1/capabilities`.
+`browser_sandbox` in `/v1/capabilities` and exposed to model-facing callers
+through the MCP `get_browser_profiles` tool.
+
+The MCP tool returns one authoritative structured payload in
+`structuredContent`; the text content is only a short label. Model-facing
+callers should not parse a second serialized JSON copy out of text.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is absent, and no profile is marked `available`.

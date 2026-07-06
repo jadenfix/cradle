@@ -1054,6 +1054,7 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     let tools = &value["result"]["tools"];
     assert!(tools.to_string().contains("run_wasm"));
     assert!(tools.to_string().contains("get_capabilities"));
+    assert!(tools.to_string().contains("get_browser_profiles"));
     Ok(())
 }
 
@@ -1131,6 +1132,119 @@ async fn mcp_get_capabilities_rejects_unknown_arguments() -> Result<(), Box<dyn 
     assert!(value["error"]["message"]
         .as_str()
         .is_some_and(|message| message.contains("ignored")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_capabilities_returns_structured_content() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_capabilities", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(false));
+    assert_eq!(result["content"][0]["text"], "beatbox capabilities");
+    assert_eq!(
+        result["structuredContent"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(result["structuredContent"]["lanes"].is_array());
+    assert_eq!(
+        result["structuredContent"]["browser_sandbox"]["runnable_browser_sessions"],
+        false
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_profiles_returns_structured_content(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_browser_profiles", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(false));
+    assert_eq!(
+        result["content"][0]["text"],
+        "beatbox browser sandbox profiles"
+    );
+    assert_eq!(
+        result["structuredContent"]["runnable_browser_sessions"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["integration"]["selection_field"],
+        "browser_sandbox_level"
+    );
+    assert!(result["structuredContent"]["profiles"]
+        .as_array()
+        .is_some_and(|profiles| profiles
+            .iter()
+            .all(|profile| profile["availability"] != "available")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_profiles_rejects_unknown_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_browser_profiles",
+            "arguments": {"level": "os_isolated"}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("level")));
     Ok(())
 }
 

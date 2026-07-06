@@ -46,11 +46,12 @@ milestones.
 
 Browser automation is exposed only as an explicit discovery contract today, not
 as a runnable browser lane. Authenticated callers can read
-`GET /v1/browser/profiles` or the `browser_sandbox` section of
-`/v1/capabilities` to see the profile levels Beatbox intends to support for
-Tempo-style integrations: external instrumentation, ephemeral profiles,
-network-suppressed browsing, sealed persisted state, OS-isolated browsing, and
-remote isolated workers. The response deliberately reports
+`GET /v1/browser/profiles`, call the MCP `get_browser_profiles` tool, or inspect
+the `browser_sandbox` section of `/v1/capabilities` to see the profile levels
+Beatbox intends to support for Tempo-style integrations: external
+instrumentation, ephemeral profiles, network-suppressed browsing, sealed
+persisted state, OS-isolated browsing, and remote isolated workers. The response
+deliberately reports
 `runnable_browser_sessions: false`, has no default level, and marks every
 profile as `planned` or `unavailable` until a real browser launcher, egress
 boundary, storage policy, and teardown path enforce the claim.

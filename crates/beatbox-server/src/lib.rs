@@ -1305,6 +1305,11 @@ fn mcp_tools() -> Value {
             "name": "get_capabilities",
             "description": "Return beatbox lane availability.",
             "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "get_browser_profiles",
+            "description": "Return beatbox browser sandbox profile discovery metadata for Tempo-style integrations.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
         }
     ])
 }
@@ -1325,8 +1330,24 @@ async fn mcp_tools_call(
     match name {
         "get_capabilities" => {
             mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
+            let capabilities = capabilities_json(&state.config);
             Ok(json!({
-                "content": [{"type": "text", "text": capabilities_json(&state.config).to_string()}],
+                "content": [{"type": "text", "text": "beatbox capabilities"}],
+                "structuredContent": capabilities,
+                "isError": false,
+            }))
+        }
+        "get_browser_profiles" => {
+            mcp_tool_arguments(&arguments, "get_browser_profiles", &[])?;
+            let profiles = serde_json::to_value(browser_profiles_response()).map_err(|error| {
+                (
+                    -32603,
+                    format!("failed to serialize browser profiles: {error}"),
+                )
+            })?;
+            Ok(json!({
+                "content": [{"type": "text", "text": "beatbox browser sandbox profiles"}],
+                "structuredContent": profiles,
                 "isError": false,
             }))
         }
