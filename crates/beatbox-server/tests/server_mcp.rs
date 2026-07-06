@@ -1085,7 +1085,65 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .adapter_handoff
             .handoff_fields
             .iter()
+            .any(|field| field == "request_id")
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .handoff_fields
+            .iter()
+            .any(|field| field == "adapter_id")
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .handoff_fields
+            .iter()
             .any(|field| field == "guard_plan")
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.request_id,
+        "browser-admission-launch-template-v1"
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.adapter_id,
+        None
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .target_origins,
+        vec!["https://bank.example"]
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.actor,
+        BrowserSessionActor::Agent
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.sensitivity,
+        BrowserSensitivity::Sensitive
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .same_user_capability_required
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .endpoint_network_policy_binding_required
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .guard_plan
+            .network
+            .allowed_origins,
+        decision.guard_plan.network.allowed_origins
     );
     assert!(
         decision
@@ -1242,6 +1300,40 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .as_deref(),
         Some("https://adapter.example/launch")
     );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .adapter_id
+            .as_deref(),
+        Some("tempo-conformance-adapter-v1")
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .contract_version,
+        validation.adapter_contract.version
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .target_origins,
+        vec!["https://example.com"]
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .same_user_capability_required
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .endpoint_network_policy_binding_required
+    );
     assert!(
         !validation
             .conformance_profile
@@ -1371,6 +1463,22 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
             .field_complete_manifest
             .contract_version,
         contract.adapter_contract.version
+    );
+    assert_eq!(
+        contract
+            .conformance_profile
+            .field_complete_launch_request
+            .adapter_id
+            .as_deref(),
+        Some("tempo-conformance-adapter-v1")
+    );
+    assert!(
+        contract
+            .conformance_profile
+            .field_complete_launch_request
+            .required_completion_proofs
+            .iter()
+            .any(|proof| proof.contains("temporary profile directory"))
     );
     assert!(
         contract
@@ -2273,6 +2381,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdapterConformanceCase",
         "BrowserAdapterConformanceExpectation",
         "BrowserAdapterConformanceProfile",
+        "BrowserAdapterLaunchRequest",
         "BrowserAdapterManifestRequest",
         "BrowserAdapterManifestResponse",
         "BrowserAdapterRegistrationDecision",
@@ -2377,6 +2486,38 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_array()
             .is_some_and(|required| required.iter().any(|field| field == "conformance_profile")),
         "adapter manifest response should require conformance_profile"
+    );
+    assert!(
+        schemas["BrowserAdapterHandoff"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "launch_request_template")),
+        "adapter handoff should require the launch request template"
+    );
+    assert!(
+        schemas["BrowserAdapterConformanceProfile"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "field_complete_launch_request")),
+        "conformance profile should require a field-complete launch request fixture"
+    );
+    assert!(
+        schemas["BrowserAdapterLaunchRequest"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "request_id")
+                    && required.iter().any(|field| field == "adapter_id")
+                    && required.iter().any(|field| field == "guard_plan")
+                    && required
+                        .iter()
+                        .any(|field| field == "same_user_capability_required")
+                    && required
+                        .iter()
+                        .any(|field| field == "endpoint_network_policy_binding_required")
+            ),
+        "launch request schema should expose the full adapter handoff envelope"
     );
     assert!(
         schemas["BrowserAdapterConformanceCase"]["required"]
@@ -2850,7 +2991,34 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert!(
         result["structuredContent"]["adapter_handoff"]["handoff_fields"]
             .as_array()
-            .is_some_and(|fields| fields.iter().any(|field| field == "guard_plan"))
+            .is_some_and(|fields| fields.iter().any(|field| field == "request_id")
+                && fields.iter().any(|field| field == "adapter_id")
+                && fields.iter().any(|field| field == "guard_plan"))
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["request_id"],
+        "browser-admission-launch-template-v1"
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["adapter_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["target_origins"],
+        serde_json::json!(["https://billing.example"])
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["guard_plan"]["network"]
+            ["allowed_origins"],
+        serde_json::json!(["https://billing.example"])
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["same_user_capability_required"],
+        true
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["endpoint_network_policy_binding_required"],
+        true
     );
     assert!(
         result["structuredContent"]["adapter_handoff"]["required_completion_proofs"]
@@ -2922,6 +3090,18 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["conformance_profile"]["profile_version"],
         serde_json::json!("browser-adapter-conformance-v1")
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["adapter_id"],
+        "tempo-conformance-adapter-v1"
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["same_user_capability_required"],
+        true
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["endpoint_network_policy_binding_required"],
+        true
     );
     assert!(
         result["structuredContent"]["conformance_profile"]["required_cases"]
@@ -3030,6 +3210,15 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
     assert_eq!(
         result["structuredContent"]["conformance_profile"]["profile_version"],
         serde_json::json!("browser-adapter-conformance-v1")
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["adapter_id"],
+        "tempo-conformance-adapter-v1"
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["guard_plan"]
+            ["network"]["allowed_origins"],
+        serde_json::json!(["https://example.com"])
     );
     assert!(
         result["structuredContent"]["conformance_profile"]["required_cases"]

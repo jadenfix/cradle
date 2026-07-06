@@ -96,6 +96,9 @@ impl Default for BrowserAdapterContract {
             status: BrowserSandboxAvailability::Unavailable,
             launch_endpoint: None,
             handoff_fields: vec![
+                "request_id".to_string(),
+                "adapter_id".to_string(),
+                "contract_version".to_string(),
                 "requested_level".to_string(),
                 "actor".to_string(),
                 "sensitivity".to_string(),
@@ -104,6 +107,7 @@ impl Default for BrowserAdapterContract {
                 "artifact_mode".to_string(),
                 "requested_controls".to_string(),
                 "guard_plan".to_string(),
+                "required_completion_proofs".to_string(),
             ],
             required_guard_fields: vec![
                 "guard_plan.network.allowed_origins".to_string(),
@@ -271,12 +275,77 @@ impl Default for BrowserAdmissionGuardPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterLaunchRequest {
+    /// Server-issued request identifier for adapter logs and completion proofs.
+    #[schema(min_length = 1, max_length = 128)]
+    pub request_id: String,
+    /// Adapter identifier for the envelope. Runtime launch requests use the
+    /// trusted registered adapter id; conformance fixtures may carry a sample
+    /// id and still do not imply adapter registration, trust, or launchability.
+    /// Null in discovery templates before an adapter is selected.
+    #[schema(required = true, min_length = 1, max_length = 128)]
+    pub adapter_id: Option<String>,
+    pub contract_version: String,
+    pub requested_level: BrowserSandboxLevel,
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    pub target_origins: Vec<String>,
+    pub credential_mode: BrowserCredentialMode,
+    pub artifact_mode: BrowserArtifactMode,
+    pub requested_controls: Vec<BrowserSandboxControl>,
+    pub guard_plan: BrowserAdmissionGuardPlan,
+    pub required_completion_proofs: Vec<String>,
+    pub same_user_capability_required: bool,
+    pub endpoint_network_policy_binding_required: bool,
+    pub notes: Vec<String>,
+}
+
+impl Default for BrowserAdapterLaunchRequest {
+    fn default() -> Self {
+        let adapter = BrowserAdapterContract::default();
+        let target_origins = vec!["https://example.com".to_string()];
+        let mut guard_plan = BrowserAdmissionGuardPlan::default();
+        guard_plan.network.allowed_origins = target_origins.clone();
+        Self {
+            request_id: "browser-adapter-launch-template-v1".to_string(),
+            adapter_id: None,
+            contract_version: adapter.version,
+            requested_level: BrowserSandboxLevel::OsIsolated,
+            actor: BrowserSessionActor::Agent,
+            sensitivity: BrowserSensitivity::Sensitive,
+            target_origins,
+            credential_mode: BrowserCredentialMode::NoCredentials,
+            artifact_mode: BrowserArtifactMode::Discard,
+            requested_controls: vec![
+                BrowserSandboxControl::FreshProfile,
+                BrowserSandboxControl::NoAmbientCredentials,
+                BrowserSandboxControl::EgressPolicy,
+                BrowserSandboxControl::LocalNetworkBlock,
+                BrowserSandboxControl::TeardownProof,
+            ],
+            guard_plan,
+            required_completion_proofs: adapter.required_completion_proofs,
+            same_user_capability_required: true,
+            endpoint_network_policy_binding_required: true,
+            notes: vec![
+                "template only; not a browser launch grant".to_string(),
+                "same-user capability and endpoint network policy must be bound before use"
+                    .to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterHandoff {
     pub contract_version: String,
     #[schema(required = true)]
     pub launch_endpoint: Option<String>,
     pub launchable: bool,
     pub handoff_fields: Vec<String>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub launch_request_template: BrowserAdapterLaunchRequest,
     pub required_completion_proofs: Vec<String>,
     pub unavailable_reason: String,
 }
@@ -289,6 +358,7 @@ impl Default for BrowserAdapterHandoff {
             launch_endpoint: adapter.launch_endpoint,
             launchable: false,
             handoff_fields: adapter.handoff_fields,
+            launch_request_template: BrowserAdapterLaunchRequest::default(),
             required_completion_proofs: adapter.required_completion_proofs,
             unavailable_reason:
                 "fresh server-issued browser adapter handoff required before launch".to_string(),
@@ -364,6 +434,9 @@ pub struct BrowserAdapterConformanceCase {
 pub struct BrowserAdapterConformanceProfile {
     pub profile_version: String,
     pub field_complete_manifest: BrowserAdapterManifestRequest,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub field_complete_launch_request: BrowserAdapterLaunchRequest,
     pub field_complete_expectation: BrowserAdapterConformanceExpectation,
     pub required_cases: Vec<BrowserAdapterConformanceCase>,
     pub notes: Vec<String>,
@@ -1106,6 +1179,30 @@ mod tests {
                 .handoff_fields
                 .iter()
                 .any(|field| field == "guard_plan")
+        );
+        assert!(
+            response
+                .adapter_handoff
+                .launch_request_template
+                .same_user_capability_required
+        );
+        assert!(
+            response
+                .adapter_handoff
+                .launch_request_template
+                .endpoint_network_policy_binding_required
+        );
+        assert_eq!(
+            response
+                .adapter_handoff
+                .launch_request_template
+                .guard_plan
+                .network
+                .allowed_origins,
+            response
+                .adapter_handoff
+                .launch_request_template
+                .target_origins
         );
         assert!(
             response

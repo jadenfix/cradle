@@ -17,16 +17,17 @@ use beatbox_core::{
     BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
     BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
     BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
-    BrowserAdapterHandoff, BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
-    BrowserAdapterRegistrationDecision, BrowserAdapterRegistrationRequest,
-    BrowserAdapterRegistrationResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
-    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
-    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
-    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
-    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
-    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
-    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    BrowserAdapterHandoff, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
+    BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
+    BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
+    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
+    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
+    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
+    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
+    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
+    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
+    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1110,15 +1111,48 @@ fn browser_adapter_contract() -> BrowserAdapterContract {
     }
 }
 
-fn browser_adapter_handoff() -> BrowserAdapterHandoff {
+fn browser_adapter_handoff(
+    launch_request_template: BrowserAdapterLaunchRequest,
+) -> BrowserAdapterHandoff {
     let adapter = browser_adapter_contract();
     BrowserAdapterHandoff {
         contract_version: adapter.version,
         launch_endpoint: adapter.launch_endpoint,
         launchable: false,
         handoff_fields: adapter.handoff_fields,
+        launch_request_template,
         required_completion_proofs: adapter.required_completion_proofs,
         unavailable_reason: adapter.unavailable_reason,
+    }
+}
+
+fn browser_adapter_launch_request_template(
+    request_id: &str,
+    adapter_id: Option<String>,
+    request: &BrowserAdmissionRequest,
+    guard_plan: &BrowserAdmissionGuardPlan,
+    required_completion_proofs: Vec<String>,
+) -> BrowserAdapterLaunchRequest {
+    BrowserAdapterLaunchRequest {
+        request_id: request_id.to_string(),
+        adapter_id,
+        contract_version: BrowserAdapterContract::default().version,
+        requested_level: request.requested_level.clone(),
+        actor: request.actor.clone(),
+        sensitivity: request.sensitivity.clone(),
+        target_origins: request.target_origins.clone(),
+        credential_mode: request.credential_mode.clone(),
+        artifact_mode: request.artifact_mode.clone(),
+        requested_controls: request.required_controls.clone(),
+        guard_plan: guard_plan.clone(),
+        required_completion_proofs,
+        same_user_capability_required: true,
+        endpoint_network_policy_binding_required: true,
+        notes: vec![
+            "launch request template only; beatbox does not currently call adapter launch endpoints"
+                .to_string(),
+            "do not treat this envelope as a registration, trust, or launch grant".to_string(),
+        ],
     }
 }
 
@@ -1432,6 +1466,11 @@ fn browser_adapter_conformance_profile(
         "tempo-conformance-adapter-v1",
         Some("https://adapter.example/launch".to_string()),
     );
+    let field_complete_launch_request = browser_adapter_field_complete_launch_request(
+        adapter_contract,
+        required_controls,
+        &field_complete_manifest.adapter_id,
+    );
 
     let mut missing_level_manifest = field_complete_manifest.clone();
     missing_level_manifest.supported_levels = vec![BrowserSandboxLevel::NetworkSuppressed];
@@ -1461,6 +1500,7 @@ fn browser_adapter_conformance_profile(
     BrowserAdapterConformanceProfile {
         profile_version: "browser-adapter-conformance-v1".to_string(),
         field_complete_manifest: field_complete_manifest.clone(),
+        field_complete_launch_request,
         field_complete_expectation: browser_adapter_conformance_expectation(
             Vec::new(),
             Vec::new(),
@@ -1597,6 +1637,33 @@ fn browser_adapter_field_complete_manifest(
     }
 }
 
+fn browser_adapter_field_complete_launch_request(
+    adapter_contract: &BrowserAdapterContract,
+    required_controls: &[BrowserSandboxControl],
+    adapter_id: &str,
+) -> BrowserAdapterLaunchRequest {
+    let request = BrowserAdmissionRequest {
+        requested_level: BrowserSandboxLevel::OsIsolated,
+        actor: BrowserSessionActor::Agent,
+        sensitivity: BrowserSensitivity::Sensitive,
+        target_origins: vec!["https://example.com".to_string()],
+        credential_mode: BrowserCredentialMode::NoCredentials,
+        artifact_mode: BrowserArtifactMode::Discard,
+        required_controls: required_controls.to_vec(),
+        allow_downgrade: false,
+        task_label: Some("browser adapter conformance launch".to_string()),
+    };
+    let requested_profile_controls = browser_profile_controls(&request.requested_level);
+    let guard_plan = browser_admission_guard_plan(&request, &requested_profile_controls);
+    browser_adapter_launch_request_template(
+        "browser-adapter-conformance-launch-v1",
+        Some(adapter_id.to_string()),
+        &request,
+        &guard_plan,
+        adapter_contract.required_completion_proofs.clone(),
+    )
+}
+
 fn browser_adapter_required_levels() -> Vec<BrowserSandboxLevel> {
     vec![
         BrowserSandboxLevel::EphemeralProfile,
@@ -1706,7 +1773,13 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         ));
     }
     let guard_plan = browser_admission_guard_plan(&request, &requested_profile_controls);
-    let adapter_handoff = browser_adapter_handoff();
+    let adapter_handoff = browser_adapter_handoff(browser_adapter_launch_request_template(
+        "browser-admission-launch-template-v1",
+        None,
+        &request,
+        &guard_plan,
+        browser_adapter_contract().required_completion_proofs,
+    ));
 
     BrowserAdmissionResponse {
         decision: BrowserAdmissionDecision::Rejected,
@@ -2245,6 +2318,7 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdapterConformanceCase,
         beatbox_core::BrowserAdapterConformanceExpectation,
         beatbox_core::BrowserAdapterConformanceProfile,
+        beatbox_core::BrowserAdapterLaunchRequest,
         beatbox_core::BrowserAdapterManifestRequest,
         beatbox_core::BrowserAdapterManifestResponse,
         beatbox_core::BrowserAdapterRegistrationDecision,

@@ -754,6 +754,7 @@
         "required": [
           "profile_version",
           "field_complete_manifest",
+          "field_complete_launch_request",
           "field_complete_expectation",
           "required_cases",
           "notes"
@@ -761,6 +762,9 @@
         "properties": {
           "field_complete_expectation": {
             "$ref": "#/components/schemas/BrowserAdapterConformanceExpectation"
+          },
+          "field_complete_launch_request": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchRequest"
           },
           "field_complete_manifest": {
             "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
@@ -884,6 +888,7 @@
           "launch_endpoint",
           "launchable",
           "handoff_fields",
+          "launch_request_template",
           "required_completion_proofs",
           "unavailable_reason"
         ],
@@ -903,6 +908,9 @@
               "null"
             ]
           },
+          "launch_request_template": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchRequest"
+          },
           "launchable": {
             "type": "boolean"
           },
@@ -914,6 +922,94 @@
           },
           "unavailable_reason": {
             "type": "string"
+          }
+        }
+      },
+      "BrowserAdapterLaunchRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "adapter_id",
+          "contract_version",
+          "requested_level",
+          "actor",
+          "sensitivity",
+          "target_origins",
+          "credential_mode",
+          "artifact_mode",
+          "requested_controls",
+          "guard_plan",
+          "required_completion_proofs",
+          "same_user_capability_required",
+          "endpoint_network_policy_binding_required",
+          "notes"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Adapter identifier for the envelope. Runtime launch requests use the\ntrusted registered adapter id; conformance fixtures may carry a sample\nid and still do not imply adapter registration, trust, or launchability.\nNull in discovery templates before an adapter is selected.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "artifact_mode": {
+            "$ref": "#/components/schemas/BrowserArtifactMode"
+          },
+          "contract_version": {
+            "type": "string"
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/BrowserCredentialMode"
+          },
+          "endpoint_network_policy_binding_required": {
+            "type": "boolean"
+          },
+          "guard_plan": {
+            "$ref": "#/components/schemas/BrowserAdmissionGuardPlan"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Server-issued request identifier for adapter logs and completion proofs.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "requested_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "requested_level": {
+            "$ref": "#/components/schemas/BrowserSandboxLevel"
+          },
+          "required_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "same_user_capability_required": {
+            "type": "boolean"
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "target_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
