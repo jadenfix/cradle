@@ -1,12 +1,13 @@
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use base64::Engine as _;
 use beatbox_client::Client;
 use beatbox_core::{Determinism, ExecuteRequest, Lane, Policy, Source};
-use beatbox_engine::BeatboxEngine;
+use beatbox_engine::{BeatboxEngine, MAX_WASM_MODULE_BYTES};
 use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -59,9 +60,16 @@ async fn main() -> Result<()> {
 }
 
 fn compile(input: PathBuf, output: PathBuf) -> Result<()> {
-    let bytes = wat::parse_file(&input)
+    compile_with_limit(&input, &output, MAX_WASM_MODULE_BYTES)
+}
+
+fn compile_with_limit(input: &Path, output: &Path, max_bytes: u64) -> Result<()> {
+    let source = read_capped_file(input, max_bytes)?;
+    let bytes = wat::parse_bytes(&source)
+        .map(|cow| cow.into_owned())
         .with_context(|| format!("failed to parse WAT from {}", input.display()))?;
-    fs::write(&output, bytes)
+    ensure_source_limit(input, "module", bytes_len_u64(bytes.len()), max_bytes)?;
+    fs::write(output, bytes)
         .with_context(|| format!("failed to write Wasm to {}", output.display()))?;
     println!("wrote {}", output.display());
     Ok(())
@@ -82,7 +90,7 @@ async fn run(
         None => serde_json::Value::Null,
     };
     let source = if remote.is_some() {
-        source_for_remote(&path)?
+        source_for_remote(&path, wasm_module_byte_limit(policy.limits.memory_bytes))?
     } else {
         Source::WasmFile { path }
     };
@@ -99,7 +107,7 @@ async fn run(
     let result = if let Some(remote) = remote {
         let mut client = Client::new(remote);
         if let Some(api_key) = api_key {
-            client = client.with_api_key(api_key);
+            client = client.with_api_key_allowing_loopback_http(api_key);
         }
         client.execute(&request).await?
     } else {
@@ -110,22 +118,62 @@ async fn run(
     Ok(())
 }
 
-fn source_for_remote(path: &Path) -> Result<Source> {
-    let bytes = wasm_bytes_from_path(path)?;
+fn source_for_remote(path: &Path, max_bytes: u64) -> Result<Source> {
+    let bytes = wasm_bytes_from_path(path, max_bytes)?;
     Ok(Source::WasmBytesBase64 {
         bytes: base64::engine::general_purpose::STANDARD.encode(bytes),
     })
 }
 
-fn wasm_bytes_from_path(path: &Path) -> Result<Vec<u8>> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+fn wasm_bytes_from_path(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
+    let bytes = read_capped_file(path, max_bytes)?;
     if path.extension().and_then(|ext| ext.to_str()) == Some("wat") {
-        wat::parse_bytes(&bytes)
+        let module = wat::parse_bytes(&bytes)
             .map(|cow| cow.into_owned())
-            .with_context(|| format!("failed to parse WAT from {}", path.display()))
+            .with_context(|| format!("failed to parse WAT from {}", path.display()))?;
+        ensure_source_limit(path, "module", bytes_len_u64(module.len()), max_bytes)?;
+        Ok(module)
     } else {
+        ensure_source_limit(path, "module", bytes_len_u64(bytes.len()), max_bytes)?;
         Ok(bytes)
     }
+}
+
+fn read_capped_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
+    let file =
+        fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("failed to stat {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("{} source path is not a regular file", path.display());
+    }
+    ensure_source_limit(path, "source", metadata.len(), max_bytes)?;
+    let mut limited = file.take(max_bytes.saturating_add(1));
+    let mut bytes = Vec::new();
+    limited
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    ensure_source_limit(path, "source", bytes_len_u64(bytes.len()), max_bytes)?;
+    Ok(bytes)
+}
+
+fn ensure_source_limit(path: &Path, field: &'static str, actual: u64, limit: u64) -> Result<()> {
+    if actual > limit {
+        bail!(
+            "{} {field} is too large: {actual} bytes exceeds source byte limit {limit} bytes",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn bytes_len_u64(len: usize) -> u64 {
+    u64::try_from(len).unwrap_or(u64::MAX)
+}
+
+fn wasm_module_byte_limit(policy_memory_bytes: u64) -> u64 {
+    policy_memory_bytes.min(MAX_WASM_MODULE_BYTES)
 }
 
 fn apply_policy_items(policy: &mut Policy, items: &[String]) -> Result<()> {
@@ -158,4 +206,51 @@ fn apply_policy_items(policy: &mut Policy, items: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capped_file_reader_rejects_oversized_source() -> Result<()> {
+        let path = temp_path("reader-over-limit.wat");
+        fs::write(&path, b"(module)")?;
+
+        let error = match read_capped_file(&path, 1) {
+            Ok(_) => bail!("oversized source unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("source is too large"));
+        fs::remove_file(path).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn compile_rejects_oversized_source_before_writing_output() -> Result<()> {
+        let input = temp_path("compile-over-limit.wat");
+        let output = temp_path("compile-over-limit.wasm");
+        fs::write(&input, b"(module)")?;
+        fs::remove_file(&output).ok();
+
+        let error = match compile_with_limit(&input, &output, 1) {
+            Ok(_) => bail!("oversized compile unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("source is too large"));
+        assert!(!output.exists());
+        fs::remove_file(input).ok();
+        fs::remove_file(output).ok();
+        Ok(())
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!("beatbox-{name}-{}-{unique}", std::process::id()))
+    }
 }

@@ -10,6 +10,7 @@ description = "Shared wire types for beatbox sandbox execution."
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+utoipa.workspace = true
 
 [lints]
 workspace = true

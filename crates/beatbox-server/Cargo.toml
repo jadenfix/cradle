@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "HTTP and MCP server surfaces for beatbox."
 
+[features]
+default = []
+lane-python = ["beatbox-engine/lane-python"]
+
 [dependencies]
 axum.workspace = true
 beatbox-core.workspace = true

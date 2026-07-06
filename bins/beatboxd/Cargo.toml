@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Daemon for the beatbox sandbox."
 
+[features]
+default = []
+lane-python = ["beatbox-engine/lane-python", "beatbox-server/lane-python"]
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
@@ -15,6 +19,10 @@ beatbox-server.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+beatbox-core.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

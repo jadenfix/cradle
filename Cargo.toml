@@ -42,6 +42,7 @@ utoipa = "5"
 url = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 wasmtime = { version = "45", default-features = false, features = ["runtime", "cranelift", "std", "component-model"] }
+wasmparser = "0.248"
 wat = "1"
 
 [workspace.lints.rust]

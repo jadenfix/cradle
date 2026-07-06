@@ -9,8 +9,8 @@ description = "Execution lanes and isolation internals for beatbox."
 
 [features]
 default = ["lane-wasi"]
-lane-wasi = ["dep:base64", "dep:hex", "dep:sha2", "dep:wasmtime", "dep:wat"]
-lane-python = []
+lane-wasi = ["dep:base64", "dep:hex", "dep:sha2", "dep:wasmparser", "dep:wasmtime", "dep:wat"]
+lane-python = ["dep:hex", "dep:sha2", "dep:uuid"]
 lane-js = []
 lane-exec = []
 
@@ -22,7 +22,9 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
 thiserror.workspace = true
+uuid = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
+wasmparser = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
 
 [lints]

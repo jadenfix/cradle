@@ -1,26 +1,30 @@
 mod jobs;
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
 
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::extract::{Path as AxumPath, State};
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::header::{AsHeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN};
+use axum::http::uri::Authority;
+use axum::http::{HeaderMap, Request, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord, Lane,
-    Policy, Source,
+    CreateJobResponse, Determinism, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, JobStatus, Lane, MountMode, NetPolicy, Policy, Source,
 };
-use beatbox_engine::{BeatboxEngine, EngineError};
+use beatbox_engine::{
+    python_native_available, BeatboxEngine, CancellationToken, EngineError,
+    MAX_PYTHON_SOURCE_BYTES, MAX_WASM_MODULE_BYTES,
+};
 use bytes::Bytes;
 pub use jobs::JobStore;
-use jobs::JobStoreError;
-use serde_json::{Value, json};
+use jobs::{CancelOutcome, JobStoreError};
+use serde_json::{json, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::{Host, Url};
 use utoipa::OpenApi;
@@ -31,9 +35,11 @@ pub const DEFAULT_JOB_WALL_MS: u64 = 5 * 60_000;
 pub const DEFAULT_MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 256 * 1024 * 1024;
 pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
+pub const DEFAULT_MAX_DISK_BYTES: u64 = 64 * 1024 * 1024;
 pub const DEFAULT_MAX_FUEL: u64 = 100_000_000;
 pub const DEFAULT_MAX_CONCURRENT_SYNC: usize = 8;
 pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
+pub const DEFAULT_MAX_STORED_JOBS: usize = 10_000;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -44,10 +50,12 @@ pub struct ServerConfig {
     pub job_wall_ms: u64,
     pub max_memory_bytes: u64,
     pub max_output_bytes: u64,
+    pub max_disk_bytes: u64,
     pub max_fuel: u64,
     pub max_request_bytes: usize,
     pub max_concurrent_sync: usize,
     pub max_concurrent_jobs: usize,
+    pub max_stored_jobs: usize,
 }
 
 impl ServerConfig {
@@ -62,10 +70,12 @@ impl ServerConfig {
             job_wall_ms: DEFAULT_JOB_WALL_MS,
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            max_disk_bytes: DEFAULT_MAX_DISK_BYTES,
             max_fuel: DEFAULT_MAX_FUEL,
             max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
             max_concurrent_sync: DEFAULT_MAX_CONCURRENT_SYNC,
             max_concurrent_jobs: DEFAULT_MAX_CONCURRENT_JOBS,
+            max_stored_jobs: DEFAULT_MAX_STORED_JOBS,
         }
     }
 
@@ -84,6 +94,11 @@ impl ServerConfig {
         self
     }
 
+    pub fn with_max_disk_bytes(mut self, max_disk_bytes: u64) -> Self {
+        self.max_disk_bytes = max_disk_bytes;
+        self
+    }
+
     pub fn with_max_concurrent_jobs(mut self, max_concurrent_jobs: usize) -> Self {
         self.max_concurrent_jobs = max_concurrent_jobs;
         self
@@ -91,6 +106,11 @@ impl ServerConfig {
 
     pub fn with_max_concurrent_sync(mut self, max_concurrent_sync: usize) -> Self {
         self.max_concurrent_sync = max_concurrent_sync;
+        self
+    }
+
+    pub fn with_max_stored_jobs(mut self, max_stored_jobs: usize) -> Self {
+        self.max_stored_jobs = max_stored_jobs;
         self
     }
 }
@@ -104,28 +124,22 @@ pub enum AuthMode {
     },
 }
 
-impl AuthMode {
-    fn required(&self) -> bool {
-        matches!(self, Self::Required { .. })
-    }
-}
-
 #[derive(Clone)]
 struct AppState {
-    started: Instant,
     config: ServerConfig,
     sync_permits: Arc<Semaphore>,
     job_permits: Arc<Semaphore>,
+    running_jobs: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 pub fn router(config: ServerConfig) -> Router {
     let sync_permits = Arc::new(Semaphore::new(config.max_concurrent_sync));
     let job_permits = Arc::new(Semaphore::new(config.max_concurrent_jobs));
     let state = AppState {
-        started: Instant::now(),
         config,
         sync_permits,
         job_permits,
+        running_jobs: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
         .route("/v1/health", get(health))
@@ -138,18 +152,18 @@ pub fn router(config: ServerConfig) -> Router {
         .with_state(state)
 }
 
-async fn health(State(state): State<AppState>) -> Json<Value> {
+async fn health() -> Json<Value> {
     Json(json!({
-        "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
-        "uptime_s": state.started.elapsed().as_secs(),
+        "status": "ok"
     }))
 }
 
 async fn capabilities(
     State(state): State<AppState>,
     headers: HeaderMap,
+    uri: Uri,
 ) -> Result<Json<Value>, ApiError> {
+    require_control_plane_boundary(&headers, &uri)?;
     state.authorize(&headers)?;
     Ok(Json(capabilities_json(&state.config)))
 }
@@ -159,6 +173,7 @@ async fn execute(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Json<ExecutionResult>, ApiError> {
+    require_control_plane_boundary(&headers, request.uri())?;
     state.authorize(&headers)?;
     let request = parse_json_body(&state, request).await?;
     execute_sync(&state, request).await.map(Json)
@@ -169,6 +184,7 @@ async fn create_job(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<(StatusCode, Json<CreateJobResponse>), ApiError> {
+    require_control_plane_boundary(&headers, request.uri())?;
     state.authorize(&headers)?;
     let request = parse_json_body(&state, request).await?;
     admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
@@ -192,7 +208,7 @@ async fn create_job(
     let created = state
         .config
         .jobs
-        .create_or_get(&request)
+        .create_or_get_with_limit(&request, state.config.max_stored_jobs)
         .map_err(ApiError::job_store)?;
     let job_id = created.job_id;
     if created.inserted {
@@ -204,8 +220,10 @@ async fn create_job(
 async fn get_job(
     State(state): State<AppState>,
     headers: HeaderMap,
+    uri: Uri,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<JobRecord>, ApiError> {
+    require_control_plane_boundary(&headers, &uri)?;
     state.authorize(&headers)?;
     state
         .config
@@ -219,14 +237,25 @@ async fn get_job(
 async fn cancel_job(
     State(state): State<AppState>,
     headers: HeaderMap,
+    uri: Uri,
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, ApiError> {
+    require_control_plane_boundary(&headers, &uri)?;
     state.authorize(&headers)?;
-    let exists = state.config.jobs.cancel(&id).map_err(ApiError::job_store)?;
-    if exists {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ApiError::not_found(format!("unknown job: {id}")))
+    match state.config.jobs.cancel(&id).map_err(ApiError::job_store)? {
+        CancelOutcome::Canceled => {
+            state.cancel_running_job(&id)?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        CancelOutcome::AlreadyCanceled => Ok(StatusCode::NO_CONTENT),
+        CancelOutcome::NotCancelable(status) => Err(ApiError::conflict(
+            "job_not_cancelable",
+            format!(
+                "job {id} is already {} and cannot be canceled",
+                status.as_str()
+            ),
+        )),
+        CancelOutcome::Missing => Err(ApiError::not_found(format!("unknown job: {id}"))),
     }
 }
 
@@ -249,8 +278,50 @@ fn spawn_job(
                 return;
             }
         }
+        let cancellation = CancellationToken::new();
+        if let Err(error) = state.register_running_job(job_id.clone(), cancellation.clone()) {
+            cancellation.cancel();
+            if let Err(store_error) = state.config.jobs.fail(&job_id, &error) {
+                tracing::warn!(%job_id, %store_error, "failed to persist cancellation registry failure");
+            }
+            return;
+        }
+        match state.config.jobs.get(&job_id) {
+            Ok(Some(record)) if record.status == JobStatus::Canceled => {
+                cancellation.cancel();
+                if let Err(error) = state.unregister_running_job(&job_id) {
+                    tracing::warn!(%job_id, ?error, "failed to unregister canceled job");
+                }
+                return;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                cancellation.cancel();
+                if let Err(error) = state.unregister_running_job(&job_id) {
+                    tracing::warn!(%job_id, ?error, "failed to unregister missing job");
+                }
+                return;
+            }
+            Err(error) => {
+                cancellation.cancel();
+                if let Err(registry_error) = state.unregister_running_job(&job_id) {
+                    tracing::warn!(%job_id, ?registry_error, "failed to unregister job after store read failure");
+                }
+                let body = ErrorBody::new("job_store", error.to_string());
+                if let Err(store_error) = state.config.jobs.fail(&job_id, &body) {
+                    tracing::warn!(%job_id, %store_error, "failed to persist job store failure");
+                }
+                return;
+            }
+        }
         let engine = state.config.engine.clone();
-        let result = tokio::task::spawn_blocking(move || engine.execute(request)).await;
+        let result = tokio::task::spawn_blocking(move || {
+            engine.execute_with_cancellation(request, cancellation)
+        })
+        .await;
+        if let Err(error) = state.unregister_running_job(&job_id) {
+            tracing::warn!(%job_id, ?error, "failed to unregister completed job");
+        }
         match result {
             Ok(Ok(result)) => {
                 if let Err(error) = state.config.jobs.complete(&job_id, &result) {
@@ -277,28 +348,107 @@ impl AppState {
         match &self.config.auth {
             AuthMode::None => Ok(()),
             AuthMode::Required { token } => {
-                if api_key_authorized(headers, token) || bearer_authorized(headers, token) {
-                    Ok(())
-                } else {
-                    Err(ApiError::unauthorized("missing or invalid API key"))
+                if token.trim().is_empty() {
+                    return Err(ApiError::unauthorized("server API key is empty"));
+                }
+                match authorization(headers, token) {
+                    AuthorizationDecision::Authorized => Ok(()),
+                    AuthorizationDecision::MissingOrInvalid => {
+                        Err(ApiError::unauthorized("missing or invalid API key"))
+                    }
+                    AuthorizationDecision::Ambiguous => Err(ApiError::unauthorized(
+                        "ambiguous API key headers are not accepted",
+                    )),
                 }
             }
         }
     }
+
+    fn register_running_job(
+        &self,
+        id: String,
+        cancellation: CancellationToken,
+    ) -> Result<(), ErrorBody> {
+        let mut running = self.running_jobs.lock().map_err(|_| {
+            ErrorBody::new(
+                "job_cancellation_registry",
+                "job cancellation registry mutex was poisoned",
+            )
+        })?;
+        running.insert(id, cancellation);
+        Ok(())
+    }
+
+    fn unregister_running_job(&self, id: &str) -> Result<(), ErrorBody> {
+        let mut running = self.running_jobs.lock().map_err(|_| {
+            ErrorBody::new(
+                "job_cancellation_registry",
+                "job cancellation registry mutex was poisoned",
+            )
+        })?;
+        running.remove(id);
+        Ok(())
+    }
+
+    fn cancel_running_job(&self, id: &str) -> Result<(), ApiError> {
+        let token = {
+            let mut running = self.running_jobs.lock().map_err(|_| {
+                ApiError::internal(
+                    "job_cancellation_registry",
+                    "job cancellation registry mutex was poisoned",
+                )
+            })?;
+            running.remove(id)
+        };
+        if let Some(token) = token {
+            token.cancel();
+        }
+        Ok(())
+    }
 }
 
-fn api_key_authorized(headers: &HeaderMap, token: &str) -> bool {
-    headers
-        .get("x-beatbox-api-key")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|actual| constant_time_eq(actual.as_bytes(), token.as_bytes()))
+enum AuthorizationDecision {
+    Authorized,
+    MissingOrInvalid,
+    Ambiguous,
 }
 
-fn bearer_authorized(headers: &HeaderMap, token: &str) -> bool {
+fn authorization(headers: &HeaderMap, token: &str) -> AuthorizationDecision {
+    let api_key = unique_header_value(headers, "x-beatbox-api-key");
+    let bearer = unique_header_value(headers, AUTHORIZATION);
+
+    match (api_key, bearer) {
+        (UniqueHeader::Duplicate, _) | (_, UniqueHeader::Duplicate) => {
+            AuthorizationDecision::Ambiguous
+        }
+        (UniqueHeader::Present(_), UniqueHeader::Present(_)) => AuthorizationDecision::Ambiguous,
+        (UniqueHeader::Present(value), UniqueHeader::Absent) => {
+            if value
+                .to_str()
+                .ok()
+                .is_some_and(|actual| constant_time_eq(actual.as_bytes(), token.as_bytes()))
+            {
+                AuthorizationDecision::Authorized
+            } else {
+                AuthorizationDecision::MissingOrInvalid
+            }
+        }
+        (UniqueHeader::Absent, UniqueHeader::Present(value)) => {
+            if bearer_authorized(value, token) {
+                AuthorizationDecision::Authorized
+            } else {
+                AuthorizationDecision::MissingOrInvalid
+            }
+        }
+        (UniqueHeader::Absent, UniqueHeader::Absent) => AuthorizationDecision::MissingOrInvalid,
+    }
+}
+
+fn bearer_authorized(value: &HeaderValue, token: &str) -> bool {
     let expected = format!("Bearer {token}");
-    headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
+    value
+        .to_str()
+        .ok()
         .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected.as_bytes()))
 }
 
@@ -313,6 +463,13 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             body: ErrorBody::new("unauthorized", message),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            body: ErrorBody::new("forbidden", message),
         }
     }
 
@@ -334,12 +491,23 @@ impl ApiError {
         }
     }
 
+    fn conflict(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: ErrorBody::new(code, message),
+        }
+    }
+
     fn job_store(error: JobStoreError) -> Self {
         match error {
             JobStoreError::IdempotencyConflict => Self {
                 status: StatusCode::CONFLICT,
                 body: ErrorBody::new("idempotency_conflict", error.to_string()),
             },
+            JobStoreError::CapacityExceeded(max_jobs) => Self::too_many(
+                "job_store_full",
+                format!("maximum stored jobs ({max_jobs}) already exist"),
+            ),
             error => Self {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 body: ErrorBody::new("job_store", error.to_string()),
@@ -386,11 +554,20 @@ async fn parse_json_body<T: serde::de::DeserializeOwned>(
 }
 
 fn require_json_content_type(headers: &HeaderMap) -> Result<(), ApiError> {
-    let Some(content_type) = headers.get(CONTENT_TYPE) else {
-        return Err(ApiError::bad_request(
-            "unsupported_media_type",
-            "content-type must be application/json",
-        ));
+    let content_type = match unique_header_value(headers, CONTENT_TYPE) {
+        UniqueHeader::Absent => {
+            return Err(ApiError::bad_request(
+                "unsupported_media_type",
+                "content-type must be application/json",
+            ));
+        }
+        UniqueHeader::Present(content_type) => content_type,
+        UniqueHeader::Duplicate => {
+            return Err(ApiError::bad_request(
+                "unsupported_media_type",
+                "content-type must be a single application/json value",
+            ));
+        }
     };
     if json_content_type(content_type) {
         Ok(())
@@ -422,7 +599,7 @@ async fn execute_sync(
     request: ExecuteRequest,
 ) -> Result<ExecutionResult, ApiError> {
     admit_execution_request(&state.config, &request, ExecutionMode::Sync)?;
-    let _permit = state
+    let permit = state
         .sync_permits
         .clone()
         .try_acquire_owned()
@@ -435,11 +612,57 @@ async fn execute_sync(
                 ),
             )
         })?;
+    let cancellation = CancellationToken::new();
     let engine = state.config.engine.clone();
-    let result = tokio::task::spawn_blocking(move || engine.execute(request))
-        .await
-        .map_err(|error| ApiError::internal("execute_worker", error.to_string()))?;
+    let result = spawn_blocking_with_owned_permit(permit, cancellation, move |cancellation| {
+        engine.execute_with_cancellation(request, cancellation)
+    })
+    .await
+    .map_err(|error| ApiError::internal("execute_worker", error.to_string()))?;
     result.map_err(ApiError::unprocessable)
+}
+
+async fn spawn_blocking_with_owned_permit<T, F>(
+    permit: OwnedSemaphorePermit,
+    cancellation: CancellationToken,
+    work: F,
+) -> Result<T, tokio::task::JoinError>
+where
+    T: Send + 'static,
+    F: FnOnce(CancellationToken) -> T + Send + 'static,
+{
+    let mut cancel_on_drop = CancelOnDrop::new(cancellation.clone());
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work(cancellation)
+    })
+    .await;
+    cancel_on_drop.disarm();
+    result
+}
+
+struct CancelOnDrop {
+    cancellation: Option<CancellationToken>,
+}
+
+impl CancelOnDrop {
+    fn new(cancellation: CancellationToken) -> Self {
+        Self {
+            cancellation: Some(cancellation),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.cancellation = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            cancellation.cancel();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -454,6 +677,8 @@ fn admit_execution_request(
     mode: ExecutionMode,
 ) -> Result<(), ApiError> {
     admit_remote_source(request)?;
+    admit_remote_lane(request)?;
+    admit_remote_policy(request)?;
     let max_wall_ms = match mode {
         ExecutionMode::Sync => config.sync_wall_ms,
         ExecutionMode::Job => config.job_wall_ms,
@@ -489,12 +714,191 @@ fn admit_execution_request(
             config.max_output_bytes,
         ));
     }
+    if request.policy.limits.disk_bytes > config.max_disk_bytes {
+        return Err(limit_exceeded(
+            "disk_bytes",
+            request.policy.limits.disk_bytes,
+            config.max_disk_bytes,
+        ));
+    }
     if let Some(fuel) = request.policy.limits.fuel
         && fuel > config.max_fuel
     {
         return Err(limit_exceeded("fuel", fuel, config.max_fuel));
     }
     Ok(())
+}
+
+fn admit_remote_lane(request: &ExecuteRequest) -> Result<(), ApiError> {
+    match &request.lane {
+        Lane::Wasm => Ok(()),
+        Lane::PythonNative if python_native_available() => Ok(()),
+        Lane::PythonWasi | Lane::PythonNative | Lane::JsWasm | Lane::JsNative | Lane::Exec => {
+            Err(lane_unavailable(&request.lane))
+        }
+    }
+}
+
+fn admit_remote_policy(request: &ExecuteRequest) -> Result<(), ApiError> {
+    match request.lane {
+        Lane::Wasm => admit_remote_wasm_policy(&request.policy),
+        Lane::PythonNative => admit_remote_python_native_policy(&request.policy),
+        Lane::PythonWasi | Lane::JsWasm | Lane::JsNative | Lane::Exec => Ok(()),
+    }
+}
+
+fn admit_remote_wasm_policy(policy: &Policy) -> Result<(), ApiError> {
+    if policy.fs.workspace.is_some() {
+        return Err(policy_unenforceable(
+            "fs.workspace",
+            "the initial wasm lane is W0 hermetic and exposes no filesystem",
+        ));
+    }
+    if let Some(mount) = policy.fs.mounts.first() {
+        let mode = mount_mode_label(&mount.mode);
+        return Err(policy_unenforceable(
+            "fs.mounts",
+            format!(
+                "the initial wasm lane exposes no mounts; requested {mode} mount at {}",
+                mount.guest.display()
+            ),
+        ));
+    }
+    if !matches!(policy.net, NetPolicy::Deny) {
+        return Err(policy_unenforceable(
+            "net",
+            "raw network and proxy egress are not exposed in W0",
+        ));
+    }
+    if !policy.env.is_empty() {
+        return Err(policy_unenforceable(
+            "env",
+            "the initial wasm lane exposes no environment",
+        ));
+    }
+    if !policy.secrets.is_empty() {
+        return Err(policy_unenforceable(
+            "secrets",
+            "the initial wasm lane exposes no secrets",
+        ));
+    }
+    if policy.double_jail {
+        return Err(policy_unenforceable(
+            "double_jail",
+            "the initial wasm lane cannot add a second OS or VM isolation boundary",
+        ));
+    }
+    Ok(())
+}
+
+fn admit_remote_python_native_policy(policy: &Policy) -> Result<(), ApiError> {
+    if policy.fs.workspace.is_some() {
+        return Err(policy_unenforceable(
+            "fs.workspace",
+            "python_native currently creates a fresh private workspace per run",
+        ));
+    }
+    if let Some(mount) = policy.fs.mounts.first() {
+        let mode = mount_mode_label(&mount.mode);
+        return Err(policy_unenforceable(
+            "fs.mounts",
+            format!(
+                "python_native does not expose host mounts yet; requested {mode} mount at {}",
+                mount.guest.display()
+            ),
+        ));
+    }
+    if !matches!(policy.net, NetPolicy::Deny) {
+        return Err(policy_unenforceable(
+            "net",
+            "python_native exposes no network or proxy egress",
+        ));
+    }
+    if !policy.env.is_empty() {
+        return Err(policy_unenforceable(
+            "env",
+            "python_native starts with an empty environment",
+        ));
+    }
+    if !policy.secrets.is_empty() {
+        return Err(policy_unenforceable(
+            "secrets",
+            "python_native does not expose secrets",
+        ));
+    }
+    if !matches!(policy.determinism, Determinism::Off) {
+        return Err(policy_unenforceable(
+            "determinism",
+            "python_native is not deterministic",
+        ));
+    }
+    if policy.double_jail {
+        return Err(policy_unenforceable(
+            "double_jail",
+            "double_jail applies only to wasm lanes",
+        ));
+    }
+    admit_remote_python_native_unenforced_limits(policy)?;
+    Ok(())
+}
+
+fn admit_remote_python_native_unenforced_limits(policy: &Policy) -> Result<(), ApiError> {
+    let default = Policy::default().limits;
+    for (field, requested, default, reason) in [
+        (
+            "limits.cpu_ms",
+            policy.limits.cpu_ms,
+            default.cpu_ms,
+            "python_native does not enforce CPU-time limits; use wall_ms for the watchdog",
+        ),
+        (
+            "limits.memory_bytes",
+            policy.limits.memory_bytes,
+            default.memory_bytes,
+            "python_native does not enforce process memory limits; max_python_source_bytes is the inline source cap",
+        ),
+        (
+            "limits.pids",
+            u64::from(policy.limits.pids),
+            u64::from(default.pids),
+            "python_native denies fork in Seatbelt but does not expose a configurable pid quota",
+        ),
+    ] {
+        if requested != default {
+            return Err(policy_unenforceable(field, reason));
+        }
+    }
+    if policy.limits.fuel != default.fuel {
+        return Err(policy_unenforceable(
+            "limits.fuel",
+            "fuel applies only to Wasmtime-backed lanes",
+        ));
+    }
+    Ok(())
+}
+
+fn mount_mode_label(mode: &MountMode) -> &'static str {
+    match mode {
+        MountMode::Ro => "ro",
+        MountMode::Rw => "rw",
+    }
+}
+
+fn policy_unenforceable(field: &'static str, reason: impl Into<String>) -> ApiError {
+    ApiError::unprocessable_body(ErrorBody::new(
+        "policy_unenforceable",
+        format!("policy field {field} cannot be enforced: {}", reason.into()),
+    ))
+}
+
+fn lane_unavailable(lane: &Lane) -> ApiError {
+    ApiError::unprocessable_body(ErrorBody::new(
+        "lane_unavailable",
+        format!(
+            "lane {} is not available on this daemon; check /v1/capabilities before submitting work",
+            lane_label(lane)
+        ),
+    ))
 }
 
 fn limit_exceeded(field: &'static str, actual: u64, max: u64) -> ApiError {
@@ -557,6 +961,36 @@ fn source_kind(source: &Source) -> &'static str {
 }
 
 fn capabilities_json(config: &ServerConfig) -> Value {
+    let python_native_is_available = python_native_available();
+    let python_native_mechanisms = if python_native_is_available {
+        json!([
+            "sandbox-exec",
+            "seatbelt-profile",
+            "env-clear",
+            "trusted-python-binary",
+            "runtime-read-allowlist",
+            "network-deny",
+            "process-fork-deny",
+            "mach-lookup-deny",
+            "sysctl-read-deny",
+            "wall-time-watchdog",
+            "source-byte-limit",
+            "stdin-delivery-watchdog",
+            "workspace-disk-quota",
+            "output-cap"
+        ])
+    } else {
+        json!([])
+    };
+    let python_native_downgrades = if python_native_is_available {
+        json!([
+            "macos_native_lane_dev_grade",
+            "memory_limit_not_enforced",
+            "cpu_limit_not_enforced"
+        ])
+    } else {
+        json!([])
+    };
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "lanes": [
@@ -565,11 +999,18 @@ fn capabilities_json(config: &ServerConfig) -> Value {
                 "available": true,
                 "substrate": "wasmtime",
                 "grade": {"linux": "prod", "macos": "prod"},
-                "mechanisms": ["empty-linker", "fuel", "epoch-interruption", "store-limits"]
+                "mechanisms": ["empty-linker", "host-import-deny", "precompile-import-scan", "fuel", "epoch-interruption", "module-byte-limit", "store-limits"]
             },
             {"lane": "python_wasi", "available": false, "substrate": "wasmtime", "grade": {"linux": "planned", "macos": "planned"}},
             {"lane": "js_wasm", "available": false, "substrate": "wasmtime", "grade": {"linux": "planned", "macos": "planned"}},
-            {"lane": "python_native", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}},
+            {
+                "lane": "python_native",
+                "available": python_native_is_available,
+                "substrate": "os_jail",
+                "grade": {"linux": "planned", "macos": "dev"},
+                "mechanisms": python_native_mechanisms,
+                "downgrades": python_native_downgrades
+            },
             {"lane": "js_native", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}},
             {"lane": "exec", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}}
         ],
@@ -578,20 +1019,48 @@ fn capabilities_json(config: &ServerConfig) -> Value {
             "job_wall_ms": config.job_wall_ms,
             "default_wall_ms": Policy::default().limits.wall_ms,
             "default_memory_bytes": Policy::default().limits.memory_bytes,
+            "default_disk_bytes": Policy::default().limits.disk_bytes,
             "default_output_bytes": Policy::default().limits.output_bytes,
             "max_request_bytes": config.max_request_bytes,
+            "max_wasm_module_bytes": MAX_WASM_MODULE_BYTES,
+            "max_python_source_bytes": MAX_PYTHON_SOURCE_BYTES,
             "max_memory_bytes": config.max_memory_bytes,
             "max_output_bytes": config.max_output_bytes,
+            "max_disk_bytes": config.max_disk_bytes,
             "max_fuel": config.max_fuel,
             "max_concurrent_sync": config.max_concurrent_sync,
-            "max_concurrent_jobs": config.max_concurrent_jobs
+            "max_concurrent_jobs": config.max_concurrent_jobs,
+            "max_stored_jobs": config.max_stored_jobs
         },
         "engines": {"wasmtime": "45"}
     })
 }
 
-async fn openapi() -> Json<utoipa::openapi::OpenApi> {
-    Json(ApiDoc::openapi())
+async fn openapi(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Json<Value>, ApiError> {
+    require_control_plane_boundary(&headers, &uri)?;
+    state.authorize(&headers)?;
+    let mut value = serde_json::to_value(ApiDoc::openapi())
+        .map_err(|error| ApiError::internal("openapi", error.to_string()))?;
+    close_source_schema_variants(&mut value);
+    Ok(Json(value))
+}
+
+fn close_source_schema_variants(openapi: &mut Value) {
+    let Some(variants) = openapi
+        .pointer_mut("/components/schemas/Source/oneOf")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for variant in variants {
+        if let Some(object) = variant.as_object_mut() {
+            object.insert("additionalProperties".to_string(), Value::Bool(false));
+        }
+    }
 }
 
 #[derive(OpenApi)]
@@ -604,8 +1073,19 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
         openapi_paths::create_job,
         openapi_paths::get_job,
         openapi_paths::cancel_job,
+        openapi_paths::mcp_get,
         openapi_paths::mcp_post
     ),
+    components(schemas(
+        CreateJobResponse,
+        ErrorBody,
+        ErrorResponse,
+        ExecuteRequest,
+        ExecutionResult,
+        JobRecord,
+        Policy,
+        Source
+    )),
     tags(
         (name = "v1", description = "beatbox REST API"),
         (name = "mcp", description = "stateless MCP JSON-RPC endpoint")
@@ -615,6 +1095,10 @@ struct ApiDoc;
 
 #[allow(dead_code)]
 mod openapi_paths {
+    use beatbox_core::{
+        CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord,
+    };
+
     #[utoipa::path(
         get,
         path = "/v1/health",
@@ -629,7 +1113,8 @@ mod openapi_paths {
         tag = "v1",
         responses(
             (status = 200, description = "Lane availability and host limits"),
-            (status = 401, description = "Missing or invalid bearer token")
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse)
         )
     )]
     pub fn capabilities() {}
@@ -638,10 +1123,14 @@ mod openapi_paths {
         post,
         path = "/v1/execute",
         tag = "v1",
+        request_body = ExecuteRequest,
         responses(
-            (status = 200, description = "ExecutionResult"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 422, description = "Protocol, source, policy, or sync-limit rejection")
+            (status = 200, description = "ExecutionResult", body = ExecutionResult),
+            (status = 400, description = "Unsupported content type, invalid JSON, or request body limit rejection", body = ErrorResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse),
+            (status = 422, description = "Protocol, source, lane availability, policy, or sync-limit rejection", body = ErrorResponse),
+            (status = 429, description = "Synchronous execution concurrency limit exceeded", body = ErrorResponse)
         )
     )]
     pub fn execute() {}
@@ -650,9 +1139,15 @@ mod openapi_paths {
         post,
         path = "/v1/jobs",
         tag = "v1",
+        request_body = ExecuteRequest,
         responses(
-            (status = 202, description = "Created asynchronous job"),
-            (status = 401, description = "Missing or invalid bearer token")
+            (status = 202, description = "Created asynchronous job", body = CreateJobResponse),
+            (status = 400, description = "Unsupported content type, invalid JSON, or request body limit rejection", body = ErrorResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse),
+            (status = 409, description = "Idempotency key was reused with a conflicting payload", body = ErrorResponse),
+            (status = 422, description = "Protocol, source, lane availability, policy, or job-limit rejection", body = ErrorResponse),
+            (status = 429, description = "Asynchronous job concurrency or stored-job quota exceeded", body = ErrorResponse)
         )
     )]
     pub fn create_job() {}
@@ -663,9 +1158,10 @@ mod openapi_paths {
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
-            (status = 200, description = "JobRecord"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 404, description = "Unknown job")
+            (status = 200, description = "JobRecord", body = JobRecord),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse),
+            (status = 404, description = "Unknown job", body = ErrorResponse)
         )
     )]
     pub fn get_job() {}
@@ -676,12 +1172,26 @@ mod openapi_paths {
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
-            (status = 204, description = "Canceled job"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 404, description = "Unknown job")
+            (status = 204, description = "Canceled queued job or signaled running job interruption"),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse),
+            (status = 409, description = "Job is already terminal and cannot be canceled", body = ErrorResponse),
+            (status = 404, description = "Unknown job", body = ErrorResponse)
         )
     )]
     pub fn cancel_job() {}
+
+    #[utoipa::path(
+        get,
+        path = "/mcp",
+        tag = "mcp",
+        responses(
+            (status = 405, description = "Server-initiated MCP stream is not available"),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 403, description = "Origin or Host not allowed", body = ErrorResponse)
+        )
+    )]
+    pub fn mcp_get() {}
 
     #[utoipa::path(
         post,
@@ -690,20 +1200,53 @@ mod openapi_paths {
         responses(
             (status = 200, description = "JSON-RPC response"),
             (status = 202, description = "JSON-RPC notification accepted"),
-            (status = 403, description = "Origin not allowed")
+            (status = 400, description = "Unsupported content type, invalid JSON, or request body limit rejection"),
+            (status = 401, description = "Missing or invalid bearer token"),
+            (status = 403, description = "Origin or Host not allowed")
         )
     )]
     pub fn mcp_post() {}
 }
 
 pub fn origin_allowed(headers: &HeaderMap) -> bool {
-    match headers.get("origin").and_then(|value| value.to_str().ok()) {
+    match unique_header_value(headers, ORIGIN) {
+        UniqueHeader::Absent => true,
+        UniqueHeader::Present(origin) => origin.to_str().ok().is_some_and(local_origin_allowed),
+        UniqueHeader::Duplicate => false,
+    }
+}
+
+pub fn host_allowed(headers: &HeaderMap) -> bool {
+    match unique_header_value(headers, HOST) {
+        UniqueHeader::Absent => true,
+        UniqueHeader::Present(host) => host.to_str().ok().is_some_and(local_host_allowed),
+        UniqueHeader::Duplicate => false,
+    }
+}
+
+pub fn request_target_allowed(uri: &Uri) -> bool {
+    match uri.authority() {
         None => true,
-        Some(origin) => local_origin_allowed(origin),
+        Some(authority) => local_host_allowed(authority.as_str()),
+    }
+}
+
+fn require_control_plane_boundary(headers: &HeaderMap, uri: &Uri) -> Result<(), ApiError> {
+    if !origin_allowed(headers) {
+        Err(ApiError::forbidden("origin not allowed"))
+    } else if !host_allowed(headers) {
+        Err(ApiError::forbidden("host not allowed"))
+    } else if !request_target_allowed(uri) {
+        Err(ApiError::forbidden("request target not allowed"))
+    } else {
+        Ok(())
     }
 }
 
 fn local_origin_allowed(origin: &str) -> bool {
+    if origin != origin.trim() {
+        return false;
+    }
     let Some(url) = parse_origin(origin) else {
         return false;
     };
@@ -716,7 +1259,7 @@ fn local_origin_allowed(origin: &str) -> bool {
 }
 
 fn parse_origin(origin: &str) -> Option<Url> {
-    let url = Url::parse(origin.trim().trim_end_matches('/')).ok()?;
+    let url = Url::parse(origin).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
@@ -732,6 +1275,66 @@ fn parse_origin(origin: &str) -> Option<Url> {
     Some(url)
 }
 
+fn local_host_allowed(host: &str) -> bool {
+    if host != host.trim() {
+        return false;
+    }
+    if host.is_empty()
+        || host.contains('@')
+        || host.contains('/')
+        || host.contains('\\')
+        || host.contains('?')
+        || host.contains('#')
+    {
+        return false;
+    }
+    let Some(parsed_host) = parse_host_header_name(host) else {
+        return false;
+    };
+    if parsed_host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match parsed_host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(addr)) => addr == Ipv4Addr::LOCALHOST,
+        Ok(IpAddr::V6(addr)) => addr == Ipv6Addr::LOCALHOST,
+        Err(_) => false,
+    }
+}
+
+fn parse_host_header_name(host: &str) -> Option<String> {
+    if let Some(rest) = host.strip_prefix('[') {
+        let (addr, suffix) = rest.split_once(']')?;
+        if suffix.is_empty() || valid_host_port_suffix(suffix) {
+            return Some(addr.to_string());
+        }
+        return None;
+    }
+    if !valid_non_bracket_host_port(host) {
+        return None;
+    }
+    let authority: Authority = host.parse().ok()?;
+    if authority.port().is_some() && authority.port_u16().is_none() {
+        return None;
+    }
+    Some(authority.host().to_string())
+}
+
+fn valid_non_bracket_host_port(host: &str) -> bool {
+    match host.as_bytes().iter().filter(|byte| **byte == b':').count() {
+        0 => true,
+        1 => host
+            .rsplit_once(':')
+            .is_some_and(|(_, port)| port.parse::<u16>().is_ok()),
+        _ => false,
+    }
+}
+
+fn valid_host_port_suffix(suffix: &str) -> bool {
+    suffix
+        .strip_prefix(':')
+        .is_some_and(|port| port.parse::<u16>().is_ok())
+}
+
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     let max_len = left.len().max(right.len());
     let mut diff = left.len() ^ right.len();
@@ -743,7 +1346,34 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     diff == 0
 }
 
-async fn mcp_get() -> Response {
+enum UniqueHeader<'a> {
+    Absent,
+    Present(&'a HeaderValue),
+    Duplicate,
+}
+
+fn unique_header_value<'a, K>(headers: &'a HeaderMap, name: K) -> UniqueHeader<'a>
+where
+    K: AsHeaderName,
+{
+    let mut values = headers.get_all(name).iter();
+    let Some(first) = values.next() else {
+        return UniqueHeader::Absent;
+    };
+    if values.next().is_some() {
+        UniqueHeader::Duplicate
+    } else {
+        UniqueHeader::Present(first)
+    }
+}
+
+async fn mcp_get(State(state): State<AppState>, headers: HeaderMap, uri: Uri) -> Response {
+    if let Err(error) = require_control_plane_boundary(&headers, &uri) {
+        return error.into_response();
+    }
+    if let Err(error) = state.authorize(&headers) {
+        return error.into_response();
+    }
     (
         StatusCode::METHOD_NOT_ALLOWED,
         [("allow", "POST")],
@@ -754,16 +1384,15 @@ async fn mcp_get() -> Response {
 
 async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Response {
     let (parts, body) = request.into_parts();
+    let uri = parts.uri;
     let headers = parts.headers;
-    if !origin_allowed(&headers) {
+    if let Err(error) = require_control_plane_boundary(&headers, &uri) {
         return json_response(
             StatusCode::FORBIDDEN,
-            json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": "origin not allowed"}}),
+            json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": error.body.message}}),
         );
     }
-    if state.config.auth.required()
-        && let Err(error) = state.authorize(&headers)
-    {
+    if let Err(error) = state.authorize(&headers) {
         return json_response(
             StatusCode::UNAUTHORIZED,
             json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32001, "message": error.body.message}}),
@@ -802,14 +1431,6 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
 
     let method = message["method"].as_str().unwrap_or_default();
     let params = message.get("params").cloned().unwrap_or(Value::Null);
-    if matches!(method, "tools/list" | "tools/call")
-        && let Err(error) = state.authorize(&headers)
-    {
-        return json_response(
-            StatusCode::UNAUTHORIZED,
-            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32001, "message": error.body.message}}),
-        );
-    }
     let reply = match method {
         "initialize" => Ok(json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -840,29 +1461,42 @@ fn mcp_tools() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "oneOf": [{"required": ["wat"]}, {"required": ["wasm_base64"]}],
+                "$defs": mcp_json_schema_defs(),
                 "properties": {
-                    "wat": {"type": "string"},
-                    "wasm_base64": {"type": "string"},
-                    "input": {},
-                    "entrypoint": {"type": "string"},
-                    "timeout_ms": {"type": "integer"},
-                    "memory_bytes": {"type": "integer"},
-                    "fuel": {"type": "integer"}
+                    "wat": {
+                        "type": "string",
+                        "description": "WebAssembly text module source. Mutually exclusive with wasm_base64."
+                    },
+                    "wasm_base64": {
+                        "type": "string",
+                        "description": "Base64-encoded WebAssembly module bytes. Mutually exclusive with wat."
+                    },
+                    "input": mcp_json_input_schema(),
+                    "entrypoint": {
+                        "type": "string",
+                        "description": "Optional exported function name to invoke."
+                    },
+                    "timeout_ms": mcp_unsigned_integer_schema("Optional wall-clock timeout in milliseconds."),
+                    "memory_bytes": mcp_unsigned_integer_schema("Optional memory limit in bytes."),
+                    "fuel": mcp_unsigned_integer_schema("Optional Wasmtime fuel budget.")
                 }
             }
         },
         {
             "name": "run_python",
-            "description": "Run Python source in the planned python-wasi lane.",
+            "description": "Run Python source in the explicitly enabled native macOS Python lane.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["code"],
+                "$defs": mcp_json_schema_defs(),
                 "properties": {
-                    "code": {"type": "string"},
-                    "input": {},
-                    "timeout_ms": {"type": "integer"},
-                    "memory_bytes": {"type": "integer"}
+                    "code": {
+                        "type": "string",
+                        "description": "Python source code to run on stdin."
+                    },
+                    "timeout_ms": mcp_unsigned_integer_schema("Optional wall-clock timeout in milliseconds."),
+                    "disk_bytes": mcp_unsigned_integer_schema("Optional private workspace disk limit in bytes.")
                 }
             }
         },
@@ -873,11 +1507,15 @@ fn mcp_tools() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["code"],
+                "$defs": mcp_json_schema_defs(),
                 "properties": {
-                    "code": {"type": "string"},
-                    "input": {},
-                    "timeout_ms": {"type": "integer"},
-                    "memory_bytes": {"type": "integer"}
+                    "code": {
+                        "type": "string",
+                        "description": "JavaScript source code to run on stdin."
+                    },
+                    "input": mcp_json_input_schema(),
+                    "timeout_ms": mcp_unsigned_integer_schema("Optional wall-clock timeout in milliseconds."),
+                    "memory_bytes": mcp_unsigned_integer_schema("Optional memory limit in bytes.")
                 }
             }
         },
@@ -887,6 +1525,38 @@ fn mcp_tools() -> Value {
             "inputSchema": {"type": "object", "additionalProperties": false}
         }
     ])
+}
+
+fn mcp_json_schema_defs() -> Value {
+    json!({
+        "json_value": {
+            "description": "Any JSON value accepted by the MCP parser.",
+            "oneOf": [
+                {"type": "null"},
+                {"type": "boolean"},
+                {"type": "number"},
+                {"type": "string"},
+                {"type": "array", "items": {"$ref": "#/$defs/json_value"}},
+                {"type": "object", "additionalProperties": {"$ref": "#/$defs/json_value"}}
+            ]
+        }
+    })
+}
+
+fn mcp_json_input_schema() -> Value {
+    json!({
+        "description": "Optional arbitrary JSON value passed as execution input. Defaults to null.",
+        "default": null,
+        "allOf": [{"$ref": "#/$defs/json_value"}]
+    })
+}
+
+fn mcp_unsigned_integer_schema(description: &'static str) -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": description
+    })
 }
 
 async fn mcp_tools_call(
@@ -905,8 +1575,10 @@ async fn mcp_tools_call(
     match name {
         "get_capabilities" => {
             mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
+            let capabilities = capabilities_json(&state.config);
             Ok(json!({
-                "content": [{"type": "text", "text": capabilities_json(&state.config).to_string()}],
+                "content": [{"type": "text", "text": "beatbox capabilities"}],
+                "structuredContent": capabilities,
                 "isError": false,
             }))
         }
@@ -918,7 +1590,7 @@ async fn mcp_tools_call(
             tool_result(result)
         }
         "run_python" => {
-            let request = mcp_run_code_request(&arguments, Lane::PythonWasi, "run_python")?;
+            let request = mcp_run_code_request(&arguments, Lane::PythonNative, "run_python")?;
             let result = execute_sync(state, request)
                 .await
                 .map_err(api_error_to_rpc)?;
@@ -995,17 +1667,24 @@ fn mcp_run_code_request(
     lane: Lane,
     tool: &'static str,
 ) -> Result<ExecuteRequest, (i64, String)> {
-    let arguments = mcp_tool_arguments(
-        arguments,
-        tool,
-        &["code", "input", "timeout_ms", "memory_bytes"],
-    )?;
+    let accepts_input = lane != Lane::PythonNative;
+    let allowed = if accepts_input {
+        &["code", "input", "timeout_ms", "memory_bytes"][..]
+    } else {
+        &["code", "timeout_ms", "disk_bytes"][..]
+    };
+    let arguments = mcp_tool_arguments(arguments, tool, allowed)?;
     let mut policy = Policy::default();
     if let Some(timeout_ms) = mcp_u64_arg(arguments, "timeout_ms", tool)? {
         policy.limits.wall_ms = timeout_ms;
     }
-    if let Some(memory_bytes) = mcp_u64_arg(arguments, "memory_bytes", tool)? {
+    if accepts_input && let Some(memory_bytes) = mcp_u64_arg(arguments, "memory_bytes", tool)? {
         policy.limits.memory_bytes = memory_bytes;
+    }
+    if lane == Lane::PythonNative
+        && let Some(disk_bytes) = mcp_u64_arg(arguments, "disk_bytes", tool)?
+    {
+        policy.limits.disk_bytes = disk_bytes;
     }
 
     Ok(ExecuteRequest {
@@ -1014,7 +1693,11 @@ fn mcp_run_code_request(
             code: mcp_string_arg(arguments, "code", tool)?,
         },
         entrypoint: None,
-        input: arguments.get("input").cloned().unwrap_or(Value::Null),
+        input: if accepts_input {
+            arguments.get("input").cloned().unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        },
         stdin: String::new(),
         policy,
         idempotency_key: None,
@@ -1077,12 +1760,46 @@ fn mcp_u64_arg(
 }
 
 fn tool_result(result: ExecutionResult) -> Result<Value, (i64, String)> {
-    let text = serde_json::to_string(&result)
+    let text = execution_result_summary(&result);
+    let is_error = result.status != ExecutionStatus::Ok;
+    let structured = serde_json::to_value(&result)
         .map_err(|error| (-32000, format!("failed to encode result: {error}")))?;
     Ok(json!({
         "content": [{"type": "text", "text": text}],
-        "isError": false,
+        "structuredContent": structured,
+        "isError": is_error,
     }))
+}
+
+fn execution_result_summary(result: &ExecutionResult) -> String {
+    let status = execution_status_label(&result.status);
+    let lane = lane_label(&result.lane);
+    match &result.error {
+        Some(error) => format!("beatbox execution {status} on {lane}: {}", error.code),
+        None => format!("beatbox execution {status} on {lane}"),
+    }
+}
+
+fn execution_status_label(status: &ExecutionStatus) -> &'static str {
+    match status {
+        ExecutionStatus::Ok => "ok",
+        ExecutionStatus::Error => "error",
+        ExecutionStatus::Timeout => "timeout",
+        ExecutionStatus::Oom => "oom",
+        ExecutionStatus::Killed => "killed",
+        ExecutionStatus::Denied => "denied",
+    }
+}
+
+fn lane_label(lane: &Lane) -> &'static str {
+    match lane {
+        Lane::Wasm => "wasm",
+        Lane::PythonWasi => "python_wasi",
+        Lane::PythonNative => "python_native",
+        Lane::JsWasm => "js_wasm",
+        Lane::JsNative => "js_native",
+        Lane::Exec => "exec",
+    }
 }
 
 fn api_error_to_rpc(error: ApiError) -> (i64, String) {
@@ -1102,4 +1819,54 @@ fn json_response(status: StatusCode, body: Value) -> Response {
         Body::from(body.to_string()),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    use tokio::sync::{oneshot, Semaphore};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn dropped_sync_waiter_cancels_worker_without_releasing_permit_early(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.clone().try_acquire_owned()?;
+        let cancellation = CancellationToken::new();
+        let (started_tx, started_rx) = oneshot::channel();
+        let (canceled_tx, canceled_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let task = tokio::spawn(spawn_blocking_with_owned_permit(
+            permit,
+            cancellation,
+            move |cancellation| {
+                let _ = started_tx.send(());
+                while !cancellation.is_canceled() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let _ = canceled_tx.send(());
+                let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            },
+        ));
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx).await??;
+        task.abort();
+        tokio::task::yield_now().await;
+        tokio::time::timeout(Duration::from_secs(1), canceled_rx).await??;
+
+        assert!(
+            semaphore.clone().try_acquire_owned().is_err(),
+            "sync permit was released while the blocking worker was still alive"
+        );
+
+        release_tx.send(())?;
+        let permit =
+            tokio::time::timeout(Duration::from_secs(1), semaphore.acquire_owned()).await??;
+        drop(permit);
+        Ok(())
+    }
 }

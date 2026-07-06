@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Lane {
     Wasm,
@@ -14,7 +15,8 @@ pub enum Lane {
     Exec,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
     #[serde(default)]
     pub fs: FsPolicy,
@@ -32,30 +34,35 @@ pub struct Policy {
     pub double_jail: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FsPolicy {
     #[serde(default)]
+    #[schema(value_type = Option<String>)]
     pub workspace: Option<PathBuf>,
     #[serde(default)]
     pub mounts: Vec<Mount>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Mount {
+    #[schema(value_type = String)]
     pub host: PathBuf,
+    #[schema(value_type = String)]
     pub guest: PathBuf,
     pub mode: MountMode,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MountMode {
     Ro,
     Rw,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetPolicy {
     #[default]
     Deny,
@@ -67,21 +74,23 @@ pub enum NetPolicy {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Secret {
     pub name: String,
     pub value_ref: String,
     pub expose: SecretExpose,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretExpose {
     Env,
     File,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct Limits {
     pub wall_ms: u64,
     pub cpu_ms: u64,
@@ -106,8 +115,8 @@ impl Default for Limits {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Determinism {
     #[default]
     Off,
@@ -117,13 +126,15 @@ pub enum Determinism {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteRequest {
     pub lane: Lane,
     pub source: Source,
     #[serde(default)]
     pub entrypoint: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub input: serde_json::Value,
     #[serde(default)]
     pub stdin: String,
@@ -133,7 +144,7 @@ pub struct ExecuteRequest {
     pub idempotency_key: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     Queued,
@@ -155,12 +166,12 @@ impl JobStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CreateJobResponse {
     pub job_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct JobRecord {
     pub job_id: String,
     pub status: JobStatus,
@@ -171,17 +182,28 @@ pub struct JobRecord {
     pub updated_at: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
-    Inline { code: String },
-    WasmFile { path: PathBuf },
-    WasmWat { text: String },
-    WasmBytesBase64 { bytes: String },
-    ModuleRef { sha256: String },
+    Inline {
+        code: String,
+    },
+    WasmFile {
+        #[schema(value_type = String)]
+        path: PathBuf,
+    },
+    WasmWat {
+        text: String,
+    },
+    WasmBytesBase64 {
+        bytes: String,
+    },
+    ModuleRef {
+        sha256: String,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStatus {
     Ok,
@@ -192,9 +214,10 @@ pub enum ExecutionStatus {
     Denied,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ExecutionResult {
     pub status: ExecutionStatus,
+    #[schema(value_type = Object)]
     pub value: serde_json::Value,
     pub exit_code: Option<i32>,
     pub stdout: String,
@@ -212,7 +235,7 @@ pub struct ExecutionResult {
     pub egress: Vec<EgressRecord>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Metrics {
     pub wall_time_ms: u64,
     pub cpu_time_ms: u64,
@@ -220,7 +243,7 @@ pub struct Metrics {
     pub peak_memory_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ErrorBody {
     pub code: String,
     pub message: String,
@@ -235,7 +258,7 @@ impl ErrorBody {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EffectiveIsolation {
     pub os: String,
     pub mechanisms: Vec<String>,
@@ -243,14 +266,14 @@ pub struct EffectiveIsolation {
     pub downgrades: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct EgressRecord {
     pub domain: String,
     pub port: u16,
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: ErrorBody,
 }
@@ -285,5 +308,118 @@ mod tests {
         let decoded: ExecuteRequest = serde_json::from_value(encoded)?;
         assert_eq!(decoded, request);
         Ok(())
+    }
+
+    #[test]
+    fn limits_deserialize_with_default_filled_missing_fields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let default = Limits::default();
+
+        let empty: Limits = serde_json::from_value(serde_json::json!({}))?;
+        assert_eq!(empty, default);
+
+        let partial: Limits = serde_json::from_value(serde_json::json!({
+            "wall_ms": 250,
+            "output_bytes": 512,
+            "fuel": null
+        }))?;
+        assert_eq!(partial.wall_ms, 250);
+        assert_eq!(partial.output_bytes, 512);
+        assert_eq!(partial.fuel, None);
+        assert_eq!(partial.cpu_ms, default.cpu_ms);
+        assert_eq!(partial.memory_bytes, default.memory_bytes);
+        assert_eq!(partial.pids, default.pids);
+        assert_eq!(partial.disk_bytes, default.disk_bytes);
+
+        let populated = Limits {
+            wall_ms: 123,
+            cpu_ms: 456,
+            memory_bytes: 789,
+            output_bytes: 1011,
+            pids: 3,
+            disk_bytes: 1213,
+            fuel: Some(1415),
+        };
+        let encoded = serde_json::to_value(&populated)?;
+        let decoded: Limits = serde_json::from_value(encoded)?;
+        assert_eq!(decoded, populated);
+        Ok(())
+    }
+
+    #[test]
+    fn request_policy_limits_can_be_compact_without_losing_defaults(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let request: ExecuteRequest = serde_json::from_value(serde_json::json!({
+            "lane": "wasm",
+            "source": {"kind": "wasm_wat", "text": "(module)"},
+            "policy": {
+                "limits": {
+                    "wall_ms": 250
+                }
+            }
+        }))?;
+
+        let default = Policy::default();
+        assert_eq!(request.policy.limits.wall_ms, 250);
+        assert_eq!(request.policy.limits.cpu_ms, default.limits.cpu_ms);
+        assert_eq!(
+            request.policy.limits.memory_bytes,
+            default.limits.memory_bytes
+        );
+        assert_eq!(
+            request.policy.limits.output_bytes,
+            default.limits.output_bytes
+        );
+        assert_eq!(request.policy.limits.pids, default.limits.pids);
+        assert_eq!(request.policy.limits.disk_bytes, default.limits.disk_bytes);
+        assert_eq!(request.policy.limits.fuel, default.limits.fuel);
+        Ok(())
+    }
+
+    #[test]
+    fn request_rejects_unknown_fields() -> Result<(), Box<dyn std::error::Error>> {
+        let unknown_top_level = serde_json::json!({
+            "lane": "wasm",
+            "source": {"kind": "wasm_wat", "text": "(module)"},
+            "policy": {},
+            "surprise": true
+        });
+        let error = unknown_request_error(unknown_top_level, "top-level request")?;
+        assert!(error.to_string().contains("unknown field"));
+
+        let unknown_policy = serde_json::json!({
+            "lane": "wasm",
+            "source": {"kind": "wasm_wat", "text": "(module)"},
+            "policy": {"netwrok": {"kind": "deny"}}
+        });
+        let error = unknown_request_error(unknown_policy, "policy")?;
+        assert!(error.to_string().contains("unknown field"));
+
+        let unknown_source = serde_json::json!({
+            "lane": "wasm",
+            "source": {"kind": "wasm_wat", "text": "(module)", "path": "/etc/passwd"},
+            "policy": {}
+        });
+        let error = unknown_request_error(unknown_source, "source")?;
+        assert!(error.to_string().contains("unknown field"));
+
+        let unknown_limit = serde_json::json!({
+            "lane": "wasm",
+            "source": {"kind": "wasm_wat", "text": "(module)"},
+            "policy": {"limits": {"wall_mz": 1}}
+        });
+        let error = unknown_request_error(unknown_limit, "limits")?;
+        assert!(error.to_string().contains("unknown field"));
+        Ok(())
+    }
+
+    fn unknown_request_error(
+        value: serde_json::Value,
+        context: &'static str,
+    ) -> Result<serde_json::Error, Box<dyn std::error::Error>> {
+        match serde_json::from_value::<ExecuteRequest>(value) {
+            Ok(_) => Err(format!("unknown {context} fields must be rejected").into()),
+            Err(error) => Ok(error),
+        }
     }
 }

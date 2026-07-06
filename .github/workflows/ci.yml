@@ -18,7 +18,9 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo test
+      - run: cargo test -p beatbox-server --features lane-python
       - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy -p beatboxd --features lane-python --all-targets -- -D warnings
       - run: cargo run -p beatbox -- --version
       - name: CLI fib smoke
         run: |
@@ -31,3 +33,5 @@ jobs:
           cargo run -p beatbox -- run examples/spin.wasm --input '{"n":0}' --policy fuel=1000000 | tee /tmp/beatbox-spin.json
           grep '"status": "timeout"' /tmp/beatbox-spin.json
           grep '"code": "fuel_exhausted"' /tmp/beatbox-spin.json
+      - name: Daemon network e2e
+        run: bash scripts/e2e-daemon.sh
