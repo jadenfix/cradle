@@ -291,7 +291,7 @@ mod tests {
             request_tx
                 .send(request)
                 .map_err(|_| std::io::Error::other("request receiver dropped"))?;
-            let body = r#"{"decision":"rejected","runnable_browser_sessions":false,"requested_level":"os_isolated","selected_level":null,"actor":"agent","sensitivity":"sensitive","requested_controls":["egress_policy","remote_worker_isolation"],"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],"missing_controls":["remote_worker_isolation"],"level_satisfies_requested_controls":false,"downgrade_allowed":false,"reasons":["no runnable browser sandbox"],"required_next_steps":["implement a browser launcher"],"profiles_endpoint":"/v1/browser/profiles"}"#;
+            let body = r#"{"decision":"rejected","runnable_browser_sessions":false,"requested_level":"os_isolated","selected_level":null,"actor":"agent","sensitivity":"sensitive","target_origins":["https://example.com"],"credential_mode":"no_credentials","artifact_mode":"discard","requested_controls":["egress_policy","remote_worker_isolation"],"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],"missing_controls":["remote_worker_isolation"],"level_satisfies_requested_controls":false,"intent_warnings":[],"downgrade_allowed":false,"reasons":["no runnable browser sandbox"],"required_next_steps":["implement a browser launcher"],"profiles_endpoint":"/v1/browser/profiles"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -307,6 +307,9 @@ mod tests {
                 requested_level: BrowserSandboxLevel::OsIsolated,
                 actor: BrowserSessionActor::Agent,
                 sensitivity: BrowserSensitivity::Sensitive,
+                target_origins: vec!["https://example.com".to_string()],
+                credential_mode: BrowserCredentialMode::NoCredentials,
+                artifact_mode: BrowserArtifactMode::Discard,
                 required_controls: vec![
                     BrowserSandboxControl::EgressPolicy,
                     BrowserSandboxControl::RemoteWorkerIsolation,
@@ -327,6 +330,9 @@ mod tests {
         assert!(request.contains(r#""requested_level":"os_isolated""#));
         assert!(request.contains(r#""actor":"agent""#));
         assert!(request.contains(r#""sensitivity":"sensitive""#));
+        assert!(request.contains(r#""target_origins":["https://example.com"]"#));
+        assert!(request.contains(r#""credential_mode":"no_credentials""#));
+        assert!(request.contains(r#""artifact_mode":"discard""#));
         assert!(
             request.contains(r#""required_controls":["egress_policy","remote_worker_isolation"]"#)
         );
@@ -336,6 +342,13 @@ mod tests {
             decision.missing_controls,
             vec![BrowserSandboxControl::RemoteWorkerIsolation]
         );
+        assert_eq!(decision.target_origins, vec!["https://example.com"]);
+        assert_eq!(
+            decision.credential_mode,
+            BrowserCredentialMode::NoCredentials
+        );
+        assert_eq!(decision.artifact_mode, BrowserArtifactMode::Discard);
+        assert!(decision.intent_warnings.is_empty());
         Ok(())
     }
 

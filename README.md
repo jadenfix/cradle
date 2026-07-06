@@ -58,8 +58,14 @@ egress boundary, storage policy, and teardown path enforce the claim. Call
 `POST /v1/browser/admit` or the MCP `admit_browser_session` tool before starting
 browser work; callers can include `required_controls` such as `fresh_profile`,
 `egress_policy`, `local_network_block`, `sealed_artifacts`, or OS/remote
-isolation controls. The current implementation always rejects admission and
-explains which production pieces or requested controls are still missing.
+isolation controls. They can also declare `target_origins`,
+`credential_mode`, and `artifact_mode` so Tempo can bind a user or agent's
+intent to an origin allowlist, credential posture, and persistence posture
+before any browser starts. Target origins must be public HTTP(S) origins only:
+paths, credentials, localhost, private/LAN addresses, and link-local metadata
+targets are rejected at preflight. The current implementation always rejects
+admission and explains which production pieces or requested controls are still
+missing.
 
 ## Ecosystem
 

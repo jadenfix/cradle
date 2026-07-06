@@ -98,12 +98,44 @@ pub enum BrowserSensitivity {
     Sensitive,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserCredentialMode {
+    #[default]
+    NoCredentials,
+    UserMediated,
+    ScopedSecrets,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserArtifactMode {
+    #[default]
+    Discard,
+    ExplicitDownloads,
+    SealedArtifacts,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserAdmissionRequest {
     pub requested_level: BrowserSandboxLevel,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    /// Bare public HTTP(S) origins this browser session is allowed to target.
+    /// Entries must contain only scheme, host, and optional port. The runtime
+    /// rejects credentials, paths, queries, fragments, localhost, private/LAN
+    /// address space, link-local metadata ranges, and more than 16 entries.
+    #[serde(default)]
+    pub target_origins: Vec<String>,
+    /// Credential posture requested for the session. Non-default modes remain
+    /// fail-closed until a real browser substrate implements scoped handling.
+    #[serde(default)]
+    pub credential_mode: BrowserCredentialMode,
+    /// Artifact persistence posture requested for the session. Non-default
+    /// modes remain fail-closed until storage and sealing are implemented.
+    #[serde(default)]
+    pub artifact_mode: BrowserArtifactMode,
     #[serde(default)]
     pub required_controls: Vec<BrowserSandboxControl>,
     #[serde(default)]
@@ -128,6 +160,18 @@ pub struct BrowserAdmissionResponse {
     pub selected_level: Option<BrowserSandboxLevel>,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    /// Echo of the validated target origins from the admission request.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub target_origins: Vec<String>,
+    /// Echo of the requested credential posture.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub credential_mode: BrowserCredentialMode,
+    /// Echo of the requested artifact persistence posture.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub artifact_mode: BrowserArtifactMode,
     #[serde(default)]
     #[schema(required = true)]
     pub requested_controls: Vec<BrowserSandboxControl>,
@@ -140,6 +184,11 @@ pub struct BrowserAdmissionResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub level_satisfies_requested_controls: bool,
+    /// Non-fatal intent issues that matter before any future runnable browser
+    /// session can be admitted.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub intent_warnings: Vec<String>,
     pub downgrade_allowed: bool,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
@@ -634,7 +683,50 @@ mod tests {
             response.missing_controls,
             Vec::<BrowserSandboxControl>::new()
         );
+        assert_eq!(response.target_origins, Vec::<String>::new());
+        assert_eq!(
+            response.credential_mode,
+            BrowserCredentialMode::NoCredentials
+        );
+        assert_eq!(response.artifact_mode, BrowserArtifactMode::Discard);
+        assert_eq!(response.intent_warnings, Vec::<String>::new());
         assert!(!response.level_satisfies_requested_controls);
+        Ok(())
+    }
+
+    #[test]
+    fn browser_admission_request_defaults_additive_intent_fields() -> Result<(), serde_json::Error>
+    {
+        let request: BrowserAdmissionRequest = serde_json::from_str(
+            r#"{
+                "requested_level": "network_suppressed",
+                "actor": "agent",
+                "sensitivity": "sensitive"
+            }"#,
+        )?;
+        assert_eq!(request.target_origins, Vec::<String>::new());
+        assert_eq!(
+            request.credential_mode,
+            BrowserCredentialMode::NoCredentials
+        );
+        assert_eq!(request.artifact_mode, BrowserArtifactMode::Discard);
+        assert_eq!(
+            request.required_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert!(!request.allow_downgrade);
+        assert_eq!(request.task_label, None);
+        assert!(
+            serde_json::from_str::<BrowserAdmissionRequest>(
+                r#"{
+                    "requested_level": "network_suppressed",
+                    "actor": "agent",
+                    "sensitivity": "sensitive",
+                    "ambient_cookies": true
+                }"#
+            )
+            .is_err()
+        );
         Ok(())
     }
 
