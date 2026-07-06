@@ -197,6 +197,65 @@ func TestExecuteMockServer(t *testing.T) {
 	}
 }
 
+func TestAdmitBrowserSessionMockServer(t *testing.T) {
+	var gotPath, gotMethod, gotKey, gotCT string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		gotKey = r.Header.Get(apiKeyHeader)
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{
+			"decision":"rejected",
+			"runnable_browser_sessions":false,
+			"requested_level":"os_isolated",
+			"selected_level":null,
+			"actor":"agent",
+			"sensitivity":"sensitive",
+			"downgrade_allowed":false,
+			"reasons":["no runnable browser sandbox"],
+			"required_next_steps":["implement a browser launcher"],
+			"profiles_endpoint":"/v1/browser/profiles"
+		}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("secret-key"))
+	raw, err := c.AdmitBrowserSession(context.Background(), map[string]any{
+		"requested_level": "os_isolated",
+		"actor":           "agent",
+		"sensitivity":     "sensitive",
+	})
+	if err != nil {
+		t.Fatalf("AdmitBrowserSession: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if gotPath != "/v1/browser/admit" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotKey != "secret-key" {
+		t.Errorf("api key header = %q", gotKey)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("content-type = %q", gotCT)
+	}
+	if gotBody["requested_level"] != "os_isolated" || gotBody["actor"] != "agent" || gotBody["sensitivity"] != "sensitive" {
+		t.Errorf("server received unexpected admission body: %+v", gotBody)
+	}
+	if !strings.Contains(string(raw), `"decision":"rejected"`) {
+		t.Errorf("unexpected admission response: %s", raw)
+	}
+}
+
 func TestExecuteAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

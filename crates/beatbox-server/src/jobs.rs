@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use beatbox_core::{ErrorBody, ExecuteRequest, ExecutionResult, JobRecord, JobStatus};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -524,8 +524,8 @@ mod tests {
     }
 
     #[test]
-    fn completed_job_idempotency_key_persists_across_reopen()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn completed_job_idempotency_key_persists_across_reopen(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let db_path =
             std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
         let mut request = request();
@@ -551,8 +551,8 @@ mod tests {
     }
 
     #[test]
-    fn restart_recovery_releases_idempotency_key_for_retry()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn restart_recovery_releases_idempotency_key_for_retry(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let db_path =
             std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
         let mut request = request();
@@ -586,8 +586,8 @@ mod tests {
     }
 
     #[test]
-    fn recovery_releases_keys_of_running_jobs_and_tolerates_multiple()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn recovery_releases_keys_of_running_jobs_and_tolerates_multiple(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let db_path =
             std::env::temp_dir().join(format!("beatbox-jobs-{}.sqlite3", uuid::Uuid::new_v4()));
 
@@ -628,8 +628,8 @@ mod tests {
     }
 
     #[test]
-    fn fail_queued_and_release_key_terminalizes_and_frees_key()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn fail_queued_and_release_key_terminalizes_and_frees_key(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let store = JobStore::in_memory()?;
         let mut req = request();
         req.idempotency_key = Some("cap-key".to_string());

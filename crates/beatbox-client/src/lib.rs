@@ -228,7 +228,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -273,6 +273,58 @@ mod tests {
         // A slash-bearing id stays one encoded segment even with dots present.
         let url = client.job_url("a/b/..")?;
         assert_eq!(url.path().matches('/').count(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_admit_posts_authenticated_json_preflight(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut buffer = [0_u8; 4096];
+            let bytes = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+            request_tx
+                .send(request)
+                .map_err(|_| std::io::Error::other("request receiver dropped"))?;
+            let body = r#"{"decision":"rejected","runnable_browser_sessions":false,"requested_level":"os_isolated","selected_level":null,"actor":"agent","sensitivity":"sensitive","downgrade_allowed":false,"reasons":["no runnable browser sandbox"],"required_next_steps":["implement a browser launcher"],"profiles_endpoint":"/v1/browser/profiles"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}")).with_api_key("secret");
+        let decision = client
+            .browser_admit(&BrowserAdmissionRequest {
+                requested_level: BrowserSandboxLevel::OsIsolated,
+                actor: BrowserSessionActor::Agent,
+                sensitivity: BrowserSensitivity::Sensitive,
+                allow_downgrade: false,
+                task_label: None,
+            })
+            .await?;
+
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("admission test server panicked".into()),
+        }
+        let request = request_rx.recv_timeout(Duration::from_secs(1))?;
+        assert!(request.starts_with("POST /v1/browser/admit "));
+        assert!(request.contains("x-beatbox-api-key: secret"));
+        assert!(request.contains("content-type: application/json"));
+        assert!(request.contains(r#""requested_level":"os_isolated""#));
+        assert!(request.contains(r#""actor":"agent""#));
+        assert!(request.contains(r#""sensitivity":"sensitive""#));
+        assert_eq!(decision.decision, BrowserAdmissionDecision::Rejected);
+        assert_eq!(decision.selected_level, None);
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use base64::Engine as _;
 use beatbox_client::Client;
 use beatbox_core::{Determinism, ExecuteRequest, Lane, Policy, Source};

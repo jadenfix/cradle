@@ -73,6 +73,58 @@ test("BeatboxClient trims trailing slashes on baseUrl", () => {
   assert.throws(() => new BeatboxClient({ baseUrl: "" }), TypeError);
 });
 
+test("admitBrowserSession sends authenticated JSON preflight", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(
+      JSON.stringify({
+        decision: "rejected",
+        runnable_browser_sessions: false,
+        requested_level: "os_isolated",
+        selected_level: null,
+        actor: "agent",
+        sensitivity: "sensitive",
+        downgrade_allowed: false,
+        reasons: ["no runnable browser sandbox"],
+        required_next_steps: ["implement a browser launcher"],
+        profiles_endpoint: "/v1/browser/profiles",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "http://127.0.0.1:7300/",
+      apiKey: "secret-key",
+    });
+    const response = await client.admitBrowserSession({
+      requested_level: "os_isolated",
+      actor: "agent",
+      sensitivity: "sensitive",
+    }) as Record<string, unknown>;
+
+    assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/admit");
+    assert.equal(capturedInit?.method, "POST");
+    assert.equal(capturedInit?.redirect, "manual");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+      "content-type": "application/json",
+    });
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), {
+      requested_level: "os_isolated",
+      actor: "agent",
+      sensitivity: "sensitive",
+    });
+    assert.equal(response.decision, "rejected");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // --- ExecuteRequest round-trip --------------------------------------------
 
 test("ExecuteRequest.wasmWat serializes to the exact wire shape", () => {

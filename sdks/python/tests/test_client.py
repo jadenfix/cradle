@@ -72,6 +72,45 @@ class TestClientRequest(unittest.TestCase):
 
         self.assertIsNone(captured["req"].get_header("X-beatbox-api-key"))
 
+    def test_browser_admit_sends_auth_json_preflight(self):
+        c = Client("http://host:7300/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            body = {
+                "decision": "rejected",
+                "runnable_browser_sessions": False,
+                "requested_level": "os_isolated",
+                "selected_level": None,
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "downgrade_allowed": False,
+                "reasons": ["no runnable browser sandbox"],
+                "required_next_steps": ["implement a browser launcher"],
+                "profiles_endpoint": "/v1/browser/profiles",
+            }
+            return _FakeResponse(200, json.dumps(body).encode())
+
+        with _patched_open(c, fake_open):
+            decision = c.browser_admit({
+                "requested_level": "os_isolated",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+            })
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "http://host:7300/v1/browser/admit")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(req.data.decode()), {
+            "requested_level": "os_isolated",
+            "actor": "agent",
+            "sensitivity": "sensitive",
+        })
+        self.assertEqual(decision["decision"], "rejected")
+
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")
 
