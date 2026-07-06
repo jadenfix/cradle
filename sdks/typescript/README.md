@@ -67,6 +67,7 @@ is never included in any error message or thrown object.
 | `issueBrowserAdapterCapability(req)` | `POST /v1/browser/adapter/capability` | yes | raw JSON (`unknown`) |
 | `registerBrowserAdapter(req)` | `POST /v1/browser/adapter/register` | yes | raw JSON (`unknown`) |
 | `validateBrowserAdapter(req)` | `POST /v1/browser/adapter/validate` | yes | raw JSON (`unknown`) |
+| `validateBrowserAdapterCompletion(req)` | `POST /v1/browser/adapter/completion/validate` | yes | raw JSON (`unknown`) |
 | `execute(req)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `createJob(req)` | `POST /v1/jobs` | yes | `CreateJobResponse` (202) |
 | `getJob(id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |

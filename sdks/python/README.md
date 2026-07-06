@@ -56,7 +56,7 @@ unauthenticated. The key is never included in any error message. Redirects are
 never followed, so the key cannot leak cross-origin.
 
 ```python
-client = Client("http://127.0.0.1:7300", api_key="sk-...", timeout=65.0)
+client = Client("http://127.0.0.1:7300", api_key="bbx-api-key-placeholder", timeout=65.0)
 ```
 
 ## API
@@ -71,6 +71,7 @@ client = Client("http://127.0.0.1:7300", api_key="sk-...", timeout=65.0)
 | `client.browser_adapter_capability(request)` | `POST /v1/browser/adapter/capability` | yes | `dict` |
 | `client.browser_adapter_register(request)` | `POST /v1/browser/adapter/register` | yes | `dict` |
 | `client.browser_adapter_validate(request)` | `POST /v1/browser/adapter/validate` | yes | `dict` |
+| `client.browser_adapter_completion_validate(request)` | `POST /v1/browser/adapter/completion/validate` | yes | `dict` |
 | `client.execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `client.create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |

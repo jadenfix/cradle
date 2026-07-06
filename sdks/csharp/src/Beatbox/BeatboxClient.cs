@@ -121,6 +121,15 @@ public sealed class BeatboxClient : IDisposable
         return await ReadJsonAsync<JsonElement>(response, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>POST <c>/v1/browser/adapter/completion/validate</c>. Returns completion validation JSON.</summary>
+    public async Task<JsonElement> ValidateBrowserAdapterCompletionAsync(JsonElement request, CancellationToken cancellationToken = default)
+    {
+        using var content = JsonContent(request);
+        using var response = await SendAsync(HttpMethod.Post, "/v1/browser/adapter/completion/validate", auth: true, content, cancellationToken)
+            .ConfigureAwait(false);
+        return await ReadJsonAsync<JsonElement>(response, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>POST <c>/v1/execute</c>. Runs the request synchronously.</summary>
     public async Task<ExecutionResult> ExecuteAsync(ExecuteRequest request, CancellationToken cancellationToken = default)
     {

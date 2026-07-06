@@ -89,6 +89,56 @@
         }
       }
     },
+    "/v1/browser/adapter/completion/validate": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_adapter_completion_validate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserAdapterCompletionReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Fail-closed browser adapter completion report validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAdapterCompletionValidationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid adapter completion report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/browser/adapter/contract": {
       "get": {
         "tags": [
@@ -687,7 +737,9 @@
             "minLength": 1
           },
           "contract_version": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1
           },
           "egress_log_sealed_or_discarded": {
             "type": "boolean"
@@ -696,7 +748,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "maxItems": 64
           },
           "plaintext_artifacts_removed": {
             "type": "boolean"
@@ -708,7 +761,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "maxItems": 64
           },
           "request_id": {
             "type": "string",
@@ -720,9 +774,105 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "maxItems": 64
           },
           "temporary_profile_removed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserAdapterCompletionValidationDecision": {
+        "type": "string",
+        "enum": [
+          "rejected"
+        ]
+      },
+      "BrowserAdapterCompletionValidationResponse": {
+        "type": "object",
+        "required": [
+          "decision",
+          "report_shape_complete",
+          "verified_on_production_path",
+          "trusted_for_sensitive_work",
+          "request_id",
+          "adapter_id",
+          "contract_version",
+          "missing_proof_ids",
+          "unexpected_proof_ids",
+          "failed_evidence_fields",
+          "required_completion_proofs",
+          "completion_proof_contract",
+          "reasons",
+          "required_next_steps",
+          "adapter_contract"
+        ],
+        "properties": {
+          "adapter_contract": {
+            "$ref": "#/components/schemas/BrowserAdapterContract"
+          },
+          "adapter_id": {
+            "type": "string"
+          },
+          "completion_proof_contract": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterCompletionProofRequirement"
+            }
+          },
+          "contract_version": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/BrowserAdapterCompletionValidationDecision"
+          },
+          "failed_evidence_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_proof_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "report_shape_complete": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "required_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_next_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trusted_for_sensitive_work": {
+            "type": "boolean"
+          },
+          "unexpected_proof_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "verified_on_production_path": {
             "type": "boolean"
           }
         }
@@ -1161,6 +1311,7 @@
           "contract_version": {
             "type": "string",
             "description": "Browser adapter contract version; non-empty with no surrounding whitespace.",
+            "maxLength": 128,
             "minLength": 1
           },
           "guard_fields": {

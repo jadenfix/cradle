@@ -34,6 +34,7 @@ the same methods:
 | `browser_adapter_capability` / `issueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes |
 | `browser_adapter_register` / `registerBrowserAdapter` | `POST /v1/browser/adapter/register` | yes |
 | `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
+| `browser_adapter_completion_validate` / `validateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes |
 | `execute` | `POST /v1/execute` | yes |
 | `create_job` | `POST /v1/jobs` | yes |
 | `get_job` | `GET /v1/jobs/{id}` | yes |
@@ -74,16 +75,26 @@ field in raw JSON responses; it contains the canonical field-complete manifest,
 `field_complete_launch_request`, typed completion-proof requirements,
 completion-report fixtures, expected missing-gap reports, and protocol-specific
 REST/MCP negative cases Tempo adapters should run.
+Completion reports are raw JSON too. Pass them through to
+`POST /v1/browser/adapter/completion/validate`; beatbox checks the submitted
+shape, proof ids, and teardown evidence booleans against the same proof
+contract, but still returns a rejected, untrusted response because the report is
+not bound to a production launch request, browser process, profile, artifact
+store, or egress log.
 
 Language-specific method names are idiomatic: Rust and Python expose
 `browser_adapter_contract`, `browser_adapter_capability`,
-`browser_adapter_register`, and `browser_adapter_validate`; Ruby exposes
+`browser_adapter_register`, `browser_adapter_validate`, and
+`browser_adapter_completion_validate`; Ruby exposes
 `browser_adapter_contract`, `browser_adapter_capability`,
-`browser_adapter_register`, and `validate_browser_adapter`; TypeScript, Java,
-PHP, and C# expose `browserAdapterContract`, `issueBrowserAdapterCapability`,
-`registerBrowserAdapter`, and `validateBrowserAdapter`; and Go exposes
+`browser_adapter_register`, `validate_browser_adapter`, and
+`validate_browser_adapter_completion`; TypeScript, Java, PHP, and C# expose
+`browserAdapterContract`, `issueBrowserAdapterCapability`,
+`registerBrowserAdapter`, `validateBrowserAdapter`, and
+`validateBrowserAdapterCompletion`; and Go exposes
 `BrowserAdapterContract`, `IssueBrowserAdapterCapability`,
-`RegisterBrowserAdapter`, and `ValidateBrowserAdapter`.
+`RegisterBrowserAdapter`, `ValidateBrowserAdapter`, and
+`ValidateBrowserAdapterCompletion`.
 
 ## How the fleet stays correct (the rollout pipeline)
 

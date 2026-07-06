@@ -2,7 +2,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdapterCapabilityIssueResponse, BrowserAdapterConformanceExpectation,
+    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionValidationDecision,
+    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceExpectation,
     BrowserAdapterContractResponse, BrowserAdapterManifestResponse,
     BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
     BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
@@ -69,6 +70,26 @@ fn complete_adapter_manifest() -> serde_json::Value {
     })
 }
 
+fn complete_adapter_completion_report() -> serde_json::Value {
+    json!({
+        "request_id": "browser-adapter-conformance-launch-v1",
+        "adapter_id": "tempo-conformance-adapter-v1",
+        "contract_version": "browser-adapter-v1",
+        "process_terminated": true,
+        "temporary_profile_removed": true,
+        "plaintext_artifacts_removed": true,
+        "egress_log_sealed_or_discarded": true,
+        "sealed_artifact_handles": [],
+        "proof_ids": [
+            "browser_process_terminated",
+            "temporary_profile_removed",
+            "plaintext_artifacts_removed",
+            "egress_log_sealed_or_discarded"
+        ],
+        "notes": ["shape fixture only"]
+    })
+}
+
 fn complete_adapter_registration() -> serde_json::Value {
     json!({
         "actor": "agent",
@@ -110,6 +131,7 @@ async fn v1_execute_runs_wasm() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = add_one_request(41);
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::POST)
@@ -132,6 +154,7 @@ async fn v1_execute_rejects_over_sync_ceiling() -> Result<(), Box<dyn std::error
     let mut request = add_one_request(41);
     request.policy.limits.wall_ms = DEFAULT_SYNC_WALL_MS + 1;
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method(Method::POST)
@@ -1448,6 +1471,138 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
 }
 
 #[tokio::test]
+async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let report = complete_adapter_completion_report();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(report.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(report.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let validation: BrowserAdapterCompletionValidationResponse = serde_json::from_slice(&body)?;
+    assert_eq!(
+        validation.decision,
+        BrowserAdapterCompletionValidationDecision::Rejected
+    );
+    assert!(validation.report_shape_complete);
+    assert!(!validation.verified_on_production_path);
+    assert!(!validation.trusted_for_sensitive_work);
+    assert_eq!(
+        validation.request_id,
+        "browser-adapter-conformance-launch-v1"
+    );
+    assert_eq!(validation.adapter_id, "tempo-conformance-adapter-v1");
+    assert!(validation.missing_proof_ids.is_empty());
+    assert!(validation.unexpected_proof_ids.is_empty());
+    assert!(validation.failed_evidence_fields.is_empty());
+    assert!(
+        validation
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "temporary_profile_removed"
+                && proof.evidence_field == "temporary_profile_removed")
+    );
+    assert!(
+        validation
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("not verified it on a real launch request"))
+    );
+
+    let mut missing = complete_adapter_completion_report();
+    missing["proof_ids"] = serde_json::json!(["browser_process_terminated"]);
+    missing["temporary_profile_removed"] = serde_json::json!(false);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(missing.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let validation: BrowserAdapterCompletionValidationResponse = serde_json::from_slice(&body)?;
+    assert!(!validation.report_shape_complete);
+    assert!(
+        validation
+            .missing_proof_ids
+            .contains(&"temporary_profile_removed".to_string())
+    );
+    assert!(
+        validation
+            .failed_evidence_fields
+            .contains(&"temporary_profile_removed".to_string())
+    );
+
+    let mut unknown = complete_adapter_completion_report();
+    unknown["extra"] = serde_json::json!("nope");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(unknown.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_json");
+
+    let mut whitespace = complete_adapter_completion_report();
+    whitespace["request_id"] = serde_json::json!(" bad ");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(whitespace.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(
+        error.error.code,
+        "invalid_browser_adapter_completion_report"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -2425,7 +2580,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                 && paths.contains_key("/v1/browser/adapter/contract")
                 && paths.contains_key("/v1/browser/adapter/capability")
                 && paths.contains_key("/v1/browser/adapter/register")
-                && paths.contains_key("/v1/browser/adapter/validate"))
+                && paths.contains_key("/v1/browser/adapter/validate")
+                && paths.contains_key("/v1/browser/adapter/completion/validate"))
     );
 
     // The spec now carries full component schemas so SDKs can be generated from it.
@@ -2448,6 +2604,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdapterCapabilityIssueResponse",
         "BrowserAdapterCompletionReport",
         "BrowserAdapterCompletionProofRequirement",
+        "BrowserAdapterCompletionValidationDecision",
+        "BrowserAdapterCompletionValidationResponse",
         "BrowserAdapterContract",
         "BrowserAdapterContractResponse",
         "BrowserAdapterConformanceCase",
@@ -2618,6 +2776,33 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             ),
         "completion report schema should require teardown proof evidence"
     );
+    assert_eq!(
+        schemas["BrowserAdapterCompletionReport"]["properties"]["proof_ids"]["maxItems"],
+        64
+    );
+    assert_eq!(
+        schemas["BrowserAdapterCompletionReport"]["properties"]["contract_version"]["maxLength"],
+        128
+    );
+    assert_eq!(
+        schemas["BrowserAdapterCompletionReport"]["properties"]["notes"]["maxItems"],
+        64
+    );
+    assert!(
+        schemas["BrowserAdapterCompletionValidationResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "report_shape_complete")
+                && required
+                    .iter()
+                    .any(|field| field == "verified_on_production_path")
+                && required.iter().any(|field| field == "missing_proof_ids")
+                && required
+                    .iter()
+                    .any(|field| field == "failed_evidence_fields")),
+        "completion validation response should expose fail-closed proof state"
+    );
     assert!(
         schemas["BrowserAdapterCompletionProofRequirement"]["required"]
             .as_array()
@@ -2719,6 +2904,11 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert!(tools.to_string().contains("register_browser_adapter"));
     assert!(tools.to_string().contains("validate_browser_adapter"));
     assert!(
+        tools
+            .to_string()
+            .contains("validate_browser_adapter_completion")
+    );
+    assert!(
         !tools
             .to_string()
             .contains("issue_browser_adapter_capability")
@@ -2775,6 +2965,39 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
             .is_some_and(|description| description.contains("DNS, proxy, redirect, and retry")),
         "launch_endpoint schema should not overstate endpoint validation"
     );
+    let completion_tool = tools
+        .as_array()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "validate_browser_adapter_completion")
+        })
+        .ok_or("validate_browser_adapter_completion tool should be listed")?;
+    assert_eq!(
+        completion_tool["inputSchema"]["additionalProperties"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        completion_tool["inputSchema"]["required"],
+        serde_json::json!([
+            "request_id",
+            "adapter_id",
+            "contract_version",
+            "process_terminated",
+            "temporary_profile_removed",
+            "plaintext_artifacts_removed",
+            "egress_log_sealed_or_discarded",
+            "sealed_artifact_handles",
+            "proof_ids",
+            "notes"
+        ])
+    );
+    let completion_schema = &completion_tool["inputSchema"]["properties"];
+    assert_eq!(completion_schema["request_id"]["maxLength"], 128);
+    assert_eq!(completion_schema["contract_version"]["maxLength"], 128);
+    assert_eq!(completion_schema["proof_ids"]["maxItems"], 64);
+    assert_eq!(completion_schema["proof_ids"]["items"]["minLength"], 1);
+    assert_eq!(completion_schema["notes"]["maxItems"], 64);
     Ok(())
 }
 
@@ -3278,6 +3501,75 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
         result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["completion_report_template"]
             ["adapter_id"],
         "tempo-conformance-adapter-v1"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_validate_browser_adapter_completion_returns_structured_rejection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "validate_browser_adapter_completion",
+            "arguments": complete_adapter_completion_report()
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(true));
+    assert_eq!(
+        result["content"][0]["text"],
+        "beatbox browser adapter completion validation"
+    );
+    assert_eq!(
+        result["structuredContent"]["decision"],
+        serde_json::json!("rejected")
+    );
+    assert_eq!(result["structuredContent"]["report_shape_complete"], true);
+    assert_eq!(
+        result["structuredContent"]["verified_on_production_path"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["trusted_for_sensitive_work"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["missing_proof_ids"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        result["structuredContent"]["failed_evidence_fields"],
+        serde_json::json!([])
+    );
+    assert!(
+        result["structuredContent"]["completion_proof_contract"]
+            .as_array()
+            .is_some_and(|proofs| proofs
+                .iter()
+                .any(|proof| proof["proof_id"] == "temporary_profile_removed"))
+    );
+    assert!(
+        result["structuredContent"]["reasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|reason| reason
+                .as_str()
+                .is_some_and(|reason| reason.contains("not verified"))))
     );
     Ok(())
 }

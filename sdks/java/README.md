@@ -70,6 +70,7 @@ Redirects are never followed, so the api-key header can't leak cross-origin.
 | `issueBrowserAdapterCapability(request)` | `POST /v1/browser/adapter/capability` | `JsonNode` (raw) |
 | `registerBrowserAdapter(request)` | `POST /v1/browser/adapter/register` | `JsonNode` (raw) |
 | `validateBrowserAdapter(request)` | `POST /v1/browser/adapter/validate` | `JsonNode` (raw) |
+| `validateBrowserAdapterCompletion(request)` | `POST /v1/browser/adapter/completion/validate` | `JsonNode` (raw) |
 | `execute(request)`         | `POST /v1/execute`       | `ExecutionResult`   |
 | `createJob(request)`       | `POST /v1/jobs`          | `CreateJobResponse` |
 | `getJob(id)`               | `GET /v1/jobs/{id}`      | `JobRecord`         |

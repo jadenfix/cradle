@@ -108,6 +108,14 @@ class Client:
             "POST", "/v1/browser/adapter/validate", auth=True, body=request
         )
 
+    def browser_adapter_completion_validate(
+        self, request: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """POST /v1/browser/adapter/completion/validate. Returns raw validation JSON."""
+        return self._request(
+            "POST", "/v1/browser/adapter/completion/validate", auth=True, body=request
+        )
+
     def execute(self, request: ExecuteRequest) -> ExecutionResult:
         """POST /v1/execute. Returns an :class:`ExecutionResult`."""
         body = self._request("POST", "/v1/execute", auth=True, body=request.to_dict())

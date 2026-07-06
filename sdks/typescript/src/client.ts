@@ -148,6 +148,16 @@ export class BeatboxClient {
     });
   }
 
+  /** `POST /v1/browser/adapter/completion/validate` — validate a completion report without trusting it. */
+  validateBrowserAdapterCompletion(request: unknown): Promise<unknown> {
+    return this.request<unknown>({
+      method: "POST",
+      path: "/v1/browser/adapter/completion/validate",
+      auth: true,
+      body: request,
+    });
+  }
+
   /** `POST /v1/execute` — run a program synchronously. */
   execute(request: ExecuteRequest): Promise<ExecutionResult> {
     return this.request<ExecutionResult>({

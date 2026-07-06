@@ -310,6 +310,7 @@ impl Default for BrowserAdapterCompletionProofRequirement {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserAdapterCompletionReport {
     /// Must match the BrowserAdapterLaunchRequest request_id.
     #[schema(min_length = 1, max_length = 128)]
@@ -317,14 +318,43 @@ pub struct BrowserAdapterCompletionReport {
     /// Must match the trusted adapter id chosen for launch.
     #[schema(min_length = 1, max_length = 128)]
     pub adapter_id: String,
+    #[schema(min_length = 1, max_length = 128)]
     pub contract_version: String,
     pub process_terminated: bool,
     pub temporary_profile_removed: bool,
     pub plaintext_artifacts_removed: bool,
     pub egress_log_sealed_or_discarded: bool,
+    #[schema(max_items = 64)]
     pub sealed_artifact_handles: Vec<String>,
+    #[schema(max_items = 64)]
     pub proof_ids: Vec<String>,
+    #[schema(max_items = 64)]
     pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAdapterCompletionValidationDecision {
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterCompletionValidationResponse {
+    pub decision: BrowserAdapterCompletionValidationDecision,
+    pub report_shape_complete: bool,
+    pub verified_on_production_path: bool,
+    pub trusted_for_sensitive_work: bool,
+    pub request_id: String,
+    pub adapter_id: String,
+    pub contract_version: String,
+    pub missing_proof_ids: Vec<String>,
+    pub unexpected_proof_ids: Vec<String>,
+    pub failed_evidence_fields: Vec<String>,
+    pub required_completion_proofs: Vec<String>,
+    pub completion_proof_contract: Vec<BrowserAdapterCompletionProofRequirement>,
+    pub reasons: Vec<String>,
+    pub required_next_steps: Vec<String>,
+    pub adapter_contract: BrowserAdapterContract,
 }
 
 impl Default for BrowserAdapterCompletionReport {
@@ -596,7 +626,7 @@ pub struct BrowserAdapterManifestRequest {
     #[schema(min_length = 1, max_length = 128)]
     pub adapter_id: String,
     /// Browser adapter contract version; non-empty with no surrounding whitespace.
-    #[schema(min_length = 1)]
+    #[schema(min_length = 1, max_length = 128)]
     pub contract_version: String,
     /// Optional HTTPS launch endpoint string. Only syntax and literal local/private hosts are checked.
     #[schema(required = true, min_length = 1)]

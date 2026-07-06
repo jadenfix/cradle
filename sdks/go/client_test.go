@@ -562,6 +562,69 @@ func TestValidateBrowserAdapterMockServer(t *testing.T) {
 	}
 }
 
+func TestValidateBrowserAdapterCompletionMockServer(t *testing.T) {
+	var gotMethod, gotPath, gotKey, gotCT string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get(apiKeyHeader)
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{
+			"decision":"rejected",
+			"report_shape_complete":true,
+			"verified_on_production_path":false,
+			"trusted_for_sensitive_work":false,
+			"request_id":"browser-adapter-conformance-launch-v1",
+			"adapter_id":"tempo-conformance-adapter-v1",
+			"contract_version":"browser-adapter-v1",
+			"missing_proof_ids":[],
+			"unexpected_proof_ids":[],
+			"failed_evidence_fields":[],
+			"required_completion_proofs":["temporary profile directory removed"],
+			"completion_proof_contract":[],
+			"reasons":["shape only"],
+			"required_next_steps":["verify production teardown"],
+			"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["completion_report_template"],"required_guard_fields":[],"required_completion_proofs":["temporary profile directory removed"],"completion_proof_contract":[],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"}
+		}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("secret-key"))
+	raw, err := c.ValidateBrowserAdapterCompletion(context.Background(), map[string]any{
+		"request_id":                     "browser-adapter-conformance-launch-v1",
+		"adapter_id":                     "tempo-conformance-adapter-v1",
+		"contract_version":               "browser-adapter-v1",
+		"process_terminated":             true,
+		"temporary_profile_removed":      true,
+		"plaintext_artifacts_removed":    true,
+		"egress_log_sealed_or_discarded": true,
+		"sealed_artifact_handles":        []any{},
+		"proof_ids":                      []any{"temporary_profile_removed"},
+		"notes":                          []any{"shape fixture only"},
+	})
+	if err != nil {
+		t.Fatalf("ValidateBrowserAdapterCompletion: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/browser/adapter/completion/validate" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotKey != "secret-key" || gotCT != "application/json" {
+		t.Fatalf("headers key=%q content-type=%q", gotKey, gotCT)
+	}
+	if gotBody["request_id"] != "browser-adapter-conformance-launch-v1" || gotBody["adapter_id"] != "tempo-conformance-adapter-v1" {
+		t.Fatalf("server received unexpected completion body: %+v", gotBody)
+	}
+	if !strings.Contains(string(raw), `"report_shape_complete":true`) || !strings.Contains(string(raw), `"verified_on_production_path":false`) {
+		t.Fatalf("completion validation response not surfaced: %s", raw)
+	}
+}
+
 func TestExecuteAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

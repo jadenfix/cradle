@@ -96,6 +96,7 @@ key can't leak cross-origin.
 | `issueBrowserAdapterCapability($request)` | `POST /v1/browser/adapter/capability` | `array` (raw JSON) |
 | `registerBrowserAdapter($request)` | `POST /v1/browser/adapter/register` | `array` (raw JSON) |
 | `validateBrowserAdapter($request)` | `POST /v1/browser/adapter/validate` | `array` (raw JSON) |
+| `validateBrowserAdapterCompletion($request)` | `POST /v1/browser/adapter/completion/validate` | `array` (raw JSON) |
 | `execute($request)` | `POST /v1/execute` | `ExecutionResult` |
 | `createJob($request)` | `POST /v1/jobs` | `CreateJobResponse` |
 | `getJob($jobId)` | `GET /v1/jobs/{id}` | `JobRecord` |

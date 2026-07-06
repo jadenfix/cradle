@@ -308,6 +308,65 @@ class TestClientRequest(unittest.TestCase):
             "browser-adapter-conformance-v1",
         )
 
+    def test_browser_adapter_completion_validate_sends_auth_json(self):
+        c = Client("http://host:7300/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            body = {
+                "decision": "rejected",
+                "report_shape_complete": True,
+                "verified_on_production_path": False,
+                "trusted_for_sensitive_work": False,
+                "request_id": "browser-adapter-conformance-launch-v1",
+                "adapter_id": "tempo-conformance-adapter-v1",
+                "contract_version": "browser-adapter-v1",
+                "missing_proof_ids": [],
+                "unexpected_proof_ids": [],
+                "failed_evidence_fields": [],
+                "required_completion_proofs": ["temporary profile directory removed"],
+                "completion_proof_contract": [],
+                "reasons": ["shape only"],
+                "required_next_steps": ["verify production teardown"],
+                "adapter_contract": {
+                    "version": "browser-adapter-v1",
+                    "status": "planned",
+                    "launch_endpoint": None,
+                    "handoff_fields": ["completion_report_template"],
+                    "required_guard_fields": [],
+                    "required_completion_proofs": ["temporary profile directory removed"],
+                    "completion_proof_contract": [],
+                    "unavailable_reason": "no browser adapter launch endpoint is implemented by this daemon",
+                },
+            }
+            return _FakeResponse(200, json.dumps(body).encode())
+
+        request = {
+            "request_id": "browser-adapter-conformance-launch-v1",
+            "adapter_id": "tempo-conformance-adapter-v1",
+            "contract_version": "browser-adapter-v1",
+            "process_terminated": True,
+            "temporary_profile_removed": True,
+            "plaintext_artifacts_removed": True,
+            "egress_log_sealed_or_discarded": True,
+            "sealed_artifact_handles": [],
+            "proof_ids": ["temporary_profile_removed"],
+            "notes": ["shape fixture only"],
+        }
+        with _patched_open(c, fake_open):
+            validation = c.browser_adapter_completion_validate(request)
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/completion/validate")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(req.data.decode()), request)
+        self.assertEqual(validation["decision"], "rejected")
+        self.assertTrue(validation["report_shape_complete"])
+        self.assertFalse(validation["verified_on_production_path"])
+
     def test_browser_adapter_contract_sends_auth_get(self):
         c = Client("http://host:7300/", api_key="secret-key")
         captured = {}
