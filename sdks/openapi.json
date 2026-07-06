@@ -381,6 +381,12 @@
           "requested_level": {
             "$ref": "#/components/schemas/BrowserSandboxLevel"
           },
+          "required_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
           },
@@ -402,6 +408,10 @@
           "selected_level",
           "actor",
           "sensitivity",
+          "requested_controls",
+          "requested_profile_controls",
+          "missing_controls",
+          "level_satisfies_requested_controls",
           "downgrade_allowed",
           "reasons",
           "required_next_steps",
@@ -417,6 +427,15 @@
           "downgrade_allowed": {
             "type": "boolean"
           },
+          "level_satisfies_requested_controls": {
+            "type": "boolean"
+          },
+          "missing_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
           "profiles_endpoint": {
             "type": "string"
           },
@@ -426,8 +445,20 @@
               "type": "string"
             }
           },
+          "requested_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
           "requested_level": {
             "$ref": "#/components/schemas/BrowserSandboxLevel"
+          },
+          "requested_profile_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
           },
           "required_next_steps": {
             "type": "array",
@@ -451,8 +482,7 @@
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "BrowserIntegrationContract": {
         "type": "object",
@@ -486,8 +516,7 @@
           "status": {
             "$ref": "#/components/schemas/BrowserSandboxAvailability"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "BrowserProfilesResponse": {
         "type": "object",
@@ -524,8 +553,7 @@
           "version": {
             "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "BrowserSandboxAvailability": {
         "type": "string",
@@ -533,6 +561,19 @@
           "available",
           "planned",
           "unavailable"
+        ]
+      },
+      "BrowserSandboxControl": {
+        "type": "string",
+        "enum": [
+          "fresh_profile",
+          "no_ambient_credentials",
+          "egress_policy",
+          "local_network_block",
+          "sealed_artifacts",
+          "os_process_isolation",
+          "remote_worker_isolation",
+          "teardown_proof"
         ]
       },
       "BrowserSandboxLevel": {
@@ -552,6 +593,7 @@
           "level",
           "availability",
           "summary",
+          "controls",
           "isolation_boundary",
           "privacy_controls",
           "egress_controls",
@@ -564,6 +606,12 @@
         "properties": {
           "availability": {
             "$ref": "#/components/schemas/BrowserSandboxAvailability"
+          },
+          "controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
           },
           "credential_controls": {
             "type": "array",
@@ -616,8 +664,7 @@
           "summary": {
             "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "BrowserSensitivity": {
         "type": "string",

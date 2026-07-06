@@ -34,11 +34,26 @@ pub enum BrowserSandboxAvailability {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandboxControl {
+    FreshProfile,
+    NoAmbientCredentials,
+    EgressPolicy,
+    LocalNetworkBlock,
+    SealedArtifacts,
+    OsProcessIsolation,
+    RemoteWorkerIsolation,
+    TeardownProof,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserSandboxProfile {
     pub level: BrowserSandboxLevel,
     pub availability: BrowserSandboxAvailability,
     pub summary: String,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub controls: Vec<BrowserSandboxControl>,
     pub isolation_boundary: String,
     pub privacy_controls: Vec<String>,
     pub egress_controls: Vec<String>,
@@ -50,7 +65,6 @@ pub struct BrowserSandboxProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BrowserIntegrationContract {
     pub status: BrowserSandboxAvailability,
     pub consumer: String,
@@ -61,7 +75,6 @@ pub struct BrowserIntegrationContract {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BrowserProfilesResponse {
     pub version: String,
     pub runnable_browser_sessions: bool,
@@ -92,6 +105,8 @@ pub struct BrowserAdmissionRequest {
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
     #[serde(default)]
+    pub required_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
     pub allow_downgrade: bool,
     #[serde(default)]
     pub task_label: Option<String>,
@@ -105,7 +120,6 @@ pub enum BrowserAdmissionDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BrowserAdmissionResponse {
     pub decision: BrowserAdmissionDecision,
     pub runnable_browser_sessions: bool,
@@ -114,6 +128,18 @@ pub struct BrowserAdmissionResponse {
     pub selected_level: Option<BrowserSandboxLevel>,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub requested_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub requested_profile_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub missing_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub level_satisfies_requested_controls: bool,
     pub downgrade_allowed: bool,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
@@ -534,6 +560,82 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn browser_profile_response_tolerates_additive_fields() -> Result<(), serde_json::Error> {
+        let response: BrowserProfilesResponse = serde_json::from_str(
+            r#"{
+                "version": "browser-sandbox-v1",
+                "runnable_browser_sessions": false,
+                "default_level": null,
+                "integration": {
+                    "status": "planned",
+                    "consumer": "tempo",
+                    "endpoint": "/v1/browser/profiles",
+                    "admission_endpoint": "/v1/browser/admit",
+                    "selection_field": "requested_level",
+                    "required_consumer_behavior": ["treat unavailable as rejected"],
+                    "future_integration_note": true
+                },
+                "profiles": [
+                    {
+                        "level": "network_suppressed",
+                        "availability": "planned",
+                        "summary": "planned profile from an older daemon",
+                        "isolation_boundary": "none yet",
+                        "privacy_controls": [],
+                        "egress_controls": [],
+                        "credential_controls": [],
+                        "storage_controls": [],
+                        "encryption_claims": [],
+                        "non_goals": [],
+                        "downgrade_reasons": [],
+                        "future_profile_note": "ignored"
+                    }
+                ],
+                "future_response_note": "ignored"
+            }"#,
+        )?;
+        assert_eq!(
+            response.profiles[0].controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn browser_admission_response_defaults_additive_control_fields() -> Result<(), serde_json::Error>
+    {
+        let response: BrowserAdmissionResponse = serde_json::from_str(
+            r#"{
+                "decision": "rejected",
+                "runnable_browser_sessions": false,
+                "requested_level": "os_isolated",
+                "selected_level": null,
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "downgrade_allowed": false,
+                "reasons": ["no runnable browser sandbox"],
+                "required_next_steps": ["implement a browser launcher"],
+                "profiles_endpoint": "/v1/browser/profiles",
+                "future_response_note": "ignored"
+            }"#,
+        )?;
+        assert_eq!(
+            response.requested_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert_eq!(
+            response.requested_profile_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert_eq!(
+            response.missing_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert!(!response.level_satisfies_requested_controls);
+        Ok(())
     }
 
     #[test]

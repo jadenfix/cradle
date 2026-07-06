@@ -16,10 +16,10 @@ use axum::{Json, Router};
 use beatbox_core::{
     BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserAdmissionResponse,
     BrowserIntegrationContract, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity, BrowserSessionActor,
-    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody,
-    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
-    Source,
+    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
+    BrowserSessionActor, CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
+    ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane,
+    Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -876,6 +876,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::InstrumentedExternal,
                 availability: BrowserSandboxAvailability::Unavailable,
                 summary: "Drive a caller-supplied browser for local debugging only.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::InstrumentedExternal),
                 isolation_boundary: "none; not a sandbox".to_string(),
                 privacy_controls: vec!["no ambient credential claim".to_string()],
                 egress_controls: vec!["caller browser network stack".to_string()],
@@ -895,6 +896,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::EphemeralProfile,
                 availability: BrowserSandboxAvailability::Planned,
                 summary: "Launch a fresh browser profile with no host cookies, passwords, or extensions.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::EphemeralProfile),
                 isolation_boundary: "browser process plus temporary profile directory".to_string(),
                 privacy_controls: vec![
                     "fresh profile per task".to_string(),
@@ -917,6 +919,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::NetworkSuppressed,
                 availability: BrowserSandboxAvailability::Planned,
                 summary: "Ephemeral browser with egress routed through an allowlist-capable proxy.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::NetworkSuppressed),
                 isolation_boundary: "ephemeral profile plus enforced proxy egress boundary".to_string(),
                 privacy_controls: vec![
                     "fresh profile per task".to_string(),
@@ -937,6 +940,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::SealedState,
                 availability: BrowserSandboxAvailability::Planned,
                 summary: "Persist selected artifacts or profiles only under an explicit encryption key policy.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::SealedState),
                 isolation_boundary: "ephemeral or OS-isolated browser plus encrypted artifact store".to_string(),
                 privacy_controls: vec![
                     "artifact allowlist required".to_string(),
@@ -962,6 +966,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::OsIsolated,
                 availability: BrowserSandboxAvailability::Planned,
                 summary: "Run the browser inside an OS jail or microVM with explicit filesystem and network policy.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::OsIsolated),
                 isolation_boundary: "host OS jail or microVM boundary".to_string(),
                 privacy_controls: vec![
                     "fresh guest profile".to_string(),
@@ -981,6 +986,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 level: BrowserSandboxLevel::RemoteIsolated,
                 availability: BrowserSandboxAvailability::Planned,
                 summary: "Run browsing on a remote disposable worker with no local credential or filesystem access.".to_string(),
+                controls: browser_profile_controls(&BrowserSandboxLevel::RemoteIsolated),
                 isolation_boundary: "remote worker boundary plus authenticated control channel".to_string(),
                 privacy_controls: vec![
                     "no local browser profile access".to_string(),
@@ -1001,12 +1007,20 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
 }
 
 fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmissionResponse {
+    let requested_profile_controls = browser_profile_controls(&request.requested_level);
+    let missing_controls: Vec<_> = request
+        .required_controls
+        .iter()
+        .filter(|control| !requested_profile_controls.contains(control))
+        .cloned()
+        .collect();
+    let level_satisfies_requested_controls = missing_controls.is_empty();
     let mut reasons = vec![
         "beatbox does not currently expose a runnable browser sandbox".to_string(),
         "no browser launcher, teardown path, egress boundary, storage policy, or encryption behavior is implemented"
             .to_string(),
     ];
-    match request.requested_level {
+    match &request.requested_level {
         BrowserSandboxLevel::InstrumentedExternal => {
             reasons.push(
                 "instrumented_external is explicitly not a sandbox and is unavailable for sensitive work"
@@ -1036,19 +1050,33 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
                 .to_string(),
         );
     }
-    if matches!(request.sensitivity, BrowserSensitivity::Sensitive) {
+    if matches!(&request.sensitivity, BrowserSensitivity::Sensitive) {
         reasons.push(
             "sensitive browser work requires an explicitly available isolated profile".to_string(),
         );
+    }
+    if !level_satisfies_requested_controls {
+        reasons.push(format!(
+            "requested profile does not satisfy required controls: {}",
+            missing_controls
+                .iter()
+                .map(browser_control_wire_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
 
     BrowserAdmissionResponse {
         decision: BrowserAdmissionDecision::Rejected,
         runnable_browser_sessions: false,
-        requested_level: request.requested_level,
+        requested_level: request.requested_level.clone(),
         selected_level: None,
         actor: request.actor,
         sensitivity: request.sensitivity,
+        requested_controls: request.required_controls,
+        requested_profile_controls,
+        missing_controls,
+        level_satisfies_requested_controls,
         downgrade_allowed: request.allow_downgrade,
         reasons,
         required_next_steps: vec![
@@ -1058,6 +1086,58 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
             "add production-path tests before marking any browser profile available".to_string(),
         ],
         profiles_endpoint: "/v1/browser/profiles".to_string(),
+    }
+}
+
+fn browser_profile_controls(level: &BrowserSandboxLevel) -> Vec<BrowserSandboxControl> {
+    match level {
+        BrowserSandboxLevel::InstrumentedExternal => Vec::new(),
+        BrowserSandboxLevel::EphemeralProfile => vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::TeardownProof,
+        ],
+        BrowserSandboxLevel::NetworkSuppressed => vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
+            BrowserSandboxControl::TeardownProof,
+        ],
+        BrowserSandboxLevel::SealedState => vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::SealedArtifacts,
+            BrowserSandboxControl::TeardownProof,
+        ],
+        BrowserSandboxLevel::OsIsolated => vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
+            BrowserSandboxControl::OsProcessIsolation,
+            BrowserSandboxControl::TeardownProof,
+        ],
+        BrowserSandboxLevel::RemoteIsolated => vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::RemoteWorkerIsolation,
+            BrowserSandboxControl::TeardownProof,
+        ],
+    }
+}
+
+fn browser_control_wire_name(control: &BrowserSandboxControl) -> &'static str {
+    match control {
+        BrowserSandboxControl::FreshProfile => "fresh_profile",
+        BrowserSandboxControl::NoAmbientCredentials => "no_ambient_credentials",
+        BrowserSandboxControl::EgressPolicy => "egress_policy",
+        BrowserSandboxControl::LocalNetworkBlock => "local_network_block",
+        BrowserSandboxControl::SealedArtifacts => "sealed_artifacts",
+        BrowserSandboxControl::OsProcessIsolation => "os_process_isolation",
+        BrowserSandboxControl::RemoteWorkerIsolation => "remote_worker_isolation",
+        BrowserSandboxControl::TeardownProof => "teardown_proof",
     }
 }
 
@@ -1124,6 +1204,7 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserSandboxProfile,
         beatbox_core::BrowserSandboxLevel,
         beatbox_core::BrowserSandboxAvailability,
+        beatbox_core::BrowserSandboxControl,
         beatbox_core::BrowserAdmissionRequest,
         beatbox_core::BrowserAdmissionResponse,
         beatbox_core::BrowserAdmissionDecision,
@@ -1475,6 +1556,22 @@ fn mcp_tools() -> Value {
                     },
                     "actor": {"type": "string", "enum": ["agent", "human"]},
                     "sensitivity": {"type": "string", "enum": ["public", "sensitive"]},
+                    "required_controls": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "fresh_profile",
+                                "no_ambient_credentials",
+                                "egress_policy",
+                                "local_network_block",
+                                "sealed_artifacts",
+                                "os_process_isolation",
+                                "remote_worker_isolation",
+                                "teardown_proof"
+                            ]
+                        }
+                    },
                     "allow_downgrade": {"type": "boolean"},
                     "task_label": {"type": "string"}
                 }
@@ -1571,6 +1668,7 @@ fn mcp_browser_admission_request(
             "requested_level",
             "actor",
             "sensitivity",
+            "required_controls",
             "allow_downgrade",
             "task_label",
         ],
@@ -1587,6 +1685,12 @@ fn mcp_browser_admission_request(
             "sensitivity",
             "admit_browser_session",
         )?,
+        required_controls: mcp_browser_controls_arg(
+            arguments,
+            "required_controls",
+            "admit_browser_session",
+        )?
+        .unwrap_or_default(),
         allow_downgrade: mcp_bool_arg(arguments, "allow_downgrade", "admit_browser_session")?
             .unwrap_or(false),
         task_label: mcp_optional_string_arg(arguments, "task_label", "admit_browser_session")?,
@@ -1733,6 +1837,31 @@ fn mcp_bool_arg(
         .transpose()
 }
 
+fn mcp_browser_controls_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<Vec<BrowserSandboxControl>>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|value| {
+            let values = value
+                .as_array()
+                .ok_or((-32602, format!("{tool} argument `{key}` must be an array")))?;
+            values
+                .iter()
+                .map(|value| {
+                    let control = value.as_str().ok_or((
+                        -32602,
+                        format!("{tool} argument `{key}` entries must be strings"),
+                    ))?;
+                    mcp_browser_control(control, key, tool)
+                })
+                .collect()
+        })
+        .transpose()
+}
+
 fn mcp_u64_arg(
     arguments: &serde_json::Map<String, Value>,
     key: &'static str,
@@ -1764,6 +1893,27 @@ fn mcp_browser_level_arg(
         other => Err((
             -32602,
             format!("{tool} argument `{key}` has unsupported browser sandbox level `{other}`"),
+        )),
+    }
+}
+
+fn mcp_browser_control(
+    value: &str,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<BrowserSandboxControl, (i64, String)> {
+    match value {
+        "fresh_profile" => Ok(BrowserSandboxControl::FreshProfile),
+        "no_ambient_credentials" => Ok(BrowserSandboxControl::NoAmbientCredentials),
+        "egress_policy" => Ok(BrowserSandboxControl::EgressPolicy),
+        "local_network_block" => Ok(BrowserSandboxControl::LocalNetworkBlock),
+        "sealed_artifacts" => Ok(BrowserSandboxControl::SealedArtifacts),
+        "os_process_isolation" => Ok(BrowserSandboxControl::OsProcessIsolation),
+        "remote_worker_isolation" => Ok(BrowserSandboxControl::RemoteWorkerIsolation),
+        "teardown_proof" => Ok(BrowserSandboxControl::TeardownProof),
+        other => Err((
+            -32602,
+            format!("{tool} argument `{key}` has unsupported browser control `{other}`"),
         )),
     }
 }

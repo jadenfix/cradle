@@ -3,9 +3,9 @@ use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
     BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxLevel, BrowserSensitivity, BrowserSessionActor,
-    CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord,
-    JobStatus, Lane, Policy, Source,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
+    BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
@@ -859,6 +859,23 @@ async fn browser_profiles_are_authenticated_control_plane_metadata()
             .all(|profile| profile.availability != BrowserSandboxAvailability::Available),
         "no browser profile is runnable until a real browser substrate enforces it"
     );
+    let Some(network_suppressed) = profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.level == BrowserSandboxLevel::NetworkSuppressed)
+    else {
+        panic!("network_suppressed profile should be published");
+    };
+    assert!(
+        network_suppressed
+            .controls
+            .contains(&BrowserSandboxControl::EgressPolicy)
+    );
+    assert!(
+        network_suppressed
+            .controls
+            .contains(&BrowserSandboxControl::LocalNetworkBlock)
+    );
     Ok(())
 }
 
@@ -872,6 +889,10 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         requested_level: BrowserSandboxLevel::OsIsolated,
         actor: BrowserSessionActor::Agent,
         sensitivity: BrowserSensitivity::Sensitive,
+        required_controls: vec![
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::RemoteWorkerIsolation,
+        ],
         allow_downgrade: true,
         task_label: Some("pay bills".to_string()),
     };
@@ -907,6 +928,22 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     assert_eq!(decision.selected_level, None);
     assert_eq!(decision.actor, BrowserSessionActor::Agent);
     assert_eq!(decision.sensitivity, BrowserSensitivity::Sensitive);
+    assert_eq!(
+        decision.requested_profile_controls,
+        vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
+            BrowserSandboxControl::OsProcessIsolation,
+            BrowserSandboxControl::TeardownProof,
+        ]
+    );
+    assert_eq!(
+        decision.missing_controls,
+        vec![BrowserSandboxControl::RemoteWorkerIsolation]
+    );
+    assert!(!decision.level_satisfies_requested_controls);
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
     assert!(
@@ -1074,6 +1111,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserIntegrationContract",
         "BrowserSandboxLevel",
         "BrowserSandboxAvailability",
+        "BrowserSandboxControl",
         "BrowserAdmissionRequest",
         "BrowserAdmissionResponse",
         "BrowserAdmissionDecision",
@@ -1393,6 +1431,7 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
                 "requested_level": "network_suppressed",
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "required_controls": ["egress_policy", "sealed_artifacts"],
                 "allow_downgrade": true,
                 "task_label": "review account"
             }
@@ -1424,6 +1463,18 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["selected_level"],
         serde_json::Value::Null
+    );
+    assert_eq!(
+        result["structuredContent"]["requested_controls"],
+        serde_json::json!(["egress_policy", "sealed_artifacts"])
+    );
+    assert_eq!(
+        result["structuredContent"]["missing_controls"],
+        serde_json::json!(["sealed_artifacts"])
+    );
+    assert_eq!(
+        result["structuredContent"]["level_satisfies_requested_controls"],
+        false
     );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
     assert!(
@@ -1471,6 +1522,45 @@ async fn mcp_admit_browser_session_rejects_mistyped_arguments()
         value["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("boolean"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_admit_browser_session_rejects_mistyped_controls()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "admit_browser_session",
+            "arguments": {
+                "requested_level": "network_suppressed",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "required_controls": ["egress_policy", "ambient_cookies"]
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("ambient_cookies"))
     );
     Ok(())
 }

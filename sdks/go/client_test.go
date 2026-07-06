@@ -218,6 +218,10 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 			"selected_level":null,
 			"actor":"agent",
 			"sensitivity":"sensitive",
+			"requested_controls":["egress_policy","remote_worker_isolation"],
+			"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],
+			"missing_controls":["remote_worker_isolation"],
+			"level_satisfies_requested_controls":false,
 			"downgrade_allowed":false,
 			"reasons":["no runnable browser sandbox"],
 			"required_next_steps":["implement a browser launcher"],
@@ -231,6 +235,10 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 		"requested_level": "os_isolated",
 		"actor":           "agent",
 		"sensitivity":     "sensitive",
+		"required_controls": []any{
+			"egress_policy",
+			"remote_worker_isolation",
+		},
 	})
 	if err != nil {
 		t.Fatalf("AdmitBrowserSession: %v", err)
@@ -251,8 +259,14 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 	if gotBody["requested_level"] != "os_isolated" || gotBody["actor"] != "agent" || gotBody["sensitivity"] != "sensitive" {
 		t.Errorf("server received unexpected admission body: %+v", gotBody)
 	}
+	if controls, ok := gotBody["required_controls"].([]any); !ok || len(controls) != 2 || controls[1] != "remote_worker_isolation" {
+		t.Errorf("server received unexpected controls: %+v", gotBody["required_controls"])
+	}
 	if !strings.Contains(string(raw), `"decision":"rejected"`) {
 		t.Errorf("unexpected admission response: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"missing_controls":["remote_worker_isolation"]`) {
+		t.Errorf("missing controls not surfaced: %s", raw)
 	}
 }
 

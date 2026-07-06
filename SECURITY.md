@@ -23,10 +23,11 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   integration planning; MCP exposes the same contract through
   `get_browser_profiles` with structured content. `POST /v1/browser/admit` and
   MCP `admit_browser_session` are authenticated fail-closed preflight gates; the
-  current decision is always rejected, even when downgrade is allowed, until a
-  real implementation enforces fresh profiles, network suppression or
-  allowlisting, credential isolation, teardown, and any stated encryption
-  behavior in the production call path.
+  current decision is always rejected, even when downgrade is allowed. Callers
+  may request specific isolation controls, but those controls remain planned
+  metadata until a real implementation enforces fresh profiles, network
+  suppression or allowlisting, credential isolation, teardown, and any stated
+  encryption behavior in the production call path.
 
 ## current grades
 

@@ -85,6 +85,17 @@ class TestClientRequest(unittest.TestCase):
                 "selected_level": None,
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "requested_controls": ["egress_policy", "remote_worker_isolation"],
+                "requested_profile_controls": [
+                    "fresh_profile",
+                    "no_ambient_credentials",
+                    "egress_policy",
+                    "local_network_block",
+                    "os_process_isolation",
+                    "teardown_proof",
+                ],
+                "missing_controls": ["remote_worker_isolation"],
+                "level_satisfies_requested_controls": False,
                 "downgrade_allowed": False,
                 "reasons": ["no runnable browser sandbox"],
                 "required_next_steps": ["implement a browser launcher"],
@@ -97,6 +108,7 @@ class TestClientRequest(unittest.TestCase):
                 "requested_level": "os_isolated",
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "required_controls": ["egress_policy", "remote_worker_isolation"],
             })
 
         req = captured["req"]
@@ -108,8 +120,10 @@ class TestClientRequest(unittest.TestCase):
             "requested_level": "os_isolated",
             "actor": "agent",
             "sensitivity": "sensitive",
+            "required_controls": ["egress_policy", "remote_worker_isolation"],
         })
         self.assertEqual(decision["decision"], "rejected")
+        self.assertEqual(decision["missing_controls"], ["remote_worker_isolation"])
 
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")
