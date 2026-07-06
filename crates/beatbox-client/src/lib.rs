@@ -131,6 +131,21 @@ impl Client {
         decode_response(response).await
     }
 
+    pub async fn browser_adapter_completion_validate(
+        &self,
+        request: &BrowserAdapterCompletionReport,
+    ) -> Result<BrowserAdapterCompletionValidationResponse, ClientError> {
+        let request_builder = self
+            .http
+            .post(format!(
+                "{}/v1/browser/adapter/completion/validate",
+                self.base_url
+            ))
+            .json(request);
+        let response = self.authorize(request_builder).send().await?;
+        decode_response(response).await
+    }
+
     pub async fn execute(&self, request: &ExecuteRequest) -> Result<ExecutionResult, ClientError> {
         let request_builder = self
             .http
@@ -647,6 +662,67 @@ mod tests {
             validation.conformance_profile.profile_version,
             "browser-adapter-conformance-v1"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_adapter_completion_validate_posts_authenticated_json()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut buffer = [0_u8; 4096];
+            let bytes = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+            request_tx
+                .send(request)
+                .map_err(|_| std::io::Error::other("request receiver dropped"))?;
+            let body = r#"{"decision":"rejected","report_shape_complete":true,"verified_on_production_path":false,"trusted_for_sensitive_work":false,"request_id":"browser-adapter-conformance-launch-v1","adapter_id":"tempo-conformance-adapter-v1","contract_version":"browser-adapter-v1","missing_proof_ids":[],"unexpected_proof_ids":[],"failed_evidence_fields":[],"required_completion_proofs":["temporary profile directory removed"],"completion_proof_contract":[{"proof_id":"temporary_profile_removed","label":"temporary profile directory removed","evidence_field":"temporary_profile_removed","required_invariant":"fresh profile directory is removed before completion is trusted"}],"reasons":["shape only"],"required_next_steps":["verify production teardown"],"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["completion_report_template"],"required_guard_fields":[],"required_completion_proofs":["temporary profile directory removed"],"completion_proof_contract":[{"proof_id":"temporary_profile_removed","label":"temporary profile directory removed","evidence_field":"temporary_profile_removed","required_invariant":"fresh profile directory is removed before completion is trusted"}],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}")).with_api_key("secret");
+        let validation = client
+            .browser_adapter_completion_validate(&BrowserAdapterCompletionReport {
+                request_id: "browser-adapter-conformance-launch-v1".to_string(),
+                adapter_id: "tempo-conformance-adapter-v1".to_string(),
+                contract_version: "browser-adapter-v1".to_string(),
+                process_terminated: true,
+                temporary_profile_removed: true,
+                plaintext_artifacts_removed: true,
+                egress_log_sealed_or_discarded: true,
+                sealed_artifact_handles: Vec::new(),
+                proof_ids: vec!["temporary_profile_removed".to_string()],
+                notes: Vec::new(),
+            })
+            .await?;
+
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("adapter completion validation test server panicked".into()),
+        }
+        let request = request_rx.recv_timeout(Duration::from_secs(1))?;
+        assert!(request.starts_with("POST /v1/browser/adapter/completion/validate "));
+        assert!(request.contains("x-beatbox-api-key: secret"));
+        assert!(request.contains("content-type: application/json"));
+        assert!(request.contains(r#""request_id":"browser-adapter-conformance-launch-v1""#));
+        assert!(request.contains(r#""proof_ids":["temporary_profile_removed"]"#));
+        assert_eq!(
+            validation.decision,
+            BrowserAdapterCompletionValidationDecision::Rejected
+        );
+        assert!(validation.report_shape_complete);
+        assert!(!validation.verified_on_production_path);
+        assert!(!validation.trusted_for_sensitive_work);
         Ok(())
     }
 

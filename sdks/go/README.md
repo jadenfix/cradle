@@ -90,6 +90,7 @@ All methods are context-first.
 | `IssueBrowserAdapterCapability(ctx, req)` | `POST /v1/browser/adapter/capability` | yes | `json.RawMessage` |
 | `RegisterBrowserAdapter(ctx, req)` | `POST /v1/browser/adapter/register` | yes | `json.RawMessage` |
 | `ValidateBrowserAdapter(ctx, req)` | `POST /v1/browser/adapter/validate` | yes | `json.RawMessage` |
+| `ValidateBrowserAdapterCompletion(ctx, req)` | `POST /v1/browser/adapter/completion/validate` | yes | `json.RawMessage` |
 | `Execute(ctx, req)` | `POST /v1/execute` | yes | `*ExecutionResult` |
 | `CreateJob(ctx, req)` | `POST /v1/jobs` | yes | `*CreateJobResponse` |
 | `GetJob(ctx, id)` | `GET /v1/jobs/{id}` | yes | `*JobRecord` |

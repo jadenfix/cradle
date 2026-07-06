@@ -129,6 +129,16 @@ parser-rejected cases, including separate REST and MCP expectations. That
 profile is the adapter author test fixture for protocol compatibility, not a
 registration credential.
 
+`POST /v1/browser/adapter/completion/validate` and MCP
+`validate_browser_adapter_completion` validate a submitted completion report
+against the same typed proof contract. The validator checks stable proof ids,
+teardown evidence booleans, and bounded list fields, then returns structured
+missing, unexpected, and failed proof feedback. It also remains fail-closed:
+`decision` is `rejected`, `verified_on_production_path` is false, and
+`trusted_for_sensitive_work` is false because the report is not yet bound to a
+server-issued launch request, concrete browser process, temporary profile,
+artifact store, or egress log.
+
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked
 `available`. Profiles describe planned levels rather than enforced behavior:

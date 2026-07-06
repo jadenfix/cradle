@@ -40,6 +40,7 @@ A client is constructed with:
 | `browser_adapter_capability` / `issueBrowserAdapterCapability` / `IssueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes | raw JSON |
 | `browser_adapter_register` / `registerBrowserAdapter` / `RegisterBrowserAdapter` | `POST /v1/browser/adapter/register` | yes | raw JSON |
 | `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` / `ValidateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes | raw JSON |
+| `browser_adapter_completion_validate` / `validate_browser_adapter_completion` / `validateBrowserAdapterCompletion` / `ValidateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` (`202`) |
 | `get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
@@ -92,6 +93,8 @@ is acceptable until each language adds typed convenience models),
 `BrowserAdapterCompletionProofRequirement`, `BrowserAdapterCompletionReport`,
 `BrowserAdapterConformanceCase`, `BrowserAdapterConformanceExpectation`,
 `BrowserAdapterValidationDecision`,
+`BrowserAdapterCompletionValidationResponse`,
+`BrowserAdapterCompletionValidationDecision`,
 `ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,

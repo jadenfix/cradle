@@ -106,6 +106,12 @@ public final class BeatboxClient {
         return sendForJson("POST", uri("/v1/browser/adapter/validate"), true, encode(request));
     }
 
+    /** {@code POST /v1/browser/adapter/completion/validate}. Returns completion validation JSON. */
+    public JsonNode validateBrowserAdapterCompletion(JsonNode request) {
+        Objects.requireNonNull(request, "request");
+        return sendForJson("POST", uri("/v1/browser/adapter/completion/validate"), true, encode(request));
+    }
+
     /** {@code POST /v1/execute}. Runs the request synchronously. */
     public ExecutionResult execute(ExecuteRequest request) {
         Objects.requireNonNull(request, "request");

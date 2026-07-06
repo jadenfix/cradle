@@ -148,6 +148,14 @@ func (c *Client) ValidateBrowserAdapter(ctx context.Context, req any) (json.RawM
 	return out, err
 }
 
+// ValidateBrowserAdapterCompletion validates a browser adapter completion
+// report without trusting it (POST /v1/browser/adapter/completion/validate).
+func (c *Client) ValidateBrowserAdapterCompletion(ctx context.Context, req any) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodPost, c.baseURL+"/v1/browser/adapter/completion/validate", true, req, &out)
+	return out, err
+}
+
 // Execute runs the request synchronously (POST /v1/execute) and returns the
 // ExecutionResult.
 func (c *Client) Execute(ctx context.Context, req ExecuteRequest) (*ExecutionResult, error) {

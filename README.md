@@ -107,6 +107,15 @@ field-complete manifest, a `field_complete_launch_request` fixture, typed
 completion-proof requirements, a completion-report fixture, plus
 protocol-specific REST/MCP expectations and required negative cases so Tempo and
 adapter authors can test compatibility without guessing.
+`POST /v1/browser/adapter/completion/validate` and MCP
+`validate_browser_adapter_completion` validate submitted completion reports
+against the typed proof contract. They check the report shape, stable
+machine-readable `proof_ids`, and teardown evidence booleans, then return
+structured `missing_proof_ids`, `unexpected_proof_ids`, and
+`failed_evidence_fields`. This path is deliberately fail-closed:
+`verified_on_production_path` and `trusted_for_sensitive_work` stay `false`
+because Beatbox has not yet bound reports to a server-issued launch request,
+real browser process, temporary profile, artifact store, or egress log.
 
 ## Ecosystem
 

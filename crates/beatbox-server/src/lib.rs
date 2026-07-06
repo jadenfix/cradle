@@ -15,7 +15,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
     BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
-    BrowserAdapterCompletionReport, BrowserAdapterConformanceCase,
+    BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationDecision,
+    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceCase,
     BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
     BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchRequest,
     BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
@@ -230,6 +231,10 @@ pub fn router(config: ServerConfig) -> Router {
             "/v1/browser/adapter/validate",
             post(browser_adapter_validate),
         )
+        .route(
+            "/v1/browser/adapter/completion/validate",
+            post(browser_adapter_completion_validate),
+        )
         .route("/v1/execute", post(execute))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job).delete(cancel_job))
@@ -283,6 +288,21 @@ async fn browser_adapter_validate(
     validate_browser_adapter_manifest_request(&request)
         .map_err(|message| ApiError::bad_request("invalid_browser_adapter_manifest", message))?;
     Ok(Json(browser_adapter_manifest_response(request)))
+}
+
+async fn browser_adapter_completion_validate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+) -> Result<Json<BrowserAdapterCompletionValidationResponse>, ApiError> {
+    state.authorize(&headers)?;
+    let request = parse_json_body(&state, request).await?;
+    validate_browser_adapter_completion_report_request(&request).map_err(|message| {
+        ApiError::bad_request("invalid_browser_adapter_completion_report", message)
+    })?;
+    Ok(Json(browser_adapter_completion_validation_response(
+        request,
+    )))
 }
 
 async fn browser_adapter_register(
@@ -1434,6 +1454,101 @@ fn browser_adapter_manifest_response(
     }
 }
 
+fn browser_adapter_completion_validation_response(
+    report: BrowserAdapterCompletionReport,
+) -> BrowserAdapterCompletionValidationResponse {
+    let adapter_contract = browser_adapter_contract();
+    let required_proof_ids = adapter_contract
+        .completion_proof_contract
+        .iter()
+        .map(|proof| proof.proof_id.clone())
+        .collect::<Vec<_>>();
+    let missing_proof_ids = required_proof_ids
+        .iter()
+        .filter(|proof_id| !report.proof_ids.contains(proof_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let unexpected_proof_ids = report
+        .proof_ids
+        .iter()
+        .filter(|proof_id| !required_proof_ids.contains(proof_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut failed_evidence_fields = Vec::new();
+    if !report.process_terminated {
+        failed_evidence_fields.push("process_terminated".to_string());
+    }
+    if !report.temporary_profile_removed {
+        failed_evidence_fields.push("temporary_profile_removed".to_string());
+    }
+    if !report.plaintext_artifacts_removed {
+        failed_evidence_fields.push("plaintext_artifacts_removed".to_string());
+    }
+    if !report.egress_log_sealed_or_discarded {
+        failed_evidence_fields.push("egress_log_sealed_or_discarded".to_string());
+    }
+
+    let mut reasons = vec![
+        "browser adapter completion reports are validation metadata only; beatbox does not have a production browser launch or teardown path to bind them to yet"
+            .to_string(),
+    ];
+    if report.contract_version != adapter_contract.version {
+        reasons.push(format!(
+            "completion report contract_version `{}` does not match required `{}`",
+            report.contract_version, adapter_contract.version
+        ));
+    }
+    if !missing_proof_ids.is_empty() {
+        reasons.push("completion report does not include every required proof id".to_string());
+    }
+    if !unexpected_proof_ids.is_empty() {
+        reasons.push(
+            "completion report includes proof ids outside the published contract".to_string(),
+        );
+    }
+    if !failed_evidence_fields.is_empty() {
+        reasons.push(
+            "completion report has required teardown evidence fields set to false".to_string(),
+        );
+    }
+
+    let report_shape_complete = report.contract_version == adapter_contract.version
+        && missing_proof_ids.is_empty()
+        && unexpected_proof_ids.is_empty()
+        && failed_evidence_fields.is_empty();
+    if report_shape_complete {
+        reasons.push(
+            "completion report satisfies the published shape, but Beatbox has not verified it on a real launch request, process, profile directory, artifact store, or egress log"
+                .to_string(),
+        );
+    }
+
+    BrowserAdapterCompletionValidationResponse {
+        decision: BrowserAdapterCompletionValidationDecision::Rejected,
+        report_shape_complete,
+        verified_on_production_path: false,
+        trusted_for_sensitive_work: false,
+        request_id: report.request_id,
+        adapter_id: report.adapter_id,
+        contract_version: report.contract_version,
+        missing_proof_ids,
+        unexpected_proof_ids,
+        failed_evidence_fields,
+        required_completion_proofs: adapter_contract.required_completion_proofs.clone(),
+        completion_proof_contract: adapter_contract.completion_proof_contract.clone(),
+        reasons,
+        required_next_steps: vec![
+            "bind completion reports to a server-issued launch request and trusted registered adapter"
+                .to_string(),
+            "verify process termination, profile deletion, artifact cleanup, and egress log handling on the production teardown path"
+                .to_string(),
+            "reject completion reports that cannot be derived from the concrete launched browser session"
+                .to_string(),
+        ],
+        adapter_contract,
+    }
+}
+
 fn browser_adapter_registration_response(
     state: &AppState,
     request: BrowserAdapterRegistrationRequest,
@@ -2048,6 +2163,57 @@ fn validate_browser_adapter_registration_request(
     validate_browser_adapter_manifest_request(&request.manifest)
 }
 
+fn validate_browser_adapter_completion_report_request(
+    request: &BrowserAdapterCompletionReport,
+) -> Result<(), String> {
+    const MAX_ID_LEN: usize = 128;
+    const MAX_LIST_ITEMS: usize = 64;
+    validate_non_empty_trimmed(
+        &request.request_id,
+        "browser adapter completion report request_id",
+    )?;
+    validate_non_empty_trimmed(
+        &request.adapter_id,
+        "browser adapter completion report adapter_id",
+    )?;
+    validate_non_empty_trimmed(
+        &request.contract_version,
+        "browser adapter completion report contract_version",
+    )?;
+    if request.request_id.len() > MAX_ID_LEN {
+        return Err(format!(
+            "browser adapter completion report request_id must be at most {MAX_ID_LEN} bytes"
+        ));
+    }
+    if request.adapter_id.len() > MAX_ID_LEN {
+        return Err(format!(
+            "browser adapter completion report adapter_id must be at most {MAX_ID_LEN} bytes"
+        ));
+    }
+    if request.contract_version.len() > MAX_ID_LEN {
+        return Err(format!(
+            "browser adapter completion report contract_version must be at most {MAX_ID_LEN} bytes"
+        ));
+    }
+    if request.proof_ids.len() > MAX_LIST_ITEMS
+        || request.sealed_artifact_handles.len() > MAX_LIST_ITEMS
+        || request.notes.len() > MAX_LIST_ITEMS
+    {
+        return Err(format!(
+            "browser adapter completion report arrays must contain at most {MAX_LIST_ITEMS} entries"
+        ));
+    }
+    validate_non_empty_string_list_with_context(
+        &request.proof_ids,
+        "browser adapter completion report proof_ids",
+    )?;
+    validate_non_empty_string_list_with_context(
+        &request.sealed_artifact_handles,
+        "browser adapter completion report sealed_artifact_handles",
+    )?;
+    Ok(())
+}
+
 fn validate_browser_adapter_capability_issue_request(
     request: &BrowserAdapterCapabilityIssueRequest,
 ) -> Result<(), String> {
@@ -2076,12 +2242,27 @@ fn validate_browser_adapter_capability_issue_request(
 }
 
 fn validate_non_empty_string_list(values: &[String], field: &str) -> Result<(), String> {
+    validate_non_empty_string_list_with_context(
+        values,
+        &format!("browser adapter manifest {field}"),
+    )
+}
+
+fn validate_non_empty_string_list_with_context(
+    values: &[String],
+    field: &str,
+) -> Result<(), String> {
     for value in values {
-        if value.is_empty() || value.trim() != value {
-            return Err(format!(
-                "browser adapter manifest {field} entries must be non-empty without surrounding whitespace"
-            ));
-        }
+        validate_non_empty_trimmed(value, &format!("{field} entries"))?;
+    }
+    Ok(())
+}
+
+fn validate_non_empty_trimmed(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() || value.trim() != value {
+        return Err(format!(
+            "{field} must be non-empty without surrounding whitespace"
+        ));
     }
     Ok(())
 }
@@ -2318,6 +2499,7 @@ pub fn openapi_spec_json() -> String {
         openapi_paths::browser_adapter_capability_issue,
         openapi_paths::browser_adapter_register,
         openapi_paths::browser_adapter_validate,
+        openapi_paths::browser_adapter_completion_validate,
         openapi_paths::execute,
         openapi_paths::create_job,
         openapi_paths::get_job,
@@ -2353,6 +2535,8 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdapterCapabilityIssueResponse,
         beatbox_core::BrowserAdapterCompletionReport,
         beatbox_core::BrowserAdapterCompletionProofRequirement,
+        beatbox_core::BrowserAdapterCompletionValidationDecision,
+        beatbox_core::BrowserAdapterCompletionValidationResponse,
         beatbox_core::BrowserAdapterContract,
         beatbox_core::BrowserAdapterContractResponse,
         beatbox_core::BrowserAdapterConformanceCase,
@@ -2396,6 +2580,7 @@ struct ApiDoc;
 mod openapi_paths {
     use beatbox_core::{
         BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
+        BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationResponse,
         BrowserAdapterContractResponse, BrowserAdapterManifestRequest,
         BrowserAdapterManifestResponse, BrowserAdapterRegistrationRequest,
         BrowserAdapterRegistrationResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
@@ -2496,6 +2681,19 @@ mod openapi_paths {
         )
     )]
     pub fn browser_adapter_validate() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/browser/adapter/completion/validate",
+        tag = "v1",
+        request_body = BrowserAdapterCompletionReport,
+        responses(
+            (status = 200, description = "Fail-closed browser adapter completion report validation", body = BrowserAdapterCompletionValidationResponse),
+            (status = 400, description = "Invalid adapter completion report", body = ErrorResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse)
+        )
+    )]
+    pub fn browser_adapter_completion_validate() {}
 
     #[utoipa::path(
         post,
@@ -2948,6 +3146,7 @@ fn mcp_tools() -> Value {
                     "contract_version": {
                         "type": "string",
                         "minLength": 1,
+                        "maxLength": 128,
                         "description": "Browser adapter contract version with no surrounding whitespace."
                     },
                     "launch_endpoint": {
@@ -3004,6 +3203,73 @@ fn mcp_tools() -> Value {
                             "minLength": 1,
                             "description": "Required completion proof label with no surrounding whitespace."
                         }
+                    }
+                }
+            }
+        },
+        {
+            "name": "validate_browser_adapter_completion",
+            "description": "Validate a browser adapter completion report against beatbox's typed proof contract without trusting the report or marking any browser session complete.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "request_id",
+                    "adapter_id",
+                    "contract_version",
+                    "process_terminated",
+                    "temporary_profile_removed",
+                    "plaintext_artifacts_removed",
+                    "egress_log_sealed_or_discarded",
+                    "sealed_artifact_handles",
+                    "proof_ids",
+                    "notes"
+                ],
+                "properties": {
+                    "request_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "Server-issued launch request id with no surrounding whitespace."
+                    },
+                    "adapter_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "Adapter id from the launch request with no surrounding whitespace."
+                    },
+                    "contract_version": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "description": "Browser adapter contract version with no surrounding whitespace."
+                    },
+                    "process_terminated": {"type": "boolean"},
+                    "temporary_profile_removed": {"type": "boolean"},
+                    "plaintext_artifacts_removed": {"type": "boolean"},
+                    "egress_log_sealed_or_discarded": {"type": "boolean"},
+                    "sealed_artifact_handles": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Opaque storage handle, never raw browser state or secrets."
+                        }
+                    },
+                    "proof_ids": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Machine proof id from completion_proof_contract."
+                        }
+                    },
+                    "notes": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {"type": "string"}
                     }
                 }
             }
@@ -3105,6 +3371,21 @@ async fn mcp_tools_call(
             })?;
             Ok(json!({
                 "content": [{"type": "text", "text": "beatbox browser adapter validation"}],
+                "structuredContent": validation,
+                "isError": true,
+            }))
+        }
+        "validate_browser_adapter_completion" => {
+            let request = mcp_browser_adapter_completion_report(&arguments)?;
+            let validation = browser_adapter_completion_validation_response(request);
+            let validation = serde_json::to_value(validation).map_err(|error| {
+                (
+                    -32603,
+                    format!("failed to serialize browser adapter completion validation: {error}"),
+                )
+            })?;
+            Ok(json!({
+                "content": [{"type": "text", "text": "beatbox browser adapter completion validation"}],
                 "structuredContent": validation,
                 "isError": true,
             }))
@@ -3216,6 +3497,37 @@ fn mcp_browser_adapter_manifest_request(
             )
         })?;
     validate_browser_adapter_manifest_request(&request).map_err(|message| (-32602, message))?;
+    Ok(request)
+}
+
+fn mcp_browser_adapter_completion_report(
+    arguments: &Value,
+) -> Result<BrowserAdapterCompletionReport, (i64, String)> {
+    let arguments = mcp_tool_arguments(
+        arguments,
+        "validate_browser_adapter_completion",
+        &[
+            "request_id",
+            "adapter_id",
+            "contract_version",
+            "process_terminated",
+            "temporary_profile_removed",
+            "plaintext_artifacts_removed",
+            "egress_log_sealed_or_discarded",
+            "sealed_artifact_handles",
+            "proof_ids",
+            "notes",
+        ],
+    )?;
+    let request: BrowserAdapterCompletionReport =
+        serde_json::from_value(Value::Object(arguments.clone())).map_err(|error| {
+            (
+                -32602,
+                format!("validate_browser_adapter_completion arguments are invalid: {error}"),
+            )
+        })?;
+    validate_browser_adapter_completion_report_request(&request)
+        .map_err(|message| (-32602, message))?;
     Ok(request)
 }
 

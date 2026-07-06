@@ -342,6 +342,77 @@ test("validateBrowserAdapter sends authenticated JSON manifest", async () => {
   }
 });
 
+test("validateBrowserAdapterCompletion sends authenticated JSON report", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(
+      JSON.stringify({
+        decision: "rejected",
+        report_shape_complete: true,
+        verified_on_production_path: false,
+        trusted_for_sensitive_work: false,
+        request_id: "browser-adapter-conformance-launch-v1",
+        adapter_id: "tempo-conformance-adapter-v1",
+        contract_version: "browser-adapter-v1",
+        missing_proof_ids: [],
+        unexpected_proof_ids: [],
+        failed_evidence_fields: [],
+        required_completion_proofs: ["temporary profile directory removed"],
+        completion_proof_contract: [],
+        reasons: ["shape only"],
+        required_next_steps: ["verify production teardown"],
+        adapter_contract: {
+          version: "browser-adapter-v1",
+          status: "planned",
+          launch_endpoint: null,
+          handoff_fields: ["completion_report_template"],
+          required_guard_fields: [],
+          required_completion_proofs: ["temporary profile directory removed"],
+          completion_proof_contract: [],
+          unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon",
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "http://127.0.0.1:7300/",
+      apiKey: "secret-key",
+    });
+    const request = {
+      request_id: "browser-adapter-conformance-launch-v1",
+      adapter_id: "tempo-conformance-adapter-v1",
+      contract_version: "browser-adapter-v1",
+      process_terminated: true,
+      temporary_profile_removed: true,
+      plaintext_artifacts_removed: true,
+      egress_log_sealed_or_discarded: true,
+      sealed_artifact_handles: [],
+      proof_ids: ["temporary_profile_removed"],
+      notes: ["shape fixture only"],
+    };
+    const response = await client.validateBrowserAdapterCompletion(request) as Record<string, unknown>;
+
+    assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/adapter/completion/validate");
+    assert.equal(capturedInit?.method, "POST");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+      "content-type": "application/json",
+    });
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), request);
+    assert.equal(response.decision, "rejected");
+    assert.equal(response.report_shape_complete, true);
+    assert.equal(response.verified_on_production_path, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("browserAdapterContract sends authenticated GET", async () => {
   const originalFetch = globalThis.fetch;
   let capturedUrl = "";

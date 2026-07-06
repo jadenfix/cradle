@@ -89,6 +89,7 @@ are never followed, so the api key cannot leak to another origin.
 | `client.browser_adapter_capability(request)` | `POST /v1/browser/adapter/capability` | yes | `Hash` (raw JSON) |
 | `client.browser_adapter_register(request)` | `POST /v1/browser/adapter/register` | yes | `Hash` (raw JSON) |
 | `client.validate_browser_adapter(request)` | `POST /v1/browser/adapter/validate` | yes | `Hash` (raw JSON) |
+| `client.validate_browser_adapter_completion(request)` | `POST /v1/browser/adapter/completion/validate` | yes | `Hash` (raw JSON) |
 | `client.execute(request)` | `POST /v1/execute` | yes | `Beatbox::ExecutionResult` |
 | `client.create_job(request)` | `POST /v1/jobs` | yes | `Beatbox::CreateJobResponse` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `Beatbox::JobRecord` |

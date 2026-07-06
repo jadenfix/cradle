@@ -41,7 +41,13 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   `completion_proof_contract` and `completion_report_template` are contract
   fixtures only; the booleans are not evidence until production teardown checks
   derive and verify them from the actual browser process, profile directory,
-  artifact store, and egress log path.
+  artifact store, and egress log path. `POST
+  /v1/browser/adapter/completion/validate` and MCP
+  `validate_browser_adapter_completion` keep that same boundary: a
+  `report_shape_complete` response only means the submitted JSON matched the
+  expected proof ids and fields, while `verified_on_production_path` and
+  `trusted_for_sensitive_work` remain false until Beatbox can bind the report
+  to a real launch request and production teardown evidence.
   Direct adapter contract discovery through `/v1/browser/adapter/contract` and
   MCP `get_browser_adapter_contract` is authenticated control-plane metadata
   only. It publishes the planned contract and conformance fixtures without
