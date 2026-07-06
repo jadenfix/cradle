@@ -348,6 +348,51 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 	}
 }
 
+func TestBrowserAdapterContractMockServer(t *testing.T) {
+	var gotMethod, gotPath, gotKey, gotCT string
+	var sawBody bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get(apiKeyHeader)
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		sawBody = len(b) > 0
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{
+			"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["guard_plan"],"required_guard_fields":["guard_plan.network.deny_metadata_endpoints"],"required_completion_proofs":["temporary profile directory removed"],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"},
+			"conformance_profile":{"profile_version":"browser-adapter-conformance-v1","field_complete_manifest":{"adapter_id":"tempo-conformance-adapter-v1","contract_version":"browser-adapter-v1","launch_endpoint":"https://adapter.example/launch","supported_levels":["os_isolated"],"supported_controls":["os_process_isolation"],"guard_fields":["guard_plan.network.deny_metadata_endpoints"],"completion_proofs":["temporary profile directory removed"]},"field_complete_expectation":{"decision":"rejected","manifest_complete":false,"launchable":false,"trusted_for_sensitive_work":false,"endpoint_network_policy_bound":false,"missing_levels":[],"missing_controls":[],"missing_guard_fields":[],"missing_completion_proofs":[]},"required_cases":[],"notes":["not a launch grant"]},
+			"required_levels":["os_isolated"],
+			"required_controls":["os_process_isolation"],
+			"launchable":false,
+			"trusted_for_sensitive_work":false,
+			"endpoint_network_policy_bound":false,
+			"notes":["not adapter registration"]
+		}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("secret-key"))
+	raw, err := c.BrowserAdapterContract(context.Background())
+	if err != nil {
+		t.Fatalf("BrowserAdapterContract: %v", err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/browser/adapter/contract" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotKey != "secret-key" || gotCT != "" {
+		t.Fatalf("headers key=%q content-type=%q", gotKey, gotCT)
+	}
+	if sawBody {
+		t.Fatal("GET /v1/browser/adapter/contract should not send a request body")
+	}
+	if !strings.Contains(string(raw), `"launchable":false`) || !strings.Contains(string(raw), `"browser-adapter-conformance-v1"`) {
+		t.Fatalf("contract response not surfaced: %s", raw)
+	}
+}
+
 func TestValidateBrowserAdapterMockServer(t *testing.T) {
 	var gotMethod, gotPath, gotKey, gotCT string
 	var gotBody map[string]any

@@ -115,6 +115,15 @@ func (c *Client) AdmitBrowserSession(ctx context.Context, req any) (json.RawMess
 	return out, err
 }
 
+// BrowserAdapterContract returns the planned browser adapter contract and
+// conformance profile without trusting or launching an adapter
+// (GET /v1/browser/adapter/contract).
+func (c *Client) BrowserAdapterContract(ctx context.Context) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, c.baseURL+"/v1/browser/adapter/contract", true, nil, &out)
+	return out, err
+}
+
 // ValidateBrowserAdapter validates a proposed browser adapter manifest without
 // trusting or launching it (POST /v1/browser/adapter/validate).
 func (c *Client) ValidateBrowserAdapter(ctx context.Context, req any) (json.RawMessage, error) {

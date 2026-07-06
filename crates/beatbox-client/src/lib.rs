@@ -85,6 +85,16 @@ impl Client {
         decode_response(response).await
     }
 
+    pub async fn browser_adapter_contract(
+        &self,
+    ) -> Result<BrowserAdapterContractResponse, ClientError> {
+        let request = self
+            .http
+            .get(format!("{}/v1/browser/adapter/contract", self.base_url));
+        let response = self.authorize(request).send().await?;
+        decode_response(response).await
+    }
+
     pub async fn browser_adapter_validate(
         &self,
         request: &BrowserAdapterManifestRequest,
@@ -388,6 +398,53 @@ mod tests {
                 .handoff_fields
                 .iter()
                 .any(|field| field == "guard_plan")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_adapter_contract_gets_authenticated_json()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut buffer = [0_u8; 4096];
+            let bytes = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+            request_tx
+                .send(request)
+                .map_err(|_| std::io::Error::other("request receiver dropped"))?;
+            let body = r#"{"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["guard_plan"],"required_guard_fields":["guard_plan.network.deny_metadata_endpoints"],"required_completion_proofs":["temporary profile directory removed"],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"},"conformance_profile":{"profile_version":"browser-adapter-conformance-v1","field_complete_manifest":{"adapter_id":"tempo-conformance-adapter-v1","contract_version":"browser-adapter-v1","launch_endpoint":"https://adapter.example/launch","supported_levels":["os_isolated"],"supported_controls":["os_process_isolation"],"guard_fields":["guard_plan.network.deny_metadata_endpoints"],"completion_proofs":["temporary profile directory removed"]},"field_complete_expectation":{"decision":"rejected","manifest_complete":false,"launchable":false,"trusted_for_sensitive_work":false,"endpoint_network_policy_bound":false,"missing_levels":[],"missing_controls":[],"missing_guard_fields":[],"missing_completion_proofs":[]},"required_cases":[],"notes":["not a launch grant"]},"required_levels":["os_isolated"],"required_controls":["os_process_isolation"],"launchable":false,"trusted_for_sensitive_work":false,"endpoint_network_policy_bound":false,"notes":["not adapter registration"]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}")).with_api_key("secret");
+        let contract = client.browser_adapter_contract().await?;
+
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("adapter contract test server panicked".into()),
+        }
+        let request = request_rx.recv_timeout(Duration::from_secs(1))?;
+        assert!(request.starts_with("GET /v1/browser/adapter/contract "));
+        assert!(request.contains("x-beatbox-api-key: secret"));
+        assert!(!request.contains("content-type: application/json"));
+        assert_eq!(contract.adapter_contract.version, "browser-adapter-v1");
+        assert!(!contract.launchable);
+        assert!(!contract.trusted_for_sensitive_work);
+        assert!(!contract.endpoint_network_policy_bound);
+        assert_eq!(
+            contract.conformance_profile.profile_version,
+            "browser-adapter-conformance-v1"
         );
         Ok(())
     }

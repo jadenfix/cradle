@@ -37,6 +37,10 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   The `adapter_handoff` contract remains fail-closed: `launchable` is false and
   `launch_endpoint` is null until a production launcher, teardown path, and
   proof channel exist.
+  Direct adapter contract discovery through `/v1/browser/adapter/contract` and
+  MCP `get_browser_adapter_contract` is authenticated control-plane metadata
+  only. It publishes the planned contract and conformance fixtures without
+  registering an adapter, trusting an endpoint, or making browser launchable.
   Adapter manifest validation is also fail-closed. It rejects unsafe launch
   endpoint shapes, reports contract gaps, and marks endpoint network-policy
   binding false because DNS/proxy/redirect/retry binding is not implemented; a

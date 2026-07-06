@@ -2,8 +2,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdapterConformanceExpectation, BrowserAdapterManifestResponse, BrowserAdmissionDecision,
-    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BrowserAdapterConformanceExpectation, BrowserAdapterContractResponse,
+    BrowserAdapterManifestResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
+    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
     BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
     ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
@@ -1292,6 +1293,92 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
 }
 
 #[tokio::test]
+async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/adapter/contract")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/adapter/contract")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let contract: BrowserAdapterContractResponse = serde_json::from_slice(&body)?;
+    assert!(!contract.launchable);
+    assert!(!contract.trusted_for_sensitive_work);
+    assert!(!contract.endpoint_network_policy_bound);
+    assert_eq!(contract.adapter_contract.version, "browser-adapter-v1");
+    assert_eq!(
+        contract.adapter_contract.status,
+        BrowserSandboxAvailability::Planned
+    );
+    assert_eq!(contract.adapter_contract.launch_endpoint, None);
+    assert!(
+        contract
+            .required_levels
+            .contains(&BrowserSandboxLevel::OsIsolated)
+    );
+    assert!(
+        contract
+            .required_levels
+            .contains(&BrowserSandboxLevel::RemoteIsolated)
+    );
+    assert!(
+        contract
+            .required_controls
+            .contains(&BrowserSandboxControl::LocalNetworkBlock)
+    );
+    assert!(
+        contract
+            .required_controls
+            .contains(&BrowserSandboxControl::TeardownProof)
+    );
+    assert_eq!(
+        contract.conformance_profile.profile_version,
+        "browser-adapter-conformance-v1"
+    );
+    assert_eq!(
+        contract
+            .conformance_profile
+            .field_complete_manifest
+            .contract_version,
+        contract.adapter_contract.version
+    );
+    assert!(
+        contract
+            .conformance_profile
+            .required_cases
+            .iter()
+            .any(|case| case.name == "field_complete_manifest_stays_fail_closed")
+    );
+    assert!(
+        contract
+            .notes
+            .iter()
+            .any(|note| note.contains("not adapter registration"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
@@ -1640,6 +1727,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .is_some_and(|paths| paths.contains_key("/v1/jobs")
                 && paths.contains_key("/v1/browser/profiles")
                 && paths.contains_key("/v1/browser/admit")
+                && paths.contains_key("/v1/browser/adapter/contract")
                 && paths.contains_key("/v1/browser/adapter/validate"))
     );
 
@@ -1660,6 +1748,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserSandboxProfile",
         "BrowserIntegrationContract",
         "BrowserAdapterContract",
+        "BrowserAdapterContractResponse",
         "BrowserAdapterConformanceCase",
         "BrowserAdapterConformanceExpectation",
         "BrowserAdapterConformanceProfile",
@@ -1705,6 +1794,16 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_str()
             .is_some_and(|description| description.contains("without surrounding whitespace")),
         "guard_fields should describe runtime string-entry validation"
+    );
+    assert!(
+        schemas["BrowserAdapterContractResponse"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "conformance_profile")
+                    && required.iter().any(|field| field == "required_levels")
+                    && required.iter().any(|field| field == "launchable")
+            ),
+        "adapter contract response should require discovery metadata"
     );
     assert!(
         schemas["BrowserAdapterManifestResponse"]["required"]
@@ -1809,7 +1908,20 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert!(tools.to_string().contains("get_capabilities"));
     assert!(tools.to_string().contains("get_browser_profiles"));
     assert!(tools.to_string().contains("admit_browser_session"));
+    assert!(tools.to_string().contains("get_browser_adapter_contract"));
     assert!(tools.to_string().contains("validate_browser_adapter"));
+    let contract_tool = tools
+        .as_array()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "get_browser_adapter_contract")
+        })
+        .ok_or("get_browser_adapter_contract tool should be listed")?;
+    assert_eq!(
+        contract_tool["inputSchema"]["additionalProperties"],
+        serde_json::json!(false)
+    );
     let validate_tool = tools
         .as_array()
         .and_then(|tools| {
@@ -2263,6 +2375,116 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
             .is_some_and(|fields| fields
                 .iter()
                 .any(|field| field == "guard_plan.network.deny_metadata_endpoints"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_adapter_contract_returns_structured_content()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_browser_adapter_contract",
+            "arguments": {}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(false));
+    assert_eq!(
+        result["content"][0]["text"],
+        "beatbox browser adapter contract"
+    );
+    assert_eq!(result["structuredContent"]["launchable"], false);
+    assert_eq!(
+        result["structuredContent"]["trusted_for_sensitive_work"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["endpoint_network_policy_bound"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_contract"]["version"],
+        serde_json::json!("browser-adapter-v1")
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_contract"]["launch_endpoint"],
+        serde_json::Value::Null
+    );
+    assert!(
+        result["structuredContent"]["required_levels"]
+            .as_array()
+            .is_some_and(|levels| levels.iter().any(|level| level == "os_isolated")
+                && levels.iter().any(|level| level == "remote_isolated"))
+    );
+    assert!(
+        result["structuredContent"]["required_controls"]
+            .as_array()
+            .is_some_and(|controls| controls
+                .iter()
+                .any(|control| control == "local_network_block")
+                && controls.iter().any(|control| control == "teardown_proof"))
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["profile_version"],
+        serde_json::json!("browser-adapter-conformance-v1")
+    );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["required_cases"]
+            .as_array()
+            .is_some_and(|cases| cases
+                .iter()
+                .any(|case| case["name"] == "field_complete_manifest_stays_fail_closed"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_adapter_contract_rejects_unknown_arguments()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_browser_adapter_contract",
+            "arguments": {"adapter_id": "tempo-os-jail-v1"}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], serde_json::json!(-32602));
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("does not accept argument"))
     );
     Ok(())
 }

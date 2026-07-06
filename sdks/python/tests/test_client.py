@@ -308,6 +308,72 @@ class TestClientRequest(unittest.TestCase):
             "browser-adapter-conformance-v1",
         )
 
+    def test_browser_adapter_contract_sends_auth_get(self):
+        c = Client("http://host:7300/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            body = {
+                "adapter_contract": {
+                    "version": "browser-adapter-v1",
+                    "status": "planned",
+                    "launch_endpoint": None,
+                    "handoff_fields": ["guard_plan"],
+                    "required_guard_fields": ["guard_plan.network.deny_metadata_endpoints"],
+                    "required_completion_proofs": ["temporary profile directory removed"],
+                    "unavailable_reason": "no browser adapter launch endpoint is implemented by this daemon",
+                },
+                "conformance_profile": {
+                    "profile_version": "browser-adapter-conformance-v1",
+                    "field_complete_manifest": {
+                        "adapter_id": "tempo-conformance-adapter-v1",
+                        "contract_version": "browser-adapter-v1",
+                        "launch_endpoint": "https://adapter.example/launch",
+                        "supported_levels": ["os_isolated"],
+                        "supported_controls": ["os_process_isolation"],
+                        "guard_fields": ["guard_plan.network.deny_metadata_endpoints"],
+                        "completion_proofs": ["temporary profile directory removed"],
+                    },
+                    "field_complete_expectation": {
+                        "decision": "rejected",
+                        "manifest_complete": False,
+                        "launchable": False,
+                        "trusted_for_sensitive_work": False,
+                        "endpoint_network_policy_bound": False,
+                        "missing_levels": [],
+                        "missing_controls": [],
+                        "missing_guard_fields": [],
+                        "missing_completion_proofs": [],
+                    },
+                    "required_cases": [],
+                    "notes": ["not a launch grant"],
+                },
+                "required_levels": ["os_isolated"],
+                "required_controls": ["os_process_isolation"],
+                "launchable": False,
+                "trusted_for_sensitive_work": False,
+                "endpoint_network_policy_bound": False,
+                "notes": ["not adapter registration"],
+            }
+            return _FakeResponse(200, json.dumps(body).encode())
+
+        with _patched_open(c, fake_open):
+            contract = c.browser_adapter_contract()
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/contract")
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertIsNone(req.data)
+        self.assertFalse(contract["launchable"])
+        self.assertFalse(contract["trusted_for_sensitive_work"])
+        self.assertFalse(contract["endpoint_network_policy_bound"])
+        self.assertEqual(
+            contract["conformance_profile"]["profile_version"],
+            "browser-adapter-conformance-v1",
+        )
+
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")
 

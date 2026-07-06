@@ -364,6 +364,18 @@ pub struct BrowserAdapterConformanceProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterContractResponse {
+    pub adapter_contract: BrowserAdapterContract,
+    pub conformance_profile: BrowserAdapterConformanceProfile,
+    pub required_levels: Vec<BrowserSandboxLevel>,
+    pub required_controls: Vec<BrowserSandboxControl>,
+    pub launchable: bool,
+    pub trusted_for_sensitive_work: bool,
+    pub endpoint_network_policy_bound: bool,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterManifestResponse {
     pub decision: BrowserAdapterValidationDecision,
     pub manifest_complete: bool,

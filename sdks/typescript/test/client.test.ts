@@ -342,6 +342,84 @@ test("validateBrowserAdapter sends authenticated JSON manifest", async () => {
   }
 });
 
+test("browserAdapterContract sends authenticated GET", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(
+      JSON.stringify({
+        adapter_contract: {
+          version: "browser-adapter-v1",
+          status: "planned",
+          launch_endpoint: null,
+          handoff_fields: ["guard_plan"],
+          required_guard_fields: ["guard_plan.network.deny_metadata_endpoints"],
+          required_completion_proofs: ["temporary profile directory removed"],
+          unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon",
+        },
+        conformance_profile: {
+          profile_version: "browser-adapter-conformance-v1",
+          field_complete_manifest: {
+            adapter_id: "tempo-conformance-adapter-v1",
+            contract_version: "browser-adapter-v1",
+            launch_endpoint: "https://adapter.example/launch",
+            supported_levels: ["os_isolated"],
+            supported_controls: ["os_process_isolation"],
+            guard_fields: ["guard_plan.network.deny_metadata_endpoints"],
+            completion_proofs: ["temporary profile directory removed"],
+          },
+          field_complete_expectation: {
+            decision: "rejected",
+            manifest_complete: false,
+            launchable: false,
+            trusted_for_sensitive_work: false,
+            endpoint_network_policy_bound: false,
+            missing_levels: [],
+            missing_controls: [],
+            missing_guard_fields: [],
+            missing_completion_proofs: [],
+          },
+          required_cases: [],
+          notes: ["not a launch grant"],
+        },
+        required_levels: ["os_isolated"],
+        required_controls: ["os_process_isolation"],
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        notes: ["not adapter registration"],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "http://127.0.0.1:7300/",
+      apiKey: "secret-key",
+    });
+    const response = await client.browserAdapterContract() as Record<string, unknown>;
+
+    assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/adapter/contract");
+    assert.equal(capturedInit?.method, "GET");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+    });
+    assert.equal(capturedInit?.body, undefined);
+    assert.equal(response.launchable, false);
+    assert.equal(response.trusted_for_sensitive_work, false);
+    assert.equal(response.endpoint_network_policy_bound, false);
+    assert.equal(
+      (response.conformance_profile as Record<string, unknown>).profile_version,
+      "browser-adapter-conformance-v1",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // --- ExecuteRequest round-trip --------------------------------------------
 
 test("ExecuteRequest.wasmWat serializes to the exact wire shape", () => {

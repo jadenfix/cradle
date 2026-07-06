@@ -109,6 +109,15 @@ export class BeatboxClient {
     });
   }
 
+  /** `GET /v1/browser/adapter/contract` — browser adapter contract and conformance profile. */
+  browserAdapterContract(): Promise<unknown> {
+    return this.request<unknown>({
+      method: "GET",
+      path: "/v1/browser/adapter/contract",
+      auth: true,
+    });
+  }
+
   /** `POST /v1/browser/adapter/validate` — validate a proposed browser adapter manifest. */
   validateBrowserAdapter(request: unknown): Promise<unknown> {
     return this.request<unknown>({

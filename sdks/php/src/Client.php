@@ -81,6 +81,16 @@ final class Client
     }
 
     /**
+     * GET /v1/browser/adapter/contract. Returns browser adapter contract JSON.
+     *
+     * @return array<string,mixed>
+     */
+    public function browserAdapterContract(): array
+    {
+        return $this->requestJson('GET', '/v1/browser/adapter/contract', null, true);
+    }
+
+    /**
      * POST /v1/browser/adapter/validate. Returns browser adapter validation JSON.
      *
      * @param array<string,mixed> $request

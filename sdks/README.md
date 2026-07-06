@@ -30,6 +30,7 @@ the same methods:
 | `capabilities` | `GET /v1/capabilities` | yes |
 | `browser_profiles` / `browserProfiles` | `GET /v1/browser/profiles` | yes |
 | `browser_admit` / `admitBrowserSession` | `POST /v1/browser/admit` | yes |
+| `browser_adapter_contract` / `browserAdapterContract` | `GET /v1/browser/adapter/contract` | yes |
 | `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
 | `execute` | `POST /v1/execute` | yes |
 | `create_job` | `POST /v1/jobs` | yes |
@@ -52,17 +53,20 @@ without guessing.
 Browser adapter manifests are also raw JSON today. Pass them through to
 `POST /v1/browser/adapter/validate`; beatbox validates the manifest shape and
 syntax-checks the launch endpoint, but does not resolve or bind that endpoint
-to DNS/proxy/redirect/retry policy. Responses still return `manifest_complete:
-false`, `endpoint_network_policy_bound: false`, and `launchable: false` until a
-trusted adapter registration and launch path exists. Preserve the
+to DNS/proxy/redirect/retry policy. SDKs also expose
+`GET /v1/browser/adapter/contract` for direct discovery of the planned adapter
+contract and conformance profile without submitting a manifest. Both responses
+still return `endpoint_network_policy_bound: false` and `launchable: false`
+until a trusted adapter registration and launch path exists. Preserve the
 `conformance_profile` field in raw JSON responses; it contains the canonical
 field-complete manifest, expected missing-gap reports, and protocol-specific
 REST/MCP negative cases Tempo adapters should run.
 
 Language-specific method names are idiomatic: Rust and Python expose
-`browser_adapter_validate`, Ruby exposes `validate_browser_adapter`, TypeScript,
-Java, PHP, and C# expose `validateBrowserAdapter`, and Go exposes
-`ValidateBrowserAdapter`.
+`browser_adapter_contract` and `browser_adapter_validate`, Ruby exposes
+`browser_adapter_contract` and `validate_browser_adapter`, TypeScript, Java,
+PHP, and C# expose `browserAdapterContract` and `validateBrowserAdapter`, and
+Go exposes `BrowserAdapterContract` and `ValidateBrowserAdapter`.
 
 ## How the fleet stays correct (the rollout pipeline)
 

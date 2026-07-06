@@ -29,6 +29,36 @@
         }
       }
     },
+    "/v1/browser/adapter/contract": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_adapter_contract_get",
+        "responses": {
+          "200": {
+            "description": "Fail-closed browser adapter contract and conformance profile discovery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAdapterContractResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/browser/adapter/validate": {
       "post": {
         "tags": [
@@ -600,6 +630,54 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "BrowserAdapterContractResponse": {
+        "type": "object",
+        "required": [
+          "adapter_contract",
+          "conformance_profile",
+          "required_levels",
+          "required_controls",
+          "launchable",
+          "trusted_for_sensitive_work",
+          "endpoint_network_policy_bound",
+          "notes"
+        ],
+        "properties": {
+          "adapter_contract": {
+            "$ref": "#/components/schemas/BrowserAdapterContract"
+          },
+          "conformance_profile": {
+            "$ref": "#/components/schemas/BrowserAdapterConformanceProfile"
+          },
+          "endpoint_network_policy_bound": {
+            "type": "boolean"
+          },
+          "launchable": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "required_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxLevel"
+            }
+          },
+          "trusted_for_sensitive_work": {
+            "type": "boolean"
           }
         }
       },

@@ -15,8 +15,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
     BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
-    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterHandoff,
-    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
+    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
+    BrowserAdapterHandoff, BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
     BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
     BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
     BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
@@ -197,6 +197,10 @@ pub fn router(config: ServerConfig) -> Router {
         .route("/v1/browser/profiles", get(browser_profiles))
         .route("/v1/browser/admit", post(browser_admit))
         .route(
+            "/v1/browser/adapter/contract",
+            get(browser_adapter_contract_get),
+        )
+        .route(
             "/v1/browser/adapter/validate",
             post(browser_adapter_validate),
         )
@@ -253,6 +257,14 @@ async fn browser_adapter_validate(
     validate_browser_adapter_manifest_request(&request)
         .map_err(|message| ApiError::bad_request("invalid_browser_adapter_manifest", message))?;
     Ok(Json(browser_adapter_manifest_response(request)))
+}
+
+async fn browser_adapter_contract_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<BrowserAdapterContractResponse>, ApiError> {
+    state.authorize(&headers)?;
+    Ok(Json(browser_adapter_contract_response()))
 }
 
 async fn execute(
@@ -1046,6 +1058,34 @@ fn browser_adapter_handoff() -> BrowserAdapterHandoff {
         handoff_fields: adapter.handoff_fields,
         required_completion_proofs: adapter.required_completion_proofs,
         unavailable_reason: adapter.unavailable_reason,
+    }
+}
+
+fn browser_adapter_contract_response() -> BrowserAdapterContractResponse {
+    let adapter_contract = browser_adapter_contract();
+    let required_levels = browser_adapter_required_levels();
+    let required_controls = browser_adapter_required_controls(&required_levels);
+    let conformance_profile = browser_adapter_conformance_profile(
+        &adapter_contract,
+        &required_levels,
+        &required_controls,
+    );
+    BrowserAdapterContractResponse {
+        adapter_contract,
+        conformance_profile,
+        required_levels,
+        required_controls,
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        notes: vec![
+            "browser adapter contract discovery is compatibility metadata, not adapter registration"
+                .to_string(),
+            "no browser adapter is trusted or launchable until same-user registration and endpoint binding are implemented"
+                .to_string(),
+            "run the conformance_profile cases against REST and MCP before advertising adapter compatibility"
+                .to_string(),
+        ],
     }
 }
 
@@ -1900,6 +1940,7 @@ pub fn openapi_spec_json() -> String {
         openapi_paths::capabilities,
         openapi_paths::browser_profiles,
         openapi_paths::browser_admit,
+        openapi_paths::browser_adapter_contract_get,
         openapi_paths::browser_adapter_validate,
         openapi_paths::execute,
         openapi_paths::create_job,
@@ -1933,6 +1974,7 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserProfilesResponse,
         beatbox_core::BrowserIntegrationContract,
         beatbox_core::BrowserAdapterContract,
+        beatbox_core::BrowserAdapterContractResponse,
         beatbox_core::BrowserAdapterConformanceCase,
         beatbox_core::BrowserAdapterConformanceExpectation,
         beatbox_core::BrowserAdapterConformanceProfile,
@@ -1969,9 +2011,10 @@ struct ApiDoc;
 #[allow(dead_code)]
 mod openapi_paths {
     use beatbox_core::{
-        BrowserAdapterManifestRequest, BrowserAdapterManifestResponse, BrowserAdmissionRequest,
-        BrowserAdmissionResponse, BrowserProfilesResponse, CapabilitiesResponse, CreateJobResponse,
-        ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord,
+        BrowserAdapterContractResponse, BrowserAdapterManifestRequest,
+        BrowserAdapterManifestResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
+        BrowserProfilesResponse, CapabilitiesResponse, CreateJobResponse, ErrorResponse,
+        ExecuteRequest, ExecutionResult, JobRecord,
     };
 
     #[utoipa::path(
@@ -2016,6 +2059,17 @@ mod openapi_paths {
         )
     )]
     pub fn browser_admit() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/browser/adapter/contract",
+        tag = "v1",
+        responses(
+            (status = 200, description = "Fail-closed browser adapter contract and conformance profile discovery", body = BrowserAdapterContractResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse)
+        )
+    )]
+    pub fn browser_adapter_contract_get() {}
 
     #[utoipa::path(
         post,
@@ -2294,6 +2348,11 @@ fn mcp_tools() -> Value {
             "inputSchema": {"type": "object", "additionalProperties": false}
         },
         {
+            "name": "get_browser_adapter_contract",
+            "description": "Return beatbox's planned browser adapter contract and conformance_profile for Tempo-style integrations without trusting or launching an adapter.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
             "name": "admit_browser_session",
             "description": "Return a fail-closed browser sandbox admission decision, guard plan, and non-launchable adapter handoff for a requested actor, sensitivity, and sandbox level.",
             "inputSchema": {
@@ -2473,6 +2532,21 @@ async fn mcp_tools_call(
             Ok(json!({
                 "content": [{"type": "text", "text": "beatbox browser sandbox profiles"}],
                 "structuredContent": profiles,
+                "isError": false,
+            }))
+        }
+        "get_browser_adapter_contract" => {
+            mcp_tool_arguments(&arguments, "get_browser_adapter_contract", &[])?;
+            let contract =
+                serde_json::to_value(browser_adapter_contract_response()).map_err(|error| {
+                    (
+                        -32603,
+                        format!("failed to serialize browser adapter contract: {error}"),
+                    )
+                })?;
+            Ok(json!({
+                "content": [{"type": "text", "text": "beatbox browser adapter contract"}],
+                "structuredContent": contract,
                 "isError": false,
             }))
         }

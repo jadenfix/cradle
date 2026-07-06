@@ -53,6 +53,11 @@ module Beatbox
       request_json(:post, "/v1/browser/admit", body: request, auth: true)
     end
 
+    # GET /v1/browser/adapter/contract. Returns browser adapter contract JSON.
+    def browser_adapter_contract
+      request_json(:get, "/v1/browser/adapter/contract", auth: true)
+    end
+
     # POST /v1/browser/adapter/validate. Returns browser adapter validation JSON.
     def validate_browser_adapter(request)
       request_json(:post, "/v1/browser/adapter/validate", body: request, auth: true)

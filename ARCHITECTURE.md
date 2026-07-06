@@ -83,6 +83,13 @@ can be trusted. It is the authoritative admission decision and currently always
 rejects because Beatbox has no runnable browser launcher or isolation
 substrate.
 
+`GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
+publish the planned adapter contract and conformance profile directly for
+Tempo-style discovery. The response is authenticated control-plane metadata and
+remains fail-closed: it is not a manifest submission or registration grant, and
+it reports `launchable: false`, `trusted_for_sensitive_work: false`, and
+`endpoint_network_policy_bound: false`.
+
 `POST /v1/browser/adapter/validate` and MCP `validate_browser_adapter` validate
 a proposed adapter manifest against the published Tempo handoff contract. The
 validator syntax-checks the claimed launch endpoint and checks supported

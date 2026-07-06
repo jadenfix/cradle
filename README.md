@@ -71,6 +71,12 @@ canonical fields and teardown proofs a future Tempo-side adapter must bind; its
 `launch_endpoint` is currently `null` and `launchable` is `false`. The current
 implementation always rejects admission and explains which production pieces or
 requested controls are still missing.
+`GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
+return the same planned adapter contract plus the `conformance_profile` without
+requiring a submitted manifest. This is authenticated compatibility metadata
+for Tempo and adapter authors; it is not registration, trust, or permission to
+launch, and the response keeps `launchable`, `trusted_for_sensitive_work`, and
+`endpoint_network_policy_bound` set to `false`.
 `POST /v1/browser/adapter/validate` and MCP `validate_browser_adapter` let
 Tempo validate a proposed adapter manifest against the same contract. Validation
 reports missing levels, controls, guard fields, and completion proofs, but it

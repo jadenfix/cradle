@@ -36,6 +36,7 @@ A client is constructed with:
 | `capabilities()` | `GET /v1/capabilities` | yes | raw JSON |
 | `browser_profiles()` | `GET /v1/browser/profiles` | yes | raw JSON |
 | `browser_admit(request)` | `POST /v1/browser/admit` | yes | raw JSON |
+| `browser_adapter_contract` / `browserAdapterContract` / `BrowserAdapterContract` | `GET /v1/browser/adapter/contract` | yes | raw JSON |
 | `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` / `ValidateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` (`202`) |
@@ -79,7 +80,7 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `intent_warnings`, plus the browser admission `guard_plan` and
 `adapter_handoff`; raw JSON return is acceptable until each language adds typed
 convenience models), `BrowserAdapterManifestRequest`,
-`BrowserAdapterManifestResponse` (including `conformance_profile`),
+`BrowserAdapterContractResponse`, `BrowserAdapterManifestResponse` (including `conformance_profile`),
 `BrowserAdapterConformanceProfile`, `BrowserAdapterConformanceCase`,
 `BrowserAdapterConformanceExpectation`, `BrowserAdapterValidationDecision`,
 `ExecutionResult` (status, value,

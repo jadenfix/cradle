@@ -59,6 +59,7 @@ in an exception message.
 | `CapabilitiesAsync()` | `GET /v1/capabilities` | yes | `JsonElement` |
 | `BrowserProfilesAsync()` | `GET /v1/browser/profiles` | yes | `JsonElement` |
 | `AdmitBrowserSessionAsync(req)` | `POST /v1/browser/admit` | yes | `JsonElement` |
+| `BrowserAdapterContractAsync()` | `GET /v1/browser/adapter/contract` | yes | `JsonElement` |
 | `ValidateBrowserAdapterAsync(req)` | `POST /v1/browser/adapter/validate` | yes | `JsonElement` |
 | `ExecuteAsync(req)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `CreateJobAsync(req)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
