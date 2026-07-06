@@ -597,6 +597,46 @@
   },
   "components": {
     "schemas": {
+      "AetherPaymentContextCapabilities": {
+        "type": "object",
+        "required": [
+          "payment_header",
+          "payment_hash_header",
+          "accepted_mcp_headers",
+          "require_hash_with_payment",
+          "echo_payment_payload",
+          "echo_payment_hash",
+          "max_payment_header_bytes"
+        ],
+        "properties": {
+          "accepted_mcp_headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "echo_payment_hash": {
+            "type": "boolean"
+          },
+          "echo_payment_payload": {
+            "type": "boolean"
+          },
+          "max_payment_header_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payment_hash_header": {
+            "type": "string"
+          },
+          "payment_header": {
+            "type": "string"
+          },
+          "require_hash_with_payment": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "BrowserAdapterCapabilityIssueRequest": {
         "type": "object",
         "required": [
@@ -2056,9 +2096,14 @@
           "lanes",
           "limits",
           "engines",
-          "browser_sandbox"
+          "browser_sandbox",
+          "aether_payment"
         ],
         "properties": {
+          "aether_payment": {
+            "$ref": "#/components/schemas/AetherPaymentContextCapabilities",
+            "description": "Aether-compatible payment evidence accepted by the MCP boundary. The\npayload header is never echoed; only its companion hash may be surfaced\nin MCP response metadata for downstream audit correlation."
+          },
           "browser_sandbox": {
             "$ref": "#/components/schemas/BrowserProfilesResponse"
           },

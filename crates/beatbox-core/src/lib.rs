@@ -915,6 +915,41 @@ pub struct CapabilitiesResponse {
     pub limits: CapabilityLimits,
     pub engines: BTreeMap<String, String>,
     pub browser_sandbox: BrowserProfilesResponse,
+    /// Aether-compatible payment evidence accepted by the MCP boundary. The
+    /// payload header is never echoed; only its companion hash may be surfaced
+    /// in MCP response metadata for downstream audit correlation.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub aether_payment: AetherPaymentContextCapabilities,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AetherPaymentContextCapabilities {
+    pub payment_header: String,
+    pub payment_hash_header: String,
+    pub accepted_mcp_headers: Vec<String>,
+    pub require_hash_with_payment: bool,
+    pub echo_payment_payload: bool,
+    pub echo_payment_hash: bool,
+    pub max_payment_header_bytes: usize,
+}
+
+impl Default for AetherPaymentContextCapabilities {
+    fn default() -> Self {
+        Self {
+            payment_header: "x-payment".to_string(),
+            payment_hash_header: "x-aether-payment-hash".to_string(),
+            accepted_mcp_headers: vec![
+                "x-payment".to_string(),
+                "x-aether-payment-hash".to_string(),
+            ],
+            require_hash_with_payment: true,
+            echo_payment_payload: false,
+            echo_payment_hash: true,
+            max_payment_header_bytes: 8192,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

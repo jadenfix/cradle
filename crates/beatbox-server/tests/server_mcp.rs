@@ -13,8 +13,8 @@ use beatbox_core::{
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
-    AuthMode, DEFAULT_JOB_WALL_MS, DEFAULT_SYNC_WALL_MS, JobStore, ServerConfig, origin_allowed,
-    router,
+    AETHER_PAYMENT_HASH_HEADER, AETHER_PAYMENT_HEADER, AuthMode, DEFAULT_JOB_WALL_MS,
+    DEFAULT_SYNC_WALL_MS, JobStore, ServerConfig, origin_allowed, router,
 };
 use serde_json::json;
 use tower::ServiceExt;
@@ -3002,6 +3002,70 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
+async fn mcp_options_allows_aether_payment_headers_for_local_browser_origin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/mcp")
+                .header("origin", "http://localhost:3000")
+                .header(
+                    "access-control-request-headers",
+                    format!("content-type, {AETHER_PAYMENT_HEADER}, {AETHER_PAYMENT_HASH_HEADER}"),
+                )
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let headers = response.headers();
+    assert_eq!(
+        headers
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("http://localhost:3000")
+    );
+    let allowed_headers = headers
+        .get("access-control-allow-headers")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(allowed_headers.contains(AETHER_PAYMENT_HEADER));
+    assert!(allowed_headers.contains(AETHER_PAYMENT_HASH_HEADER));
+    let exposed_headers = headers
+        .get("access-control-expose-headers")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    assert!(!exposed_headers.contains(AETHER_PAYMENT_HEADER));
+    assert!(exposed_headers.contains(AETHER_PAYMENT_HASH_HEADER));
+    assert!(
+        headers
+            .get("access-control-allow-methods")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|methods| methods.contains("OPTIONS") && methods.contains("POST"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_options_rejects_nonlocal_origin() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/mcp")
+                .header("origin", "https://evil.example")
+                .body(Body::empty())?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[tokio::test]
 async fn mcp_rejects_missing_content_type() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
@@ -3117,6 +3181,134 @@ async fn mcp_get_capabilities_returns_structured_content() -> Result<(), Box<dyn
     assert_eq!(
         result["structuredContent"]["browser_sandbox"]["runnable_browser_sessions"],
         false
+    );
+    assert_eq!(
+        result["structuredContent"]["aether_payment"]["payment_header"],
+        AETHER_PAYMENT_HEADER
+    );
+    assert_eq!(
+        result["structuredContent"]["aether_payment"]["payment_hash_header"],
+        AETHER_PAYMENT_HASH_HEADER
+    );
+    assert_eq!(
+        result["structuredContent"]["aether_payment"]["require_hash_with_payment"],
+        true
+    );
+    assert_eq!(
+        result["structuredContent"]["aether_payment"]["echo_payment_payload"],
+        false
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_tools_call_accepts_aether_payment_headers_without_echoing_payload()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_capabilities", "arguments": {}}
+    });
+    let payment_payload = "sensitive-aether-payment-payload";
+    let payment_hash = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .header(AETHER_PAYMENT_HEADER, payment_payload)
+                .header(AETHER_PAYMENT_HASH_HEADER, payment_hash)
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let raw = String::from_utf8(body.to_vec())?;
+    assert!(!raw.contains(payment_payload));
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+    assert_eq!(
+        value["result"]["_meta"]["aether_payment"]["payment_hash"],
+        payment_hash
+    );
+    assert_eq!(
+        value["result"]["_meta"]["aether_payment"]["payment_payload_echoed"],
+        false
+    );
+    assert_eq!(value["result"]["isError"], serde_json::json!(false));
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_tools_call_rejects_unhashed_aether_payment_header()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_capabilities", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .header(AETHER_PAYMENT_HEADER, "payment-without-hash")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("must be supplied together"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_tools_call_rejects_duplicate_aether_payment_headers()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_capabilities", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .header(AETHER_PAYMENT_HEADER, "first-payment")
+                .header(AETHER_PAYMENT_HEADER, "second-payment")
+                .header(
+                    AETHER_PAYMENT_HASH_HEADER,
+                    "0x2222222222222222222222222222222222222222222222222222222222222222",
+                )
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("must be supplied at most once"))
     );
     Ok(())
 }
