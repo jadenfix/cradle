@@ -58,6 +58,11 @@ module Beatbox
       request_json(:get, "/v1/browser/adapter/contract", auth: true)
     end
 
+    # POST /v1/browser/adapter/capability. Returns browser adapter capability JSON.
+    def browser_adapter_capability(request)
+      request_json(:post, "/v1/browser/adapter/capability", body: request, auth: true)
+    end
+
     # POST /v1/browser/adapter/register. Returns browser adapter registration JSON.
     def browser_adapter_register(request)
       request_json(:post, "/v1/browser/adapter/register", body: request, auth: true)

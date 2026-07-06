@@ -31,6 +31,7 @@ the same methods:
 | `browser_profiles` / `browserProfiles` | `GET /v1/browser/profiles` | yes |
 | `browser_admit` / `admitBrowserSession` | `POST /v1/browser/admit` | yes |
 | `browser_adapter_contract` / `browserAdapterContract` | `GET /v1/browser/adapter/contract` | yes |
+| `browser_adapter_capability` / `issueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes |
 | `browser_adapter_register` / `registerBrowserAdapter` | `POST /v1/browser/adapter/register` | yes |
 | `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
 | `execute` | `POST /v1/execute` | yes |
@@ -57,9 +58,13 @@ syntax-checks the launch endpoint, but does not resolve or bind that endpoint
 to DNS/proxy/redirect/retry policy. SDKs also expose
 `GET /v1/browser/adapter/contract` for direct discovery of the planned adapter
 contract and conformance profile without submitting a manifest, and
-`POST /v1/browser/adapter/register` for the future registration preflight with
-actor, sensitivity, a same-user capability candidate, and manifest in one
-request. Beatbox does not issue, verify, persist, or echo that capability yet.
+`POST /v1/browser/adapter/capability` for the REST-only same-user capability
+issuer. The issuer requires configured daemon auth, stores only a digest, and
+returns short-lived one-time bearer material that must not be exposed to MCP or
+model transcripts. SDKs also expose `POST /v1/browser/adapter/register` for the
+future registration preflight with actor, sensitivity, an issued same-user
+capability, and manifest in one request. Beatbox consumes a matching live
+capability at most once and never echoes it.
 All adapter registration/validation responses still return
 `endpoint_network_policy_bound: false` and `launchable: false` until a trusted
 adapter registration and launch path exists. Preserve the `conformance_profile`
@@ -68,11 +73,13 @@ expected missing-gap reports, and protocol-specific REST/MCP negative cases
 Tempo adapters should run.
 
 Language-specific method names are idiomatic: Rust and Python expose
-`browser_adapter_contract`, `browser_adapter_register`, and
-`browser_adapter_validate`; Ruby exposes `browser_adapter_contract`,
+`browser_adapter_contract`, `browser_adapter_capability`,
+`browser_adapter_register`, and `browser_adapter_validate`; Ruby exposes
+`browser_adapter_contract`, `browser_adapter_capability`,
 `browser_adapter_register`, and `validate_browser_adapter`; TypeScript, Java,
-PHP, and C# expose `browserAdapterContract`, `registerBrowserAdapter`, and
-`validateBrowserAdapter`; and Go exposes `BrowserAdapterContract`,
+PHP, and C# expose `browserAdapterContract`, `issueBrowserAdapterCapability`,
+`registerBrowserAdapter`, and `validateBrowserAdapter`; and Go exposes
+`BrowserAdapterContract`, `IssueBrowserAdapterCapability`,
 `RegisterBrowserAdapter`, and `ValidateBrowserAdapter`.
 
 ## How the fleet stays correct (the rollout pipeline)

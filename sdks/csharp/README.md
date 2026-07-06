@@ -60,6 +60,7 @@ in an exception message.
 | `BrowserProfilesAsync()` | `GET /v1/browser/profiles` | yes | `JsonElement` |
 | `AdmitBrowserSessionAsync(req)` | `POST /v1/browser/admit` | yes | `JsonElement` |
 | `BrowserAdapterContractAsync()` | `GET /v1/browser/adapter/contract` | yes | `JsonElement` |
+| `IssueBrowserAdapterCapabilityAsync(req)` | `POST /v1/browser/adapter/capability` | yes | `JsonElement` |
 | `RegisterBrowserAdapterAsync(req)` | `POST /v1/browser/adapter/register` | yes | `JsonElement` |
 | `ValidateBrowserAdapterAsync(req)` | `POST /v1/browser/adapter/validate` | yes | `JsonElement` |
 | `ExecuteAsync(req)` | `POST /v1/execute` | yes | `ExecutionResult` |

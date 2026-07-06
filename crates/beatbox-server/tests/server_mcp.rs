@@ -2,9 +2,10 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdapterConformanceExpectation, BrowserAdapterContractResponse,
-    BrowserAdapterManifestResponse, BrowserAdapterRegistrationResponse, BrowserAdmissionDecision,
-    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BrowserAdapterCapabilityIssueResponse, BrowserAdapterConformanceExpectation,
+    BrowserAdapterContractResponse, BrowserAdapterManifestResponse,
+    BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
+    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
     BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
     ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
@@ -1388,6 +1389,366 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
 }
 
 #[tokio::test]
+async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_bearer_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1",
+        "ttl_seconds": 60
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert!(
+        error
+            .error
+            .message
+            .contains("requires daemon authentication")
+    );
+
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .body(Body::from("{not json"))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    assert!(
+        issued
+            .same_user_capability
+            .starts_with("bbx-browser-adapter-cap-v1.")
+    );
+    assert!(issued.same_user_capability.len() <= 256);
+    assert!(!issued.same_user_capability.chars().any(char::is_whitespace));
+    assert_eq!(issued.ttl_seconds, 60);
+    assert_eq!(issued.actor, BrowserSessionActor::Agent);
+    assert_eq!(issued.sensitivity, BrowserSensitivity::Sensitive);
+    assert_eq!(issued.adapter_id.as_deref(), Some("tempo-os-jail-v1"));
+    assert_eq!(issued.registration_endpoint, "/v1/browser/adapter/register");
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_capability_binds_registration_once_without_trusting_adapter()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let mut registration = complete_adapter_registration();
+    registration["same_user_capability"] = json!(issued.same_user_capability);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/register")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(registration.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let raw = String::from_utf8(body.to_vec())?;
+    assert!(!raw.contains("bbx-browser-adapter-cap-v1."));
+    let bound: BrowserAdapterRegistrationResponse = serde_json::from_str(&raw)?;
+    assert!(bound.same_user_capability_bound);
+    assert!(!bound.registered);
+    assert!(!bound.launchable);
+    assert!(!bound.trusted_for_sensitive_work);
+    assert!(!bound.endpoint_network_policy_bound);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/register")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(registration.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let replay: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
+    assert!(!replay.same_user_capability_bound);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let issue = json!({
+        "actor": "human",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    let mut registration = complete_adapter_registration();
+    registration["same_user_capability"] = json!(issued.same_user_capability);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/register")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(registration.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let mismatch: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
+    assert!(!mismatch.same_user_capability_bound);
+
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "ttl_seconds": 1
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let mut registration = complete_adapter_registration();
+    registration["same_user_capability"] = json!(issued.same_user_capability);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/register")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(registration.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let expired: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
+    assert!(!expired.same_user_capability_bound);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_capability_unbound_adapter_id_matches_any_manifest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let issue = json!({"actor": "agent", "sensitivity": "sensitive"});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    assert_eq!(issued.adapter_id, None);
+    let mut registration = complete_adapter_registration();
+    registration["same_user_capability"] = json!(issued.same_user_capability);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/register")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(registration.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let registration: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
+    assert!(registration.same_user_capability_bound);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_capability_quota_limits_live_tokens()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    for index in 0..beatbox_server::MAX_BROWSER_ADAPTER_CAPABILITIES {
+        let issue = json!({
+            "actor": "agent",
+            "sensitivity": "sensitive",
+            "adapter_id": format!("tempo-os-jail-v1-{index}")
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/adapter/capability")
+                    .header("content-type", "application/json")
+                    .header("x-beatbox-api-key", "secret")
+                    .body(Body::from(issue.to_string()))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-over-quota"
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "browser_adapter_capability_quota");
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_capability_concurrent_register_binds_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    let mut registration = complete_adapter_registration();
+    registration["same_user_capability"] = json!(issued.same_user_capability);
+    let request_a = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/browser/adapter/register")
+        .header("content-type", "application/json")
+        .header("x-beatbox-api-key", "secret")
+        .body(Body::from(registration.to_string()))?;
+    let request_b = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/browser/adapter/register")
+        .header("content-type", "application/json")
+        .header("x-beatbox-api-key", "secret")
+        .body(Body::from(registration.to_string()))?;
+    let (response_a, response_b) = tokio::join!(
+        app.clone().oneshot(request_a),
+        app.clone().oneshot(request_b)
+    );
+    let response_a = response_a?;
+    let response_b = response_b?;
+    assert_eq!(response_a.status(), StatusCode::OK);
+    assert_eq!(response_b.status(), StatusCode::OK);
+    let body_a = to_bytes(response_a.into_body(), usize::MAX).await?;
+    let body_b = to_bytes(response_b.into_body(), usize::MAX).await?;
+    let registration_a: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body_a)?;
+    let registration_b: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body_b)?;
+    let bound_count = usize::from(registration_a.same_user_capability_bound)
+        + usize::from(registration_b.same_user_capability_bound);
+    assert_eq!(bound_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_registration_is_authenticated_fail_closed_and_non_echoing()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -1884,6 +2245,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                 && paths.contains_key("/v1/browser/profiles")
                 && paths.contains_key("/v1/browser/admit")
                 && paths.contains_key("/v1/browser/adapter/contract")
+                && paths.contains_key("/v1/browser/adapter/capability")
                 && paths.contains_key("/v1/browser/adapter/register")
                 && paths.contains_key("/v1/browser/adapter/validate"))
     );
@@ -1904,6 +2266,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserProfilesResponse",
         "BrowserSandboxProfile",
         "BrowserIntegrationContract",
+        "BrowserAdapterCapabilityIssueRequest",
+        "BrowserAdapterCapabilityIssueResponse",
         "BrowserAdapterContract",
         "BrowserAdapterContractResponse",
         "BrowserAdapterConformanceCase",
@@ -1964,6 +2328,25 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required.iter().any(|field| field == "launchable")
             ),
         "adapter contract response should require discovery metadata"
+    );
+    assert!(
+        schemas["BrowserAdapterCapabilityIssueRequest"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "actor")
+                && required.iter().any(|field| field == "sensitivity")
+                && !required.iter().any(|field| field == "adapter_id")
+                && !required.iter().any(|field| field == "ttl_seconds")),
+        "adapter capability request should require actor/sensitivity but keep adapter_id and ttl_seconds optional"
+    );
+    assert!(
+        schemas["BrowserAdapterCapabilityIssueResponse"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "same_user_capability")
+                    && required.iter().any(|field| field == "expires_at")
+                    && required.iter().any(|field| field == "ttl_seconds")
+            ),
+        "adapter capability response should require secret and expiry metadata"
     );
     assert_eq!(
         schemas["BrowserAdapterRegistrationRequest"]["properties"]["same_user_capability"]["maxLength"],
@@ -2087,6 +2470,12 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert!(tools.to_string().contains("get_browser_adapter_contract"));
     assert!(tools.to_string().contains("register_browser_adapter"));
     assert!(tools.to_string().contains("validate_browser_adapter"));
+    assert!(
+        !tools
+            .to_string()
+            .contains("issue_browser_adapter_capability")
+    );
+    assert!(!tools.to_string().contains("browser_adapter_capability"));
     let contract_tool = tools
         .as_array()
         .and_then(|tools| {

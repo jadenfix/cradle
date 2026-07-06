@@ -95,6 +95,18 @@ impl Client {
         decode_response(response).await
     }
 
+    pub async fn browser_adapter_capability(
+        &self,
+        request: &BrowserAdapterCapabilityIssueRequest,
+    ) -> Result<BrowserAdapterCapabilityIssueResponse, ClientError> {
+        let request_builder = self
+            .http
+            .post(format!("{}/v1/browser/adapter/capability", self.base_url))
+            .json(request);
+        let response = self.authorize(request_builder).send().await?;
+        decode_response(response).await
+    }
+
     pub async fn browser_adapter_register(
         &self,
         request: &BrowserAdapterRegistrationRequest,
@@ -458,6 +470,60 @@ mod tests {
             contract.conformance_profile.profile_version,
             "browser-adapter-conformance-v1"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_adapter_capability_posts_authenticated_json()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut buffer = [0_u8; 4096];
+            let bytes = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+            request_tx
+                .send(request)
+                .map_err(|_| std::io::Error::other("request receiver dropped"))?;
+            let body = r#"{"same_user_capability":"bbx-browser-adapter-cap-v1.test.fixture","expires_at":"2026-07-06T20:00:00Z","ttl_seconds":60,"actor":"agent","sensitivity":"sensitive","adapter_id":"tempo-os-jail-v1","registration_endpoint":"/v1/browser/adapter/register","notes":["keep it out of logs"]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}")).with_api_key("secret");
+        let issued = client
+            .browser_adapter_capability(&BrowserAdapterCapabilityIssueRequest {
+                actor: BrowserSessionActor::Agent,
+                sensitivity: BrowserSensitivity::Sensitive,
+                adapter_id: Some("tempo-os-jail-v1".to_string()),
+                ttl_seconds: Some(60),
+            })
+            .await?;
+
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("adapter capability test server panicked".into()),
+        }
+        let request = request_rx.recv_timeout(Duration::from_secs(1))?;
+        assert!(request.starts_with("POST /v1/browser/adapter/capability "));
+        assert!(request.contains("x-beatbox-api-key: secret"));
+        assert!(request.contains("content-type: application/json"));
+        assert!(request.contains(r#""adapter_id":"tempo-os-jail-v1""#));
+        assert!(request.contains(r#""ttl_seconds":60"#));
+        assert_eq!(
+            issued.same_user_capability,
+            "bbx-browser-adapter-cap-v1.test.fixture"
+        );
+        assert_eq!(issued.ttl_seconds, 60);
+        assert_eq!(issued.adapter_id.as_deref(), Some("tempo-os-jail-v1"));
         Ok(())
     }
 

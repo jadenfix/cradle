@@ -88,6 +88,12 @@ public final class BeatboxClient {
         return sendForJson("GET", uri("/v1/browser/adapter/contract"), true, null);
     }
 
+    /** {@code POST /v1/browser/adapter/capability}. Returns browser adapter capability JSON. */
+    public JsonNode issueBrowserAdapterCapability(JsonNode request) {
+        Objects.requireNonNull(request, "request");
+        return sendForJson("POST", uri("/v1/browser/adapter/capability"), true, encode(request));
+    }
+
     /** {@code POST /v1/browser/adapter/register}. Returns browser adapter registration JSON. */
     public JsonNode registerBrowserAdapter(JsonNode request) {
         Objects.requireNonNull(request, "request");

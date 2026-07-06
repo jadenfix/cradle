@@ -383,13 +383,47 @@ pub struct BrowserAdapterContractResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+pub struct BrowserAdapterCapabilityIssueRequest {
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    /// Optional adapter identifier to bind the capability to. When present, the
+    /// registration preflight must use the same manifest adapter_id.
+    #[serde(default)]
+    #[schema(min_length = 1, max_length = 128)]
+    pub adapter_id: Option<String>,
+    /// Optional requested lifetime in seconds. When present, it must be between
+    /// 1 and 300 seconds.
+    #[serde(default)]
+    #[schema(minimum = 1, maximum = 300)]
+    pub ttl_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterCapabilityIssueResponse {
+    /// Secret one-time capability. Treat as bearer material; Beatbox stores only
+    /// a digest and never echoes it from registration responses.
+    #[schema(min_length = 1, max_length = 256)]
+    pub same_user_capability: String,
+    pub expires_at: String,
+    #[schema(minimum = 1, maximum = 300)]
+    pub ttl_seconds: u64,
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    #[schema(required = true)]
+    pub adapter_id: Option<String>,
+    pub registration_endpoint: String,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BrowserAdapterRegistrationRequest {
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
-    /// Caller-supplied same-user capability candidate for the future local
-    /// user/session that would own this adapter. This daemon does not issue or
-    /// verify it yet, accepts it for fail-closed preflight only, and never
-    /// echoes it in responses.
+    /// Caller-supplied same-user capability for the future local user/session
+    /// that would own this adapter. Beatbox can bind only a live one-time
+    /// capability issued by its REST control plane, consumes it at most once,
+    /// and never echoes it in responses.
     #[schema(min_length = 1, max_length = 256)]
     pub same_user_capability: String,
     pub manifest: BrowserAdapterManifestRequest,

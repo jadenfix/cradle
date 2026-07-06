@@ -124,6 +124,14 @@ func (c *Client) BrowserAdapterContract(ctx context.Context) (json.RawMessage, e
 	return out, err
 }
 
+// IssueBrowserAdapterCapability issues a short-lived one-time same-user
+// capability for browser adapter registration (POST /v1/browser/adapter/capability).
+func (c *Client) IssueBrowserAdapterCapability(ctx context.Context, req any) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodPost, c.baseURL+"/v1/browser/adapter/capability", true, req, &out)
+	return out, err
+}
+
 // RegisterBrowserAdapter submits a fail-closed browser adapter registration
 // preflight without trusting or launching it (POST /v1/browser/adapter/register).
 func (c *Client) RegisterBrowserAdapter(ctx context.Context, req any) (json.RawMessage, error) {

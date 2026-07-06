@@ -393,6 +393,57 @@ func TestBrowserAdapterContractMockServer(t *testing.T) {
 	}
 }
 
+func TestIssueBrowserAdapterCapabilityMockServer(t *testing.T) {
+	var gotMethod, gotPath, gotKey, gotCT string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get(apiKeyHeader)
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{
+			"same_user_capability":"bbx-browser-adapter-cap-v1.fixture.not-a-secret",
+			"expires_at":"2026-07-06T20:00:00Z",
+			"ttl_seconds":60,
+			"actor":"agent",
+			"sensitivity":"sensitive",
+			"adapter_id":"tempo-os-jail-v1",
+			"registration_endpoint":"/v1/browser/adapter/register",
+			"notes":["keep it out of logs"]
+		}`)
+	}))
+	defer srv.Close()
+
+	req := map[string]any{
+		"actor":       "agent",
+		"sensitivity": "sensitive",
+		"adapter_id":  "tempo-os-jail-v1",
+		"ttl_seconds": float64(60),
+	}
+	c := New(srv.URL, WithAPIKey("secret-key"))
+	raw, err := c.IssueBrowserAdapterCapability(context.Background(), req)
+	if err != nil {
+		t.Fatalf("IssueBrowserAdapterCapability: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/browser/adapter/capability" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotKey != "secret-key" || gotCT != "application/json" {
+		t.Fatalf("headers key=%q content-type=%q", gotKey, gotCT)
+	}
+	if gotBody["actor"] != "agent" || gotBody["adapter_id"] != "tempo-os-jail-v1" {
+		t.Fatalf("server received unexpected capability body: %+v", gotBody)
+	}
+	if !strings.Contains(string(raw), `"same_user_capability"`) || !strings.Contains(string(raw), `"ttl_seconds":60`) {
+		t.Fatalf("capability response not surfaced: %s", raw)
+	}
+}
+
 func TestRegisterBrowserAdapterMockServer(t *testing.T) {
 	var gotMethod, gotPath, gotKey, gotCT string
 	var gotBody map[string]any

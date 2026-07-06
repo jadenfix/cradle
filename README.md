@@ -77,14 +77,19 @@ requiring a submitted manifest. This is authenticated compatibility metadata
 for Tempo and adapter authors; it is not registration, trust, or permission to
 launch, and the response keeps `launchable`, `trusted_for_sensitive_work`, and
 `endpoint_network_policy_bound` set to `false`.
+`POST /v1/browser/adapter/capability` is the authenticated REST-only issuer for
+short-lived one-time same-user adapter capabilities. It requires daemon auth to
+be configured, stores only a digest in memory, never appears as an MCP tool, and
+returns bearer material that callers must keep out of model-visible transcripts.
 `POST /v1/browser/adapter/register` and MCP `register_browser_adapter` define
 the future Tempo adapter registration preflight. Callers submit actor,
-sensitivity, a same-user capability candidate, and the adapter manifest in one
-request. Beatbox validates the shape and manifest contract, never echoes the
-capability candidate, and still returns `registered: false`,
-`same_user_capability_bound: false`, `endpoint_network_policy_bound: false`,
-and `launchable: false` until same-user capability issuance, endpoint binding,
-storage/teardown verification, and browser launch paths are implemented.
+sensitivity, a same-user capability, and the adapter manifest in one request.
+Beatbox validates the shape and manifest contract, consumes a live matching
+issued capability at most once, never echoes the capability, and still returns
+`registered: false`, `endpoint_network_policy_bound: false`, and `launchable:
+false` until endpoint binding, storage/teardown verification, and browser launch
+paths are implemented. A bound capability only flips
+`same_user_capability_bound`; it is not registration or launch trust.
 `POST /v1/browser/adapter/validate` and MCP `validate_browser_adapter` let
 Tempo validate a proposed adapter manifest against the same contract. Validation
 reports missing levels, controls, guard fields, and completion proofs, but it

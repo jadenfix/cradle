@@ -37,6 +37,7 @@ A client is constructed with:
 | `browser_profiles()` | `GET /v1/browser/profiles` | yes | raw JSON |
 | `browser_admit(request)` | `POST /v1/browser/admit` | yes | raw JSON |
 | `browser_adapter_contract` / `browserAdapterContract` / `BrowserAdapterContract` | `GET /v1/browser/adapter/contract` | yes | raw JSON |
+| `browser_adapter_capability` / `issueBrowserAdapterCapability` / `IssueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes | raw JSON |
 | `browser_adapter_register` / `registerBrowserAdapter` / `RegisterBrowserAdapter` | `POST /v1/browser/adapter/register` | yes | raw JSON |
 | `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` / `ValidateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
@@ -81,7 +82,8 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `intent_warnings`, plus the browser admission `guard_plan` and
 `adapter_handoff`; raw JSON return is acceptable until each language adds typed
 convenience models), `BrowserAdapterManifestRequest`,
-`BrowserAdapterContractResponse`, `BrowserAdapterRegistrationRequest`,
+`BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
+`BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,
 `BrowserAdapterRegistrationResponse`, `BrowserAdapterRegistrationDecision`,
 `BrowserAdapterManifestResponse` (including `conformance_profile`),
 `BrowserAdapterConformanceProfile`, `BrowserAdapterConformanceCase`,

@@ -87,6 +87,7 @@ All methods are context-first.
 | `BrowserProfiles(ctx)` | `GET /v1/browser/profiles` | yes | `json.RawMessage` |
 | `AdmitBrowserSession(ctx, req)` | `POST /v1/browser/admit` | yes | `json.RawMessage` |
 | `BrowserAdapterContract(ctx)` | `GET /v1/browser/adapter/contract` | yes | `json.RawMessage` |
+| `IssueBrowserAdapterCapability(ctx, req)` | `POST /v1/browser/adapter/capability` | yes | `json.RawMessage` |
 | `RegisterBrowserAdapter(ctx, req)` | `POST /v1/browser/adapter/register` | yes | `json.RawMessage` |
 | `ValidateBrowserAdapter(ctx, req)` | `POST /v1/browser/adapter/validate` | yes | `json.RawMessage` |
 | `Execute(ctx, req)` | `POST /v1/execute` | yes | `*ExecutionResult` |

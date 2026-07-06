@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Path as AxumPath, State};
@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
+    BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
     BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
     BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
     BrowserAdapterHandoff, BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
@@ -29,9 +30,11 @@ use beatbox_core::{
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
+use chrono::{Duration as ChronoDuration, Utc};
 pub use jobs::JobStore;
 use jobs::{CancelOutcome, JobStoreError};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::{Host, Url};
 use utoipa::OpenApi;
@@ -45,6 +48,8 @@ pub const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 pub const DEFAULT_MAX_FUEL: u64 = 100_000_000;
 pub const DEFAULT_MAX_CONCURRENT_SYNC: usize = 8;
 pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
+pub const BROWSER_ADAPTER_CAPABILITY_TTL_SECONDS: u64 = 5 * 60;
+pub const MAX_BROWSER_ADAPTER_CAPABILITIES: usize = 128;
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -179,6 +184,16 @@ struct AppState {
     // a running execution instead of only flipping the DB row. Entries are added
     // in spawn_job and removed when the worker finishes.
     job_cancels: Arc<Mutex<HashMap<String, CancelFlag>>>,
+    browser_adapter_capabilities: Arc<Mutex<HashMap<[u8; 32], BrowserAdapterCapabilityRecord>>>,
+}
+
+#[derive(Clone, Debug)]
+struct BrowserAdapterCapabilityRecord {
+    actor: BrowserSessionActor,
+    sensitivity: BrowserSensitivity,
+    adapter_id: Option<String>,
+    expires_at: Instant,
+    used: bool,
 }
 
 pub fn router(config: ServerConfig) -> Router {
@@ -190,6 +205,7 @@ pub fn router(config: ServerConfig) -> Router {
         sync_permits,
         job_permits,
         job_cancels: Arc::new(Mutex::new(HashMap::new())),
+        browser_adapter_capabilities: Arc::new(Mutex::new(HashMap::new())),
     };
     Router::new()
         .route("/v1/health", get(health))
@@ -200,6 +216,10 @@ pub fn router(config: ServerConfig) -> Router {
         .route(
             "/v1/browser/adapter/contract",
             get(browser_adapter_contract_get),
+        )
+        .route(
+            "/v1/browser/adapter/capability",
+            post(browser_adapter_capability_issue),
         )
         .route(
             "/v1/browser/adapter/register",
@@ -274,7 +294,7 @@ async fn browser_adapter_register(
     validate_browser_adapter_registration_request(&request).map_err(|message| {
         ApiError::bad_request("invalid_browser_adapter_registration", message)
     })?;
-    Ok(Json(browser_adapter_registration_response(request)))
+    Ok(Json(browser_adapter_registration_response(&state, request)))
 }
 
 async fn browser_adapter_contract_get(
@@ -283,6 +303,20 @@ async fn browser_adapter_contract_get(
 ) -> Result<Json<BrowserAdapterContractResponse>, ApiError> {
     state.authorize(&headers)?;
     Ok(Json(browser_adapter_contract_response()))
+}
+
+async fn browser_adapter_capability_issue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+) -> Result<Json<BrowserAdapterCapabilityIssueResponse>, ApiError> {
+    state.authorize_required(&headers, "browser adapter capability issuance")?;
+    let request = parse_json_body(&state, request).await?;
+    validate_browser_adapter_capability_issue_request(&request)
+        .map_err(|message| ApiError::bad_request("invalid_browser_adapter_capability", message))?;
+    Ok(Json(browser_adapter_capability_issue_response(
+        &state, request,
+    )?))
 }
 
 async fn execute(
@@ -530,6 +564,15 @@ impl AppState {
                     Err(ApiError::unauthorized("missing or invalid API key"))
                 }
             }
+        }
+    }
+
+    fn authorize_required(&self, headers: &HeaderMap, surface: &str) -> Result<(), ApiError> {
+        match &self.config.auth {
+            AuthMode::None => Err(ApiError::unauthorized(format!(
+                "{surface} requires daemon authentication to be configured"
+            ))),
+            AuthMode::Required { .. } => self.authorize(headers),
         }
     }
 }
@@ -1107,6 +1150,103 @@ fn browser_adapter_contract_response() -> BrowserAdapterContractResponse {
     }
 }
 
+fn browser_adapter_capability_issue_response(
+    state: &AppState,
+    request: BrowserAdapterCapabilityIssueRequest,
+) -> Result<BrowserAdapterCapabilityIssueResponse, ApiError> {
+    let ttl_seconds = request
+        .ttl_seconds
+        .unwrap_or(BROWSER_ADAPTER_CAPABILITY_TTL_SECONDS);
+    let token = format!(
+        "bbx-browser-adapter-cap-v1.{}.{}",
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4()
+    );
+    let digest = browser_adapter_capability_digest(&token);
+    let now = Instant::now();
+    let expires_at = now + Duration::from_secs(ttl_seconds);
+    {
+        let mut capabilities = match state.browser_adapter_capabilities.lock() {
+            Ok(capabilities) => capabilities,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        capabilities.retain(|_, record| !record.used && record.expires_at > now);
+        if capabilities.len() >= MAX_BROWSER_ADAPTER_CAPABILITIES {
+            return Err(ApiError::too_many(
+                "browser_adapter_capability_quota",
+                format!(
+                    "maximum live browser adapter capabilities ({MAX_BROWSER_ADAPTER_CAPABILITIES}) are already issued"
+                ),
+            ));
+        }
+        capabilities.insert(
+            digest,
+            BrowserAdapterCapabilityRecord {
+                actor: request.actor.clone(),
+                sensitivity: request.sensitivity.clone(),
+                adapter_id: request.adapter_id.clone(),
+                expires_at,
+                used: false,
+            },
+        );
+    }
+    Ok(BrowserAdapterCapabilityIssueResponse {
+        same_user_capability: token,
+        expires_at: (Utc::now() + ChronoDuration::seconds(ttl_seconds as i64)).to_rfc3339(),
+        ttl_seconds,
+        actor: request.actor,
+        sensitivity: request.sensitivity,
+        adapter_id: request.adapter_id,
+        registration_endpoint: "/v1/browser/adapter/register".to_string(),
+        notes: vec![
+            "same_user_capability is bearer material; keep it out of logs and model-visible transcripts"
+                .to_string(),
+            "beatbox stores only a digest and consumes the capability on the first matching registration preflight"
+                .to_string(),
+            "a bound capability still does not make an adapter registered, trusted, or launchable"
+                .to_string(),
+        ],
+    })
+}
+
+fn browser_adapter_capability_digest(token: &str) -> [u8; 32] {
+    let digest = Sha256::digest(token.as_bytes());
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
+fn browser_adapter_consume_capability(
+    state: &AppState,
+    request: &BrowserAdapterRegistrationRequest,
+) -> bool {
+    let digest = browser_adapter_capability_digest(&request.same_user_capability);
+    let now = Instant::now();
+    let mut capabilities = match state.browser_adapter_capabilities.lock() {
+        Ok(capabilities) => capabilities,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    capabilities.retain(|_, record| !record.used && record.expires_at > now);
+    let Some(record) = capabilities.get_mut(&digest) else {
+        return false;
+    };
+    let adapter_matches = match &record.adapter_id {
+        Some(adapter_id) => adapter_id == &request.manifest.adapter_id,
+        None => true,
+    };
+    if record.actor == request.actor
+        && record.sensitivity == request.sensitivity
+        && adapter_matches
+        && !record.used
+        && record.expires_at > now
+    {
+        record.used = true;
+        true
+    } else {
+        false
+    }
+}
+
 fn browser_adapter_manifest_response(
     request: BrowserAdapterManifestRequest,
 ) -> BrowserAdapterManifestResponse {
@@ -1223,12 +1363,47 @@ fn browser_adapter_manifest_response(
 }
 
 fn browser_adapter_registration_response(
+    state: &AppState,
     request: BrowserAdapterRegistrationRequest,
 ) -> BrowserAdapterRegistrationResponse {
-    let actor = request.actor;
-    let sensitivity = request.sensitivity;
+    let same_user_capability_bound = browser_adapter_consume_capability(state, &request);
+    let actor = request.actor.clone();
+    let sensitivity = request.sensitivity.clone();
     let manifest_validation = browser_adapter_manifest_response(request.manifest);
     let adapter_id = manifest_validation.adapter_id.clone();
+    let mut reasons = vec![
+        "browser adapter registration is a fail-closed preflight; beatbox does not persist or trust adapters yet"
+            .to_string(),
+        "launch endpoint binding to DNS, proxy, redirect, retry, and request-builder policy is not implemented"
+            .to_string(),
+        "browser launch, teardown proof verification, and storage sealing are not implemented"
+            .to_string(),
+    ];
+    if same_user_capability_bound {
+        reasons.push(
+            "same-user capability matched this registration preflight, but adapter persistence and launch trust remain disabled"
+                .to_string(),
+        );
+    } else {
+        reasons.push(
+            "same-user capability was not issued by this daemon, was already used, expired, or did not match actor, sensitivity, and adapter_id"
+                .to_string(),
+        );
+    }
+    let mut required_next_steps = vec![
+        "bind adapter registration to the concrete endpoint used after DNS, proxy, redirects, and retries"
+            .to_string(),
+        "store adapter registrations only after conformance and endpoint policy checks pass"
+            .to_string(),
+        "verify teardown and artifact proofs on the production browser completion path".to_string(),
+    ];
+    if !same_user_capability_bound {
+        required_next_steps.insert(
+            0,
+            "issue and submit a live same-user capability from the local authenticated control plane"
+                .to_string(),
+        );
+    }
     BrowserAdapterRegistrationResponse {
         decision: BrowserAdapterRegistrationDecision::Rejected,
         adapter_id,
@@ -1238,28 +1413,10 @@ fn browser_adapter_registration_response(
         launchable: false,
         trusted_for_sensitive_work: false,
         endpoint_network_policy_bound: false,
-        same_user_capability_bound: false,
+        same_user_capability_bound,
         manifest_validation,
-        reasons: vec![
-            "browser adapter registration is a fail-closed preflight; beatbox does not persist or trust adapters yet"
-                .to_string(),
-            "same-user capability issuance and binding are not implemented on the production control path"
-                .to_string(),
-            "launch endpoint binding to DNS, proxy, redirect, retry, and request-builder policy is not implemented"
-                .to_string(),
-            "browser launch, teardown proof verification, and storage sealing are not implemented"
-                .to_string(),
-        ],
-        required_next_steps: vec![
-            "issue an unguessable same-user capability from the local authenticated control plane"
-                .to_string(),
-            "bind adapter registration to the concrete endpoint used after DNS, proxy, redirects, and retries"
-                .to_string(),
-            "store adapter registrations only after conformance and endpoint policy checks pass"
-                .to_string(),
-            "verify teardown and artifact proofs on the production browser completion path"
-                .to_string(),
-        ],
+        reasons,
+        required_next_steps,
     }
 }
 
@@ -1780,6 +1937,33 @@ fn validate_browser_adapter_registration_request(
     validate_browser_adapter_manifest_request(&request.manifest)
 }
 
+fn validate_browser_adapter_capability_issue_request(
+    request: &BrowserAdapterCapabilityIssueRequest,
+) -> Result<(), String> {
+    const MAX_ADAPTER_ID_LEN: usize = 128;
+    if let Some(adapter_id) = &request.adapter_id {
+        if adapter_id.is_empty() || adapter_id.trim() != adapter_id {
+            return Err(
+                "browser adapter capability adapter_id must be non-empty without surrounding whitespace"
+                    .to_string(),
+            );
+        }
+        if adapter_id.len() > MAX_ADAPTER_ID_LEN {
+            return Err(format!(
+                "browser adapter capability adapter_id must be at most {MAX_ADAPTER_ID_LEN} bytes"
+            ));
+        }
+    }
+    if let Some(ttl_seconds) = request.ttl_seconds
+        && (ttl_seconds == 0 || ttl_seconds > BROWSER_ADAPTER_CAPABILITY_TTL_SECONDS)
+    {
+        return Err(format!(
+            "browser adapter capability ttl_seconds must be between 1 and {BROWSER_ADAPTER_CAPABILITY_TTL_SECONDS}"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_non_empty_string_list(values: &[String], field: &str) -> Result<(), String> {
     for value in values {
         if value.is_empty() || value.trim() != value {
@@ -2020,6 +2204,7 @@ pub fn openapi_spec_json() -> String {
         openapi_paths::browser_profiles,
         openapi_paths::browser_admit,
         openapi_paths::browser_adapter_contract_get,
+        openapi_paths::browser_adapter_capability_issue,
         openapi_paths::browser_adapter_register,
         openapi_paths::browser_adapter_validate,
         openapi_paths::execute,
@@ -2053,6 +2238,8 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::JobStatus,
         beatbox_core::BrowserProfilesResponse,
         beatbox_core::BrowserIntegrationContract,
+        beatbox_core::BrowserAdapterCapabilityIssueRequest,
+        beatbox_core::BrowserAdapterCapabilityIssueResponse,
         beatbox_core::BrowserAdapterContract,
         beatbox_core::BrowserAdapterContractResponse,
         beatbox_core::BrowserAdapterConformanceCase,
@@ -2094,6 +2281,7 @@ struct ApiDoc;
 #[allow(dead_code)]
 mod openapi_paths {
     use beatbox_core::{
+        BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
         BrowserAdapterContractResponse, BrowserAdapterManifestRequest,
         BrowserAdapterManifestResponse, BrowserAdapterRegistrationRequest,
         BrowserAdapterRegistrationResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
@@ -2154,6 +2342,20 @@ mod openapi_paths {
         )
     )]
     pub fn browser_adapter_contract_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/browser/adapter/capability",
+        tag = "v1",
+        request_body = BrowserAdapterCapabilityIssueRequest,
+        responses(
+            (status = 200, description = "Issue a short-lived one-time browser adapter same-user capability", body = BrowserAdapterCapabilityIssueResponse),
+            (status = 400, description = "Invalid capability issuance request", body = ErrorResponse),
+            (status = 401, description = "Missing auth or daemon auth is not configured", body = ErrorResponse),
+            (status = 429, description = "Live capability quota exhausted", body = ErrorResponse)
+        )
+    )]
+    pub fn browser_adapter_capability_issue() {}
 
     #[utoipa::path(
         post,
@@ -2463,7 +2665,7 @@ fn mcp_tools() -> Value {
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 256,
-                        "description": "Opaque same-user capability candidate supplied by the caller. Beatbox does not issue or verify it yet; it is required for fail-closed preflight and is never echoed."
+                        "description": "Opaque same-user capability supplied by the caller. Beatbox binds only a live one-time capability issued by the REST control plane, consumes it at most once, and never echoes it."
                     },
                     "manifest": {
                         "type": "object",
@@ -2765,7 +2967,7 @@ async fn mcp_tools_call(
         }
         "register_browser_adapter" => {
             let request = mcp_browser_adapter_registration_request(&arguments)?;
-            let registration = browser_adapter_registration_response(request);
+            let registration = browser_adapter_registration_response(state, request);
             let registration = serde_json::to_value(registration).map_err(|error| {
                 (
                     -32603,

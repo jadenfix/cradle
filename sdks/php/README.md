@@ -93,6 +93,7 @@ key can't leak cross-origin.
 | `browserProfiles()` | `GET /v1/browser/profiles` | `array` (raw JSON) |
 | `browserAdmit($request)` | `POST /v1/browser/admit` | `array` (raw JSON) |
 | `browserAdapterContract()` | `GET /v1/browser/adapter/contract` | `array` (raw JSON) |
+| `issueBrowserAdapterCapability($request)` | `POST /v1/browser/adapter/capability` | `array` (raw JSON) |
 | `registerBrowserAdapter($request)` | `POST /v1/browser/adapter/register` | `array` (raw JSON) |
 | `validateBrowserAdapter($request)` | `POST /v1/browser/adapter/validate` | `array` (raw JSON) |
 | `execute($request)` | `POST /v1/execute` | `ExecutionResult` |

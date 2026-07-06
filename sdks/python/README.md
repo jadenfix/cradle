@@ -68,6 +68,7 @@ client = Client("http://127.0.0.1:7300", api_key="sk-...", timeout=65.0)
 | `client.browser_profiles()` | `GET /v1/browser/profiles` | yes | `dict` |
 | `client.browser_admit(request)` | `POST /v1/browser/admit` | yes | `dict` |
 | `client.browser_adapter_contract()` | `GET /v1/browser/adapter/contract` | yes | `dict` |
+| `client.browser_adapter_capability(request)` | `POST /v1/browser/adapter/capability` | yes | `dict` |
 | `client.browser_adapter_register(request)` | `POST /v1/browser/adapter/register` | yes | `dict` |
 | `client.browser_adapter_validate(request)` | `POST /v1/browser/adapter/validate` | yes | `dict` |
 | `client.execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |

@@ -91,6 +91,17 @@ final class Client
     }
 
     /**
+     * POST /v1/browser/adapter/capability. Returns browser adapter capability JSON.
+     *
+     * @param array<string,mixed> $request
+     * @return array<string,mixed>
+     */
+    public function issueBrowserAdapterCapability(array $request): array
+    {
+        return $this->requestJson('POST', '/v1/browser/adapter/capability', $request, true);
+    }
+
+    /**
      * POST /v1/browser/adapter/register. Returns browser adapter registration JSON.
      *
      * @param array<string,mixed> $request

@@ -29,6 +29,66 @@
         }
       }
     },
+    "/v1/browser/adapter/capability": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_adapter_capability_issue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserAdapterCapabilityIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Issue a short-lived one-time browser adapter same-user capability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAdapterCapabilityIssueResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid capability issuance request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing auth or daemon auth is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Live capability quota exhausted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/browser/adapter/contract": {
       "get": {
         "tags": [
@@ -487,6 +547,92 @@
   },
   "components": {
     "schemas": {
+      "BrowserAdapterCapabilityIssueRequest": {
+        "type": "object",
+        "required": [
+          "actor",
+          "sensitivity"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional adapter identifier to bind the capability to. When present, the\nregistration preflight must use the same manifest adapter_id.",
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Optional requested lifetime in seconds. When present, it must be between\n1 and 300 seconds.",
+            "maximum": 300,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserAdapterCapabilityIssueResponse": {
+        "type": "object",
+        "required": [
+          "same_user_capability",
+          "expires_at",
+          "ttl_seconds",
+          "actor",
+          "sensitivity",
+          "adapter_id",
+          "registration_endpoint",
+          "notes"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "registration_endpoint": {
+            "type": "string"
+          },
+          "same_user_capability": {
+            "type": "string",
+            "description": "Secret one-time capability. Treat as bearer material; Beatbox stores only\na digest and never echoes it from registration responses.",
+            "maxLength": 256,
+            "minLength": 1
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 300,
+            "minimum": 1
+          }
+        }
+      },
       "BrowserAdapterConformanceCase": {
         "type": "object",
         "required": [
@@ -946,7 +1092,7 @@
           },
           "same_user_capability": {
             "type": "string",
-            "description": "Caller-supplied same-user capability candidate for the future local\nuser/session that would own this adapter. This daemon does not issue or\nverify it yet, accepts it for fail-closed preflight only, and never\nechoes it in responses.",
+            "description": "Caller-supplied same-user capability for the future local user/session\nthat would own this adapter. Beatbox can bind only a live one-time\ncapability issued by its REST control plane, consumes it at most once,\nand never echoes it in responses.",
             "maxLength": 256,
             "minLength": 1
           },

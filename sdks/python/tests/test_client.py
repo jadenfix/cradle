@@ -374,6 +374,45 @@ class TestClientRequest(unittest.TestCase):
             "browser-adapter-conformance-v1",
         )
 
+    def test_browser_adapter_capability_sends_auth_json(self):
+        c = Client("http://host:7300/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            body = {
+                "same_user_capability": "bbx-browser-adapter-cap-v1.fixture.not-a-secret",
+                "expires_at": "2026-07-06T20:00:00Z",
+                "ttl_seconds": 60,
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "adapter_id": "tempo-os-jail-v1",
+                "registration_endpoint": "/v1/browser/adapter/register",
+                "notes": ["keep it out of logs"],
+            }
+            return _FakeResponse(200, json.dumps(body).encode())
+
+        request = {
+            "actor": "agent",
+            "sensitivity": "sensitive",
+            "adapter_id": "tempo-os-jail-v1",
+            "ttl_seconds": 60,
+        }
+        with _patched_open(c, fake_open):
+            issued = c.browser_adapter_capability(request)
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/capability")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(req.data.decode()), request)
+        self.assertEqual(
+            issued["same_user_capability"],
+            "bbx-browser-adapter-cap-v1.fixture.not-a-secret",
+        )
+        self.assertEqual(issued["registration_endpoint"], "/v1/browser/adapter/register")
+
     def test_browser_adapter_register_sends_auth_json(self):
         c = Client("http://host:7300/", api_key="secret-key")
         captured = {}

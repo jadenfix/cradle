@@ -420,6 +420,57 @@ test("browserAdapterContract sends authenticated GET", async () => {
   }
 });
 
+test("issueBrowserAdapterCapability sends authenticated JSON", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(
+      JSON.stringify({
+        same_user_capability: "bbx-browser-adapter-cap-v1.fixture.not-a-secret",
+        expires_at: "2026-07-06T20:00:00Z",
+        ttl_seconds: 60,
+        actor: "agent",
+        sensitivity: "sensitive",
+        adapter_id: "tempo-os-jail-v1",
+        registration_endpoint: "/v1/browser/adapter/register",
+        notes: ["keep it out of logs"],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "http://127.0.0.1:7300/",
+      apiKey: "secret-key",
+    });
+    const request = {
+      actor: "agent",
+      sensitivity: "sensitive",
+      adapter_id: "tempo-os-jail-v1",
+      ttl_seconds: 60,
+    };
+    const response = await client.issueBrowserAdapterCapability(request) as Record<string, unknown>;
+
+    assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/adapter/capability");
+    assert.equal(capturedInit?.method, "POST");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+      "content-type": "application/json",
+    });
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), request);
+    assert.equal(
+      response.same_user_capability,
+      "bbx-browser-adapter-cap-v1.fixture.not-a-secret",
+    );
+    assert.equal(response.registration_endpoint, "/v1/browser/adapter/register");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("registerBrowserAdapter sends authenticated JSON preflight", async () => {
   const originalFetch = globalThis.fetch;
   let capturedUrl = "";
