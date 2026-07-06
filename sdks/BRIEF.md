@@ -80,14 +80,16 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 (including `target_origins`, `credential_mode`, `artifact_mode`,
 `required_controls`, profile `controls`, `missing_controls`, and
 `intent_warnings`, plus the browser admission `guard_plan` and
-`adapter_handoff`; raw JSON return is acceptable until each language adds typed
-convenience models), `BrowserAdapterManifestRequest`,
+`adapter_handoff` with its `launch_request_template`; raw JSON return is
+acceptable until each language adds typed convenience models),
+`BrowserAdapterManifestRequest`,
 `BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
 `BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,
 `BrowserAdapterRegistrationResponse`, `BrowserAdapterRegistrationDecision`,
 `BrowserAdapterManifestResponse` (including `conformance_profile`),
-`BrowserAdapterConformanceProfile`, `BrowserAdapterConformanceCase`,
-`BrowserAdapterConformanceExpectation`, `BrowserAdapterValidationDecision`,
+`BrowserAdapterConformanceProfile`, `BrowserAdapterLaunchRequest`,
+`BrowserAdapterConformanceCase`, `BrowserAdapterConformanceExpectation`,
+`BrowserAdapterValidationDecision`,
 `ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,

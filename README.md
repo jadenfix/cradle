@@ -68,6 +68,8 @@ that spells out the network, credential, storage, DNS/redirect revalidation,
 and runtime guards a future browser adapter must enforce before the request can
 become runnable. They also include an `adapter_handoff` block with the
 canonical fields and teardown proofs a future Tempo-side adapter must bind; its
+`launch_request_template` is a typed, secret-free envelope showing the exact
+future adapter launch request shape for the validated intent. Its
 `launch_endpoint` is currently `null` and `launchable` is `false`. The current
 implementation always rejects admission and explains which production pieces or
 requested controls are still missing.
@@ -97,9 +99,9 @@ only syntax-checks launch endpoints; DNS, proxy, redirect, retry, and request
 builder binding remain unimplemented, so it still returns `manifest_complete:
 false` and `launchable: false` until a trusted registration and launch path
 exists. Validation responses include a `conformance_profile` with a canonical
-field-complete manifest plus protocol-specific REST/MCP expectations and
-required negative cases so Tempo and adapter authors can test compatibility
-without guessing.
+field-complete manifest, a `field_complete_launch_request` fixture, plus
+protocol-specific REST/MCP expectations and required negative cases so Tempo
+and adapter authors can test compatibility without guessing.
 
 ## Ecosystem
 

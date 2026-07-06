@@ -79,9 +79,11 @@ network, credential, storage, DNS/redirect revalidation, and runtime guards a
 future browser adapter must enforce. It also returns `adapter_handoff`, a
 non-launchable handoff contract that names the exact admission fields and
 completion proofs a Tempo-side adapter must bind before any future launch path
-can be trusted. It is the authoritative admission decision and currently always
-rejects because Beatbox has no runnable browser launcher or isolation
-substrate.
+can be trusted. The handoff includes `launch_request_template`, a concrete
+future adapter request envelope derived from the validated admission intent and
+guard plan; it is a compatibility fixture, not permission to launch. Admission
+is the authoritative decision and currently always rejects because Beatbox has
+no runnable browser launcher or isolation substrate.
 
 `GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
 publish the planned adapter contract and conformance profile directly for
@@ -116,10 +118,11 @@ field-complete manifest still returns `decision: rejected`, `manifest_complete:
 false`, `endpoint_network_policy_bound: false`, `launchable: false`, and
 `trusted_for_sensitive_work: false` until Beatbox has production trust,
 endpoint binding, and launch paths. The same response includes a
-`conformance_profile` with a canonical field-complete manifest plus required
-accepted-but-rejected and parser-rejected cases, including separate REST and
-MCP expectations. That profile is the adapter author test fixture for protocol
-compatibility, not a registration credential.
+`conformance_profile` with a canonical field-complete manifest,
+`field_complete_launch_request`, and required accepted-but-rejected and
+parser-rejected cases, including separate REST and MCP expectations. That
+profile is the adapter author test fixture for protocol compatibility, not a
+registration credential.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked

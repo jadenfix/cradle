@@ -49,8 +49,8 @@ Browser admission requests are raw JSON today. Pass through
 exactly as described by `openapi.json`; beatbox validates unsafe target origins
 before returning the fail-closed admission decision. Admission responses also
 carry `guard_plan` and `adapter_handoff` blocks; SDKs that return raw JSON must
-preserve both so Tempo-style adapters can bind the future launch contract
-without guessing.
+preserve both, including `adapter_handoff.launch_request_template`, so
+Tempo-style adapters can bind the future launch contract without guessing.
 
 Browser adapter manifests are also raw JSON today. Pass them through to
 `POST /v1/browser/adapter/validate`; beatbox validates the manifest shape and
@@ -69,8 +69,8 @@ All adapter registration/validation responses still return
 `endpoint_network_policy_bound: false` and `launchable: false` until a trusted
 adapter registration and launch path exists. Preserve the `conformance_profile`
 field in raw JSON responses; it contains the canonical field-complete manifest,
-expected missing-gap reports, and protocol-specific REST/MCP negative cases
-Tempo adapters should run.
+`field_complete_launch_request`, expected missing-gap reports, and
+protocol-specific REST/MCP negative cases Tempo adapters should run.
 
 Language-specific method names are idiomatic: Rust and Python expose
 `browser_adapter_contract`, `browser_adapter_capability`,
