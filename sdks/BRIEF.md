@@ -75,8 +75,8 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `BrowserProfilesResponse`, `BrowserAdmissionRequest`, `BrowserAdmissionResponse`
 (including `target_origins`, `credential_mode`, `artifact_mode`,
 `required_controls`, profile `controls`, `missing_controls`, and
-`intent_warnings`; raw JSON return is acceptable until each language adds typed
-convenience models),
+`intent_warnings`, plus the browser admission `guard_plan`; raw JSON return is
+acceptable until each language adds typed convenience models),
 `ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,

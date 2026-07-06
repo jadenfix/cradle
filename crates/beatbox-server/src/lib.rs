@@ -14,13 +14,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserAdmissionResponse,
-    BrowserArtifactMode, BrowserCredentialMode, BrowserIntegrationContract,
+    BrowserAdmissionDecision, BrowserAdmissionGuardPlan, BrowserAdmissionRequest,
+    BrowserAdmissionResponse, BrowserArtifactMode, BrowserCredentialGuardPlan,
+    BrowserCredentialMode, BrowserIntegrationContract, BrowserNetworkGuardPlan,
     BrowserProfilesResponse, BrowserSandboxAvailability, BrowserSandboxControl,
     BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity, BrowserSessionActor,
-    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody,
-    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
-    Source,
+    BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane, CapabilityLimits,
+    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus,
+    JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1093,6 +1094,7 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
                 .join(", ")
         ));
     }
+    let guard_plan = browser_admission_guard_plan(&request, &requested_profile_controls);
 
     BrowserAdmissionResponse {
         decision: BrowserAdmissionDecision::Rejected,
@@ -1109,6 +1111,7 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         missing_controls,
         level_satisfies_requested_controls,
         intent_warnings,
+        guard_plan,
         downgrade_allowed: request.allow_downgrade,
         reasons,
         required_next_steps: vec![
@@ -1119,6 +1122,93 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         ],
         profiles_endpoint: "/v1/browser/profiles".to_string(),
     }
+}
+
+fn browser_admission_guard_plan(
+    request: &BrowserAdmissionRequest,
+    requested_profile_controls: &[BrowserSandboxControl],
+) -> BrowserAdmissionGuardPlan {
+    let profile_requires_egress_boundary = requested_profile_controls
+        .contains(&BrowserSandboxControl::EgressPolicy)
+        || matches!(&request.sensitivity, BrowserSensitivity::Sensitive);
+    BrowserAdmissionGuardPlan {
+        network: BrowserNetworkGuardPlan {
+            allowed_origins: request.target_origins.clone(),
+            deny_private_networks: true,
+            deny_localhost: true,
+            deny_metadata_endpoints: true,
+            require_dns_rebinding_protection: true,
+            require_redirect_revalidation: true,
+            require_proxy_enforcement: profile_requires_egress_boundary,
+            outbound_network_disabled_without_proxy: profile_requires_egress_boundary,
+        },
+        credentials: BrowserCredentialGuardPlan {
+            mode: request.credential_mode.clone(),
+            ambient_credentials_allowed: false,
+            user_mediation_required: matches!(
+                &request.credential_mode,
+                BrowserCredentialMode::UserMediated
+            ),
+            scoped_secret_channel_required: matches!(
+                &request.credential_mode,
+                BrowserCredentialMode::ScopedSecrets
+            ),
+        },
+        storage: BrowserStorageGuardPlan {
+            mode: request.artifact_mode.clone(),
+            plaintext_persistence_allowed: false,
+            explicit_artifact_allowlist_required: matches!(
+                &request.artifact_mode,
+                BrowserArtifactMode::ExplicitDownloads | BrowserArtifactMode::SealedArtifacts
+            ),
+            encryption_required_for_persistence: matches!(
+                &request.artifact_mode,
+                BrowserArtifactMode::SealedArtifacts
+            ),
+            teardown_proof_required: requested_profile_controls
+                .contains(&BrowserSandboxControl::TeardownProof),
+        },
+        required_runtime_guards: browser_required_runtime_guards(
+            &request.requested_level,
+            requested_profile_controls,
+        ),
+    }
+}
+
+fn browser_required_runtime_guards(
+    requested_level: &BrowserSandboxLevel,
+    requested_profile_controls: &[BrowserSandboxControl],
+) -> Vec<String> {
+    let mut guards = vec![
+        "browser launcher bound to the selected sandbox profile".to_string(),
+        "production-path admission check before launch".to_string(),
+        "teardown proof before reporting session completion".to_string(),
+    ];
+    if requested_profile_controls.contains(&BrowserSandboxControl::FreshProfile) {
+        guards.push("fresh profile directory with no host browser state".to_string());
+    }
+    if requested_profile_controls.contains(&BrowserSandboxControl::EgressPolicy) {
+        guards.push(
+            "deny-by-default egress proxy that revalidates DNS, redirects, and final socket targets"
+                .to_string(),
+        );
+    }
+    if requested_profile_controls.contains(&BrowserSandboxControl::LocalNetworkBlock) {
+        guards.push("loopback, LAN, shared, link-local, and metadata address block".to_string());
+    }
+    if requested_profile_controls.contains(&BrowserSandboxControl::SealedArtifacts) {
+        guards.push("explicit artifact allowlist with configured sealing key".to_string());
+    }
+    if requested_profile_controls.contains(&BrowserSandboxControl::OsProcessIsolation) {
+        guards.push("OS jail or microVM boundary around the browser process".to_string());
+    }
+    if requested_profile_controls.contains(&BrowserSandboxControl::RemoteWorkerIsolation) {
+        guards.push("authenticated remote worker with disposable workspace".to_string());
+    }
+    if matches!(requested_level, BrowserSandboxLevel::InstrumentedExternal) {
+        guards.push("external browser mode must remain unavailable for sensitive work".to_string());
+    }
+    guards
 }
 
 fn browser_profile_controls(level: &BrowserSandboxLevel) -> Vec<BrowserSandboxControl> {
@@ -1366,6 +1456,10 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdmissionRequest,
         beatbox_core::BrowserAdmissionResponse,
         beatbox_core::BrowserAdmissionDecision,
+        beatbox_core::BrowserAdmissionGuardPlan,
+        beatbox_core::BrowserNetworkGuardPlan,
+        beatbox_core::BrowserCredentialGuardPlan,
+        beatbox_core::BrowserStorageGuardPlan,
         beatbox_core::BrowserSessionActor,
         beatbox_core::BrowserSensitivity,
         beatbox_core::CapabilitiesResponse,

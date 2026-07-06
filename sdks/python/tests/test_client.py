@@ -100,6 +100,40 @@ class TestClientRequest(unittest.TestCase):
                 "missing_controls": ["remote_worker_isolation"],
                 "level_satisfies_requested_controls": False,
                 "intent_warnings": [],
+                "guard_plan": {
+                    "network": {
+                        "allowed_origins": ["https://example.com"],
+                        "deny_private_networks": True,
+                        "deny_localhost": True,
+                        "deny_metadata_endpoints": True,
+                        "require_dns_rebinding_protection": True,
+                        "require_redirect_revalidation": True,
+                        "require_proxy_enforcement": True,
+                        "outbound_network_disabled_without_proxy": True,
+                    },
+                    "credentials": {
+                        "mode": "no_credentials",
+                        "ambient_credentials_allowed": False,
+                        "user_mediation_required": False,
+                        "scoped_secret_channel_required": False,
+                    },
+                    "storage": {
+                        "mode": "discard",
+                        "plaintext_persistence_allowed": False,
+                        "explicit_artifact_allowlist_required": False,
+                        "encryption_required_for_persistence": False,
+                        "teardown_proof_required": True,
+                    },
+                    "required_runtime_guards": [
+                        "browser launcher bound to the selected sandbox profile",
+                        "production-path admission check before launch",
+                        "teardown proof before reporting session completion",
+                        "fresh profile directory with no host browser state",
+                        "deny-by-default egress proxy that revalidates DNS, redirects, and final socket targets",
+                        "loopback, LAN, shared, link-local, and metadata address block",
+                        "OS jail or microVM boundary around the browser process",
+                    ],
+                },
                 "downgrade_allowed": False,
                 "reasons": ["no runnable browser sandbox"],
                 "required_next_steps": ["implement a browser launcher"],
@@ -135,6 +169,15 @@ class TestClientRequest(unittest.TestCase):
         self.assertEqual(decision["decision"], "rejected")
         self.assertEqual(decision["missing_controls"], ["remote_worker_isolation"])
         self.assertEqual(decision["target_origins"], ["https://example.com"])
+        self.assertTrue(decision["guard_plan"]["network"]["require_proxy_enforcement"])
+        self.assertTrue(any(
+            "final socket targets" in guard
+            for guard in decision["guard_plan"]["required_runtime_guards"]
+        ))
+        self.assertTrue(any(
+            "OS jail" in guard
+            for guard in decision["guard_plan"]["required_runtime_guards"]
+        ))
 
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")

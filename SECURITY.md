@@ -32,6 +32,8 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   reject paths, credentials, localhost, private/LAN IP space, and link-local
   metadata targets so future browser adapters cannot silently turn a sensitive
   browsing preflight into local control-plane or network exploration.
+  Admission responses include a `guard_plan`, but it is a required future
+  enforcement plan, not evidence that browser isolation is currently active.
 
 ## current grades
 

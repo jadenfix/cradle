@@ -74,9 +74,11 @@ link-local metadata targets. Profiles publish their planned controls
 OS/remote isolation, and teardown proof) so Tempo can reason about what a level
 would satisfy without guessing from display text. The response echoes the
 requested intent, reports the requested profile's planned controls, lists
-missing controls, and surfaces intent warnings. It is the authoritative
-admission decision and currently always rejects because Beatbox has no runnable
-browser launcher or isolation substrate.
+missing controls, surfaces intent warnings, and returns a `guard_plan` for the
+network, credential, storage, DNS/redirect revalidation, and runtime guards a
+future browser adapter must enforce. It is the authoritative admission decision
+and currently always rejects because Beatbox has no runnable browser launcher or
+isolation substrate.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked

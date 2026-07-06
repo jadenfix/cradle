@@ -954,6 +954,36 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     );
     assert!(!decision.level_satisfies_requested_controls);
     assert!(decision.intent_warnings.is_empty());
+    assert_eq!(
+        decision.guard_plan.network.allowed_origins,
+        vec!["https://bank.example"]
+    );
+    assert!(decision.guard_plan.network.deny_private_networks);
+    assert!(decision.guard_plan.network.require_dns_rebinding_protection);
+    assert!(decision.guard_plan.network.require_redirect_revalidation);
+    assert!(decision.guard_plan.network.require_proxy_enforcement);
+    assert!(
+        decision
+            .guard_plan
+            .network
+            .outbound_network_disabled_without_proxy
+    );
+    assert!(!decision.guard_plan.credentials.ambient_credentials_allowed);
+    assert!(decision.guard_plan.credentials.user_mediation_required);
+    assert!(
+        decision
+            .guard_plan
+            .storage
+            .encryption_required_for_persistence
+    );
+    assert!(decision.guard_plan.storage.teardown_proof_required);
+    assert!(
+        decision
+            .guard_plan
+            .required_runtime_guards
+            .iter()
+            .any(|guard| guard.contains("final socket targets"))
+    );
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
     assert!(
@@ -1541,6 +1571,22 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["intent_warnings"],
         serde_json::json!([])
+    );
+    assert_eq!(
+        result["structuredContent"]["guard_plan"]["network"]["allowed_origins"],
+        serde_json::json!(["https://billing.example"])
+    );
+    assert_eq!(
+        result["structuredContent"]["guard_plan"]["network"]["outbound_network_disabled_without_proxy"],
+        true
+    );
+    assert_eq!(
+        result["structuredContent"]["guard_plan"]["credentials"]["scoped_secret_channel_required"],
+        true
+    );
+    assert_eq!(
+        result["structuredContent"]["guard_plan"]["storage"]["explicit_artifact_allowlist_required"],
+        true
     );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
     assert!(

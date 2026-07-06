@@ -63,9 +63,11 @@ isolation controls. They can also declare `target_origins`,
 intent to an origin allowlist, credential posture, and persistence posture
 before any browser starts. Target origins must be public HTTP(S) origins only:
 paths, credentials, localhost, private/LAN addresses, and link-local metadata
-targets are rejected at preflight. The current implementation always rejects
-admission and explains which production pieces or requested controls are still
-missing.
+targets are rejected at preflight. Admission responses include a `guard_plan`
+that spells out the network, credential, storage, DNS/redirect revalidation,
+and runtime guards a future browser adapter must enforce before the request can
+become runnable. The current implementation always rejects admission and
+explains which production pieces or requested controls are still missing.
 
 ## Ecosystem
 

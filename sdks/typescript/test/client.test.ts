@@ -103,6 +103,40 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
         missing_controls: ["remote_worker_isolation"],
         level_satisfies_requested_controls: false,
         intent_warnings: [],
+        guard_plan: {
+          network: {
+            allowed_origins: ["https://example.com"],
+            deny_private_networks: true,
+            deny_localhost: true,
+            deny_metadata_endpoints: true,
+            require_dns_rebinding_protection: true,
+            require_redirect_revalidation: true,
+            require_proxy_enforcement: true,
+            outbound_network_disabled_without_proxy: true,
+          },
+          credentials: {
+            mode: "no_credentials",
+            ambient_credentials_allowed: false,
+            user_mediation_required: false,
+            scoped_secret_channel_required: false,
+          },
+          storage: {
+            mode: "discard",
+            plaintext_persistence_allowed: false,
+            explicit_artifact_allowlist_required: false,
+            encryption_required_for_persistence: false,
+            teardown_proof_required: true,
+          },
+          required_runtime_guards: [
+            "browser launcher bound to the selected sandbox profile",
+            "production-path admission check before launch",
+            "teardown proof before reporting session completion",
+            "fresh profile directory with no host browser state",
+            "deny-by-default egress proxy that revalidates DNS, redirects, and final socket targets",
+            "loopback, LAN, shared, link-local, and metadata address block",
+            "OS jail or microVM boundary around the browser process",
+          ],
+        },
         downgrade_allowed: false,
         reasons: ["no runnable browser sandbox"],
         required_next_steps: ["implement a browser launcher"],
@@ -145,6 +179,19 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
     assert.equal(response.decision, "rejected");
     assert.deepEqual(response.missing_controls, ["remote_worker_isolation"]);
     assert.deepEqual(response.target_origins, ["https://example.com"]);
+    const guardPlan = response.guard_plan as {
+      network: { require_proxy_enforcement: boolean };
+      required_runtime_guards: string[];
+    };
+    assert.equal(guardPlan.network.require_proxy_enforcement, true);
+    assert.equal(
+      guardPlan.required_runtime_guards.some((guard) => guard.includes("final socket targets")),
+      true,
+    );
+    assert.equal(
+      guardPlan.required_runtime_guards.some((guard) => guard.includes("OS jail")),
+      true,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

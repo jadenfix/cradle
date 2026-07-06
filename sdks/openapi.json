@@ -364,6 +364,32 @@
           "rejected"
         ]
       },
+      "BrowserAdmissionGuardPlan": {
+        "type": "object",
+        "required": [
+          "network",
+          "credentials",
+          "storage",
+          "required_runtime_guards"
+        ],
+        "properties": {
+          "credentials": {
+            "$ref": "#/components/schemas/BrowserCredentialGuardPlan"
+          },
+          "network": {
+            "$ref": "#/components/schemas/BrowserNetworkGuardPlan"
+          },
+          "required_runtime_guards": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "storage": {
+            "$ref": "#/components/schemas/BrowserStorageGuardPlan"
+          }
+        }
+      },
       "BrowserAdmissionRequest": {
         "type": "object",
         "required": [
@@ -431,6 +457,7 @@
           "missing_controls",
           "level_satisfies_requested_controls",
           "intent_warnings",
+          "guard_plan",
           "downgrade_allowed",
           "reasons",
           "required_next_steps",
@@ -453,6 +480,10 @@
           },
           "downgrade_allowed": {
             "type": "boolean"
+          },
+          "guard_plan": {
+            "$ref": "#/components/schemas/BrowserAdmissionGuardPlan",
+            "description": "Structured guard posture a future browser adapter must enforce before\nthis admission request can become runnable. It is a plan, not a claim\nthat the current daemon enforces browser isolation."
           },
           "intent_warnings": {
             "type": "array",
@@ -533,6 +564,29 @@
           "sealed_artifacts"
         ]
       },
+      "BrowserCredentialGuardPlan": {
+        "type": "object",
+        "required": [
+          "mode",
+          "ambient_credentials_allowed",
+          "user_mediation_required",
+          "scoped_secret_channel_required"
+        ],
+        "properties": {
+          "ambient_credentials_allowed": {
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BrowserCredentialMode"
+          },
+          "scoped_secret_channel_required": {
+            "type": "boolean"
+          },
+          "user_mediation_required": {
+            "type": "boolean"
+          }
+        }
+      },
       "BrowserCredentialMode": {
         "type": "string",
         "enum": [
@@ -572,6 +626,50 @@
           },
           "status": {
             "$ref": "#/components/schemas/BrowserSandboxAvailability"
+          }
+        }
+      },
+      "BrowserNetworkGuardPlan": {
+        "type": "object",
+        "required": [
+          "allowed_origins",
+          "deny_private_networks",
+          "deny_localhost",
+          "deny_metadata_endpoints",
+          "require_dns_rebinding_protection",
+          "require_redirect_revalidation",
+          "require_proxy_enforcement",
+          "outbound_network_disabled_without_proxy"
+        ],
+        "properties": {
+          "allowed_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Validated public origins this browser session may target."
+          },
+          "deny_localhost": {
+            "type": "boolean"
+          },
+          "deny_metadata_endpoints": {
+            "type": "boolean"
+          },
+          "deny_private_networks": {
+            "type": "boolean",
+            "description": "Runtime must deny localhost, loopback, private, shared, link-local, and\nmetadata-address egress even after DNS resolution, redirects, and proxying."
+          },
+          "outbound_network_disabled_without_proxy": {
+            "type": "boolean"
+          },
+          "require_dns_rebinding_protection": {
+            "type": "boolean"
+          },
+          "require_proxy_enforcement": {
+            "type": "boolean"
+          },
+          "require_redirect_revalidation": {
+            "type": "boolean"
           }
         }
       },
@@ -736,6 +834,33 @@
           "agent",
           "human"
         ]
+      },
+      "BrowserStorageGuardPlan": {
+        "type": "object",
+        "required": [
+          "mode",
+          "plaintext_persistence_allowed",
+          "explicit_artifact_allowlist_required",
+          "encryption_required_for_persistence",
+          "teardown_proof_required"
+        ],
+        "properties": {
+          "encryption_required_for_persistence": {
+            "type": "boolean"
+          },
+          "explicit_artifact_allowlist_required": {
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BrowserArtifactMode"
+          },
+          "plaintext_persistence_allowed": {
+            "type": "boolean"
+          },
+          "teardown_proof_required": {
+            "type": "boolean"
+          }
+        }
       },
       "CapabilitiesResponse": {
         "type": "object",

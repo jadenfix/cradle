@@ -291,7 +291,7 @@ mod tests {
             request_tx
                 .send(request)
                 .map_err(|_| std::io::Error::other("request receiver dropped"))?;
-            let body = r#"{"decision":"rejected","runnable_browser_sessions":false,"requested_level":"os_isolated","selected_level":null,"actor":"agent","sensitivity":"sensitive","target_origins":["https://example.com"],"credential_mode":"no_credentials","artifact_mode":"discard","requested_controls":["egress_policy","remote_worker_isolation"],"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],"missing_controls":["remote_worker_isolation"],"level_satisfies_requested_controls":false,"intent_warnings":[],"downgrade_allowed":false,"reasons":["no runnable browser sandbox"],"required_next_steps":["implement a browser launcher"],"profiles_endpoint":"/v1/browser/profiles"}"#;
+            let body = r#"{"decision":"rejected","runnable_browser_sessions":false,"requested_level":"os_isolated","selected_level":null,"actor":"agent","sensitivity":"sensitive","target_origins":["https://example.com"],"credential_mode":"no_credentials","artifact_mode":"discard","requested_controls":["egress_policy","remote_worker_isolation"],"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],"missing_controls":["remote_worker_isolation"],"level_satisfies_requested_controls":false,"intent_warnings":[],"guard_plan":{"network":{"allowed_origins":["https://example.com"],"deny_private_networks":true,"deny_localhost":true,"deny_metadata_endpoints":true,"require_dns_rebinding_protection":true,"require_redirect_revalidation":true,"require_proxy_enforcement":true,"outbound_network_disabled_without_proxy":true},"credentials":{"mode":"no_credentials","ambient_credentials_allowed":false,"user_mediation_required":false,"scoped_secret_channel_required":false},"storage":{"mode":"discard","plaintext_persistence_allowed":false,"explicit_artifact_allowlist_required":false,"encryption_required_for_persistence":false,"teardown_proof_required":true},"required_runtime_guards":["browser launcher bound to the selected sandbox profile","production-path admission check before launch","teardown proof before reporting session completion","fresh profile directory with no host browser state","deny-by-default egress proxy that revalidates DNS, redirects, and final socket targets","loopback, LAN, shared, link-local, and metadata address block","OS jail or microVM boundary around the browser process"]},"downgrade_allowed":false,"reasons":["no runnable browser sandbox"],"required_next_steps":["implement a browser launcher"],"profiles_endpoint":"/v1/browser/profiles"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -349,6 +349,25 @@ mod tests {
         );
         assert_eq!(decision.artifact_mode, BrowserArtifactMode::Discard);
         assert!(decision.intent_warnings.is_empty());
+        assert_eq!(
+            decision.guard_plan.network.allowed_origins,
+            vec!["https://example.com"]
+        );
+        assert!(decision.guard_plan.network.require_proxy_enforcement);
+        assert!(
+            decision
+                .guard_plan
+                .required_runtime_guards
+                .iter()
+                .any(|guard| guard.contains("final socket targets"))
+        );
+        assert!(
+            decision
+                .guard_plan
+                .required_runtime_guards
+                .iter()
+                .any(|guard| guard.contains("OS jail"))
+        );
         Ok(())
     }
 

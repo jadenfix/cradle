@@ -117,6 +117,97 @@ pub enum BrowserArtifactMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserNetworkGuardPlan {
+    /// Validated public origins this browser session may target.
+    pub allowed_origins: Vec<String>,
+    /// Runtime must deny localhost, loopback, private, shared, link-local, and
+    /// metadata-address egress even after DNS resolution, redirects, and proxying.
+    pub deny_private_networks: bool,
+    pub deny_localhost: bool,
+    pub deny_metadata_endpoints: bool,
+    pub require_dns_rebinding_protection: bool,
+    pub require_redirect_revalidation: bool,
+    pub require_proxy_enforcement: bool,
+    pub outbound_network_disabled_without_proxy: bool,
+}
+
+impl Default for BrowserNetworkGuardPlan {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+            deny_private_networks: true,
+            deny_localhost: true,
+            deny_metadata_endpoints: true,
+            require_dns_rebinding_protection: true,
+            require_redirect_revalidation: true,
+            require_proxy_enforcement: true,
+            outbound_network_disabled_without_proxy: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserCredentialGuardPlan {
+    pub mode: BrowserCredentialMode,
+    pub ambient_credentials_allowed: bool,
+    pub user_mediation_required: bool,
+    pub scoped_secret_channel_required: bool,
+}
+
+impl Default for BrowserCredentialGuardPlan {
+    fn default() -> Self {
+        Self {
+            mode: BrowserCredentialMode::NoCredentials,
+            ambient_credentials_allowed: false,
+            user_mediation_required: false,
+            scoped_secret_channel_required: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserStorageGuardPlan {
+    pub mode: BrowserArtifactMode,
+    pub plaintext_persistence_allowed: bool,
+    pub explicit_artifact_allowlist_required: bool,
+    pub encryption_required_for_persistence: bool,
+    pub teardown_proof_required: bool,
+}
+
+impl Default for BrowserStorageGuardPlan {
+    fn default() -> Self {
+        Self {
+            mode: BrowserArtifactMode::Discard,
+            plaintext_persistence_allowed: false,
+            explicit_artifact_allowlist_required: false,
+            encryption_required_for_persistence: false,
+            teardown_proof_required: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdmissionGuardPlan {
+    pub network: BrowserNetworkGuardPlan,
+    pub credentials: BrowserCredentialGuardPlan,
+    pub storage: BrowserStorageGuardPlan,
+    pub required_runtime_guards: Vec<String>,
+}
+
+impl Default for BrowserAdmissionGuardPlan {
+    fn default() -> Self {
+        Self {
+            network: BrowserNetworkGuardPlan::default(),
+            credentials: BrowserCredentialGuardPlan::default(),
+            storage: BrowserStorageGuardPlan::default(),
+            required_runtime_guards: vec![
+                "fresh server-issued guard plan required before browser launch".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserAdmissionRequest {
     pub requested_level: BrowserSandboxLevel,
@@ -189,6 +280,12 @@ pub struct BrowserAdmissionResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub intent_warnings: Vec<String>,
+    /// Structured guard posture a future browser adapter must enforce before
+    /// this admission request can become runnable. It is a plan, not a claim
+    /// that the current daemon enforces browser isolation.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub guard_plan: BrowserAdmissionGuardPlan,
     pub downgrade_allowed: bool,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
@@ -690,6 +787,29 @@ mod tests {
         );
         assert_eq!(response.artifact_mode, BrowserArtifactMode::Discard);
         assert_eq!(response.intent_warnings, Vec::<String>::new());
+        assert_eq!(
+            response.guard_plan.network.allowed_origins,
+            Vec::<String>::new()
+        );
+        assert!(response.guard_plan.network.deny_private_networks);
+        assert!(response.guard_plan.network.require_dns_rebinding_protection);
+        assert!(response.guard_plan.network.require_redirect_revalidation);
+        assert!(response.guard_plan.network.require_proxy_enforcement);
+        assert!(
+            response
+                .guard_plan
+                .network
+                .outbound_network_disabled_without_proxy
+        );
+        assert!(!response.guard_plan.credentials.ambient_credentials_allowed);
+        assert!(response.guard_plan.storage.teardown_proof_required);
+        assert!(
+            response
+                .guard_plan
+                .required_runtime_guards
+                .iter()
+                .any(|guard| guard.contains("fresh server-issued guard plan"))
+        );
         assert!(!response.level_satisfies_requested_controls);
         Ok(())
     }
