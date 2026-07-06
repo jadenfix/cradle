@@ -29,6 +29,36 @@
         }
       }
     },
+    "/v1/browser/profiles": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_profiles",
+        "responses": {
+          "200": {
+            "description": "Browser sandbox profile discovery contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserProfilesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/capabilities": {
       "get": {
         "tags": [
@@ -263,6 +293,166 @@
   },
   "components": {
     "schemas": {
+      "BrowserIntegrationContract": {
+        "type": "object",
+        "required": [
+          "status",
+          "consumer",
+          "endpoint",
+          "selection_field",
+          "required_consumer_behavior"
+        ],
+        "properties": {
+          "consumer": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "required_consumer_behavior": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "selection_field": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BrowserSandboxAvailability"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserProfilesResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "runnable_browser_sessions",
+          "integration",
+          "profiles"
+        ],
+        "properties": {
+          "default_level": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserSandboxLevel"
+              }
+            ]
+          },
+          "integration": {
+            "$ref": "#/components/schemas/BrowserIntegrationContract"
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxProfile"
+            }
+          },
+          "runnable_browser_sessions": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserSandboxAvailability": {
+        "type": "string",
+        "enum": [
+          "available",
+          "planned",
+          "unavailable"
+        ]
+      },
+      "BrowserSandboxLevel": {
+        "type": "string",
+        "enum": [
+          "instrumented_external",
+          "ephemeral_profile",
+          "network_suppressed",
+          "sealed_state",
+          "os_isolated",
+          "remote_isolated"
+        ]
+      },
+      "BrowserSandboxProfile": {
+        "type": "object",
+        "required": [
+          "level",
+          "availability",
+          "summary",
+          "isolation_boundary",
+          "privacy_controls",
+          "egress_controls",
+          "credential_controls",
+          "storage_controls",
+          "encryption_claims",
+          "non_goals",
+          "downgrade_reasons"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/BrowserSandboxAvailability"
+          },
+          "credential_controls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "downgrade_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "egress_controls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "encryption_claims": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isolation_boundary": {
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/BrowserSandboxLevel"
+          },
+          "non_goals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "privacy_controls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "storage_controls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateJobResponse": {
         "type": "object",
         "required": [

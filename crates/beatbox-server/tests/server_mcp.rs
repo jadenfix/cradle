@@ -1,14 +1,14 @@
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord,
-    JobStatus, Lane, Policy, Source,
+    BrowserProfilesResponse, BrowserSandboxAvailability, CreateJobResponse, ErrorResponse,
+    ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
-    AuthMode, DEFAULT_JOB_WALL_MS, DEFAULT_SYNC_WALL_MS, JobStore, ServerConfig, origin_allowed,
-    router,
+    origin_allowed, router, AuthMode, JobStore, ServerConfig, DEFAULT_JOB_WALL_MS,
+    DEFAULT_SYNC_WALL_MS,
 };
 use serde_json::json;
 use tower::ServiceExt;
@@ -192,8 +192,8 @@ async fn v1_execute_rejects_missing_content_type() -> Result<(), Box<dyn std::er
 }
 
 #[tokio::test]
-async fn v1_execute_rejects_when_sync_concurrency_cap_is_exhausted()
--> Result<(), Box<dyn std::error::Error>> {
+async fn v1_execute_rejects_when_sync_concurrency_cap_is_exhausted(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?).with_max_concurrent_sync(0));
     let request = add_one_request(41);
     let response = app
@@ -815,6 +815,77 @@ async fn auth_required_keeps_bearer_compatibility() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
+async fn browser_profiles_are_authenticated_control_plane_metadata(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/profiles")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/profiles")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let profiles: BrowserProfilesResponse = serde_json::from_slice(&body)?;
+    assert!(!profiles.runnable_browser_sessions);
+    assert_eq!(profiles.default_level, None);
+    assert_eq!(
+        profiles.integration.status,
+        BrowserSandboxAvailability::Planned
+    );
+    assert!(
+        profiles
+            .profiles
+            .iter()
+            .all(|profile| profile.availability != BrowserSandboxAvailability::Available),
+        "no browser profile is runnable until a real browser substrate enforces it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn capabilities_embed_the_browser_profile_contract() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/capabilities")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["browser_sandbox"]["runnable_browser_sessions"], false);
+    assert_eq!(value["browser_sandbox"]["integration"]["consumer"], "tempo");
+    assert!(value["browser_sandbox"]["profiles"]
+        .as_array()
+        .is_some_and(|profiles| profiles
+            .iter()
+            .all(|profile| profile["availability"] != "available")));
+    Ok(())
+}
+
+#[tokio::test]
 async fn auth_required_rejects_mcp_tools_list_without_key() -> Result<(), Box<dyn std::error::Error>>
 {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -883,11 +954,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["openapi"], "3.1.0");
-    assert!(
-        value["paths"]
-            .as_object()
-            .is_some_and(|paths| paths.contains_key("/v1/jobs"))
-    );
+    assert!(value["paths"].as_object().is_some_and(
+        |paths| paths.contains_key("/v1/jobs") && paths.contains_key("/v1/browser/profiles")
+    ));
 
     // The spec now carries full component schemas so SDKs can be generated from it.
     let schemas = value["components"]["schemas"]
@@ -902,6 +971,11 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "Metrics",
         "JobRecord",
         "ErrorResponse",
+        "BrowserProfilesResponse",
+        "BrowserSandboxProfile",
+        "BrowserIntegrationContract",
+        "BrowserSandboxLevel",
+        "BrowserSandboxAvailability",
     ] {
         assert!(schemas.contains_key(expected), "missing schema: {expected}");
     }
@@ -999,11 +1073,9 @@ async fn mcp_rejects_missing_content_type() -> Result<(), Box<dyn std::error::Er
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32600);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("content-type"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("content-type")));
     Ok(())
 }
 
@@ -1024,11 +1096,9 @@ async fn mcp_rejects_text_plain_json_posts() -> Result<(), Box<dyn std::error::E
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32600);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("content-type"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("content-type")));
     Ok(())
 }
 
@@ -1058,11 +1128,9 @@ async fn mcp_get_capabilities_rejects_unknown_arguments() -> Result<(), Box<dyn 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("ignored"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("ignored")));
     Ok(())
 }
 
@@ -1095,11 +1163,9 @@ async fn mcp_run_wasm_rejects_over_sync_ceiling() -> Result<(), Box<dyn std::err
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("sync_limit_exceeded"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("sync_limit_exceeded")));
     Ok(())
 }
 
@@ -1131,11 +1197,9 @@ async fn mcp_run_wasm_rejects_ambiguous_sources() -> Result<(), Box<dyn std::err
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("exactly one"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("exactly one")));
     Ok(())
 }
 
@@ -1167,11 +1231,9 @@ async fn mcp_run_wasm_rejects_mistyped_limits() -> Result<(), Box<dyn std::error
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("unsigned integer"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("unsigned integer")));
     Ok(())
 }
 
@@ -1200,11 +1262,9 @@ async fn mcp_run_python_requires_code() -> Result<(), Box<dyn std::error::Error>
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("code"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("code")));
     Ok(())
 }
 

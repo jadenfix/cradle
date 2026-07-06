@@ -50,6 +50,24 @@ No lane should inherit host environment variables or raw network access. Future
 egress will be routed through a logging localhost proxy with domain and port
 allowlists.
 
+## browser sandbox contract
+
+Browser automation is a separate integration surface from code execution lanes.
+`GET /v1/browser/profiles` returns the typed profile catalog that Tempo or
+another browser-capable caller can use to decide whether Beatbox currently has a
+usable browser sandbox for sensitive work. The same payload is embedded under
+`browser_sandbox` in `/v1/capabilities`.
+
+The current catalog is intentionally non-runnable: `runnable_browser_sessions`
+is false, `default_level` is absent, and no profile is marked `available`.
+Profiles describe planned levels rather than enforced behavior:
+instrumented external browsers, ephemeral profiles, network-suppressed
+profiles, sealed persisted state, OS-isolated browsers, and remote isolated
+workers. A consumer must not silently downgrade sensitive work to a weaker
+profile; it must treat `planned` and `unavailable` as non-runnable until a
+future implementation supplies a browser launcher, teardown, egress boundary,
+storage policy, and tests that exercise the production path.
+
 ## milestones
 
 M0: workspace scaffold, toolchain pin, core serde types, tests, and CI.
@@ -64,9 +82,10 @@ or running record as canceled, and a running worker's later result is ignored.
 The underlying compute is still bounded by the execution policy until per-job
 engine interruption handles are added.
 
-M3: `beater.js` Tier-4 integration through `beatbox-client`.
+M3: Tempo/browser integration contract and `beater.js` Tier-4 integration
+through `beatbox-client`.
 
-M4: Python and JavaScript lanes, native OS jails, and honest per-OS capability
-grades.
+M4: Python and JavaScript lanes, browser profiles, native OS jails, and honest
+per-OS capability grades.
 
 M5: stateful sessions over REST and MCP.

@@ -43,6 +43,11 @@ module Beatbox
       request_json(:get, "/v1/capabilities", auth: true)
     end
 
+    # GET /v1/browser/profiles. Returns browser sandbox discovery metadata.
+    def browser_profiles
+      request_json(:get, "/v1/browser/profiles", auth: true)
+    end
+
     # POST /v1/execute. @return [ExecutionResult]
     def execute(request)
       body = request_json(:post, "/v1/execute", body: request, auth: true)

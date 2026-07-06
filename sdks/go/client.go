@@ -99,6 +99,14 @@ func (c *Client) Capabilities(ctx context.Context) (json.RawMessage, error) {
 	return out, err
 }
 
+// BrowserProfiles returns browser sandbox profile discovery metadata
+// (GET /v1/browser/profiles).
+func (c *Client) BrowserProfiles(ctx context.Context) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, c.baseURL+"/v1/browser/profiles", true, nil, &out)
+	return out, err
+}
+
 // Execute runs the request synchronously (POST /v1/execute) and returns the
 // ExecutionResult.
 func (c *Client) Execute(ctx context.Context, req ExecuteRequest) (*ExecutionResult, error) {

@@ -65,6 +65,14 @@ impl Client {
         decode_response(response).await
     }
 
+    pub async fn browser_profiles(&self) -> Result<BrowserProfilesResponse, ClientError> {
+        let request = self
+            .http
+            .get(format!("{}/v1/browser/profiles", self.base_url));
+        let response = self.authorize(request).send().await?;
+        decode_response(response).await
+    }
+
     pub async fn execute(&self, request: &ExecuteRequest) -> Result<ExecutionResult, ClientError> {
         let request_builder = self
             .http
@@ -207,8 +215,8 @@ fn trim_base_url(mut value: String) -> String {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -257,8 +265,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_key_header_is_not_forwarded_across_redirects()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn api_key_header_is_not_forwarded_across_redirects(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;

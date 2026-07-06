@@ -57,6 +57,7 @@ in an exception message.
 | --- | --- | --- | --- |
 | `HealthAsync()` | `GET /v1/health` | no | `JsonElement` |
 | `CapabilitiesAsync()` | `GET /v1/capabilities` | yes | `JsonElement` |
+| `BrowserProfilesAsync()` | `GET /v1/browser/profiles` | yes | `JsonElement` |
 | `ExecuteAsync(req)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `CreateJobAsync(req)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
 | `GetJobAsync(id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |

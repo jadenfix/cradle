@@ -90,6 +90,15 @@ export class BeatboxClient {
     });
   }
 
+  /** `GET /v1/browser/profiles` — browser sandbox profile discovery. */
+  browserProfiles(): Promise<unknown> {
+    return this.request<unknown>({
+      method: "GET",
+      path: "/v1/browser/profiles",
+      auth: true,
+    });
+  }
+
   /** `POST /v1/execute` — run a program synchronously. */
   execute(request: ExecuteRequest): Promise<ExecutionResult> {
     return this.request<ExecutionResult>({

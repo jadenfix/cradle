@@ -59,6 +59,16 @@ final class Client
         return $this->requestJson('GET', '/v1/capabilities', null, true);
     }
 
+    /**
+     * GET /v1/browser/profiles. Returns browser sandbox discovery metadata.
+     *
+     * @return array<string,mixed>
+     */
+    public function browserProfiles(): array
+    {
+        return $this->requestJson('GET', '/v1/browser/profiles', null, true);
+    }
+
     /** POST /v1/execute — run a program synchronously. */
     public function execute(ExecuteRequest $request): ExecutionResult
     {

@@ -14,6 +14,61 @@ pub enum Lane {
     Exec,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandboxLevel {
+    InstrumentedExternal,
+    EphemeralProfile,
+    NetworkSuppressed,
+    SealedState,
+    OsIsolated,
+    RemoteIsolated,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandboxAvailability {
+    Available,
+    Planned,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSandboxProfile {
+    pub level: BrowserSandboxLevel,
+    pub availability: BrowserSandboxAvailability,
+    pub summary: String,
+    pub isolation_boundary: String,
+    pub privacy_controls: Vec<String>,
+    pub egress_controls: Vec<String>,
+    pub credential_controls: Vec<String>,
+    pub storage_controls: Vec<String>,
+    pub encryption_claims: Vec<String>,
+    pub non_goals: Vec<String>,
+    pub downgrade_reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserIntegrationContract {
+    pub status: BrowserSandboxAvailability,
+    pub consumer: String,
+    pub endpoint: String,
+    pub selection_field: String,
+    pub required_consumer_behavior: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserProfilesResponse {
+    pub version: String,
+    pub runnable_browser_sessions: bool,
+    pub default_level: Option<BrowserSandboxLevel>,
+    pub integration: BrowserIntegrationContract,
+    pub profiles: Vec<BrowserSandboxProfile>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
@@ -382,18 +437,14 @@ mod tests {
 
     #[test]
     fn unknown_request_and_source_fields_are_rejected() {
-        assert!(
-            serde_json::from_str::<ExecuteRequest>(
-                r#"{"lane": "wasm", "source": {"kind": "wasm_wat", "text": "(module)"}, "polcy": {}}"#
-            )
-            .is_err()
-        );
-        assert!(
-            serde_json::from_str::<Source>(
-                r#"{"kind": "wasm_wat", "text": "(module)", "txt": "x"}"#
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<ExecuteRequest>(
+            r#"{"lane": "wasm", "source": {"kind": "wasm_wat", "text": "(module)"}, "polcy": {}}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<Source>(
+            r#"{"kind": "wasm_wat", "text": "(module)", "txt": "x"}"#
+        )
+        .is_err());
     }
 
     #[test]
