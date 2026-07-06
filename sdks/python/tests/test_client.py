@@ -134,6 +134,28 @@ class TestClientRequest(unittest.TestCase):
                         "OS jail or microVM boundary around the browser process",
                     ],
                 },
+                "adapter_handoff": {
+                    "contract_version": "browser-adapter-v1",
+                    "launch_endpoint": None,
+                    "launchable": False,
+                    "handoff_fields": [
+                        "requested_level",
+                        "actor",
+                        "sensitivity",
+                        "target_origins",
+                        "credential_mode",
+                        "artifact_mode",
+                        "requested_controls",
+                        "guard_plan",
+                    ],
+                    "required_completion_proofs": [
+                        "browser process exited or was killed",
+                        "temporary profile directory removed",
+                        "plaintext artifacts outside the explicit allowlist removed",
+                        "egress proxy log sealed or discarded according to artifact_mode",
+                    ],
+                    "unavailable_reason": "no browser adapter launch endpoint is implemented by this daemon",
+                },
                 "downgrade_allowed": False,
                 "reasons": ["no runnable browser sandbox"],
                 "required_next_steps": ["implement a browser launcher"],
@@ -177,6 +199,13 @@ class TestClientRequest(unittest.TestCase):
         self.assertTrue(any(
             "OS jail" in guard
             for guard in decision["guard_plan"]["required_runtime_guards"]
+        ))
+        self.assertFalse(decision["adapter_handoff"]["launchable"])
+        self.assertIsNone(decision["adapter_handoff"]["launch_endpoint"])
+        self.assertIn("guard_plan", decision["adapter_handoff"]["handoff_fields"])
+        self.assertTrue(any(
+            "temporary profile directory" in proof
+            for proof in decision["adapter_handoff"]["required_completion_proofs"]
         ))
 
     def test_cancel_job_204_returns_none(self):

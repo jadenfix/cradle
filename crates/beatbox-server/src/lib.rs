@@ -14,14 +14,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    BrowserAdmissionDecision, BrowserAdmissionGuardPlan, BrowserAdmissionRequest,
-    BrowserAdmissionResponse, BrowserArtifactMode, BrowserCredentialGuardPlan,
-    BrowserCredentialMode, BrowserIntegrationContract, BrowserNetworkGuardPlan,
-    BrowserProfilesResponse, BrowserSandboxAvailability, BrowserSandboxControl,
-    BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity, BrowserSessionActor,
-    BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane, CapabilityLimits,
-    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus,
-    JobRecord, Lane, Policy, Source,
+    BrowserAdapterContract, BrowserAdapterHandoff, BrowserAdmissionDecision,
+    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
+    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
+    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
+    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
+    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -874,6 +874,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
                 "do not downgrade to a weaker profile without an explicit user or policy decision".to_string(),
                 "bind sensitive browsing to a fresh user-approved profile selection".to_string(),
             ],
+            adapter: browser_adapter_contract(),
         },
         profiles: vec![
             BrowserSandboxProfile {
@@ -1010,6 +1011,25 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
     }
 }
 
+fn browser_adapter_contract() -> BrowserAdapterContract {
+    BrowserAdapterContract {
+        status: BrowserSandboxAvailability::Planned,
+        ..BrowserAdapterContract::default()
+    }
+}
+
+fn browser_adapter_handoff() -> BrowserAdapterHandoff {
+    let adapter = browser_adapter_contract();
+    BrowserAdapterHandoff {
+        contract_version: adapter.version,
+        launch_endpoint: adapter.launch_endpoint,
+        launchable: false,
+        handoff_fields: adapter.handoff_fields,
+        required_completion_proofs: adapter.required_completion_proofs,
+        unavailable_reason: adapter.unavailable_reason,
+    }
+}
+
 fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmissionResponse {
     let requested_profile_controls = browser_profile_controls(&request.requested_level);
     let missing_controls: Vec<_> = request
@@ -1095,6 +1115,7 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         ));
     }
     let guard_plan = browser_admission_guard_plan(&request, &requested_profile_controls);
+    let adapter_handoff = browser_adapter_handoff();
 
     BrowserAdmissionResponse {
         decision: BrowserAdmissionDecision::Rejected,
@@ -1112,6 +1133,7 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         level_satisfies_requested_controls,
         intent_warnings,
         guard_plan,
+        adapter_handoff,
         downgrade_allowed: request.allow_downgrade,
         reasons,
         required_next_steps: vec![
@@ -1447,6 +1469,7 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::JobStatus,
         beatbox_core::BrowserProfilesResponse,
         beatbox_core::BrowserIntegrationContract,
+        beatbox_core::BrowserAdapterContract,
         beatbox_core::BrowserSandboxProfile,
         beatbox_core::BrowserSandboxLevel,
         beatbox_core::BrowserSandboxAvailability,
@@ -1457,6 +1480,7 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdmissionResponse,
         beatbox_core::BrowserAdmissionDecision,
         beatbox_core::BrowserAdmissionGuardPlan,
+        beatbox_core::BrowserAdapterHandoff,
         beatbox_core::BrowserNetworkGuardPlan,
         beatbox_core::BrowserCredentialGuardPlan,
         beatbox_core::BrowserStorageGuardPlan,
@@ -1784,12 +1808,12 @@ fn mcp_tools() -> Value {
         },
         {
             "name": "get_browser_profiles",
-            "description": "Return beatbox browser sandbox profile discovery metadata for Tempo-style integrations.",
+            "description": "Return beatbox browser sandbox profile discovery metadata and the planned adapter handoff contract for Tempo-style integrations.",
             "inputSchema": {"type": "object", "additionalProperties": false}
         },
         {
             "name": "admit_browser_session",
-            "description": "Return a fail-closed browser sandbox admission decision for a requested actor, sensitivity, and sandbox level.",
+            "description": "Return a fail-closed browser sandbox admission decision, guard plan, and non-launchable adapter handoff for a requested actor, sensitivity, and sandbox level.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,

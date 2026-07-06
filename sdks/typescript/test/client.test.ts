@@ -137,6 +137,28 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
             "OS jail or microVM boundary around the browser process",
           ],
         },
+        adapter_handoff: {
+          contract_version: "browser-adapter-v1",
+          launch_endpoint: null,
+          launchable: false,
+          handoff_fields: [
+            "requested_level",
+            "actor",
+            "sensitivity",
+            "target_origins",
+            "credential_mode",
+            "artifact_mode",
+            "requested_controls",
+            "guard_plan",
+          ],
+          required_completion_proofs: [
+            "browser process exited or was killed",
+            "temporary profile directory removed",
+            "plaintext artifacts outside the explicit allowlist removed",
+            "egress proxy log sealed or discarded according to artifact_mode",
+          ],
+          unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon",
+        },
         downgrade_allowed: false,
         reasons: ["no runnable browser sandbox"],
         required_next_steps: ["implement a browser launcher"],
@@ -190,6 +212,21 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
     );
     assert.equal(
       guardPlan.required_runtime_guards.some((guard) => guard.includes("OS jail")),
+      true,
+    );
+    const adapterHandoff = response.adapter_handoff as {
+      launch_endpoint: null;
+      launchable: boolean;
+      handoff_fields: string[];
+      required_completion_proofs: string[];
+    };
+    assert.equal(adapterHandoff.launchable, false);
+    assert.equal(adapterHandoff.launch_endpoint, null);
+    assert.equal(adapterHandoff.handoff_fields.includes("guard_plan"), true);
+    assert.equal(
+      adapterHandoff.required_completion_proofs.some((proof) =>
+        proof.includes("temporary profile directory"),
+      ),
       true,
     );
   } finally {

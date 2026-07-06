@@ -43,7 +43,10 @@ message.
 Browser admission requests are raw JSON today. Pass through
 `target_origins`, `credential_mode`, `artifact_mode`, and `required_controls`
 exactly as described by `openapi.json`; beatbox validates unsafe target origins
-before returning the fail-closed admission decision.
+before returning the fail-closed admission decision. Admission responses also
+carry `guard_plan` and `adapter_handoff` blocks; SDKs that return raw JSON must
+preserve both so Tempo-style adapters can bind the future launch contract
+without guessing.
 
 ## How the fleet stays correct (the rollout pipeline)
 

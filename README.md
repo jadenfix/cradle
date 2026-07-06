@@ -66,8 +66,11 @@ paths, credentials, localhost, private/LAN addresses, and link-local metadata
 targets are rejected at preflight. Admission responses include a `guard_plan`
 that spells out the network, credential, storage, DNS/redirect revalidation,
 and runtime guards a future browser adapter must enforce before the request can
-become runnable. The current implementation always rejects admission and
-explains which production pieces or requested controls are still missing.
+become runnable. They also include an `adapter_handoff` block with the
+canonical fields and teardown proofs a future Tempo-side adapter must bind; its
+`launch_endpoint` is currently `null` and `launchable` is `false`. The current
+implementation always rejects admission and explains which production pieces or
+requested controls are still missing.
 
 ## Ecosystem
 
