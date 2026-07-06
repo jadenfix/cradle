@@ -88,6 +88,17 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
         selected_level: null,
         actor: "agent",
         sensitivity: "sensitive",
+        requested_controls: ["egress_policy", "remote_worker_isolation"],
+        requested_profile_controls: [
+          "fresh_profile",
+          "no_ambient_credentials",
+          "egress_policy",
+          "local_network_block",
+          "os_process_isolation",
+          "teardown_proof",
+        ],
+        missing_controls: ["remote_worker_isolation"],
+        level_satisfies_requested_controls: false,
         downgrade_allowed: false,
         reasons: ["no runnable browser sandbox"],
         required_next_steps: ["implement a browser launcher"],
@@ -105,6 +116,7 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
       requested_level: "os_isolated",
       actor: "agent",
       sensitivity: "sensitive",
+      required_controls: ["egress_policy", "remote_worker_isolation"],
     }) as Record<string, unknown>;
 
     assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/admit");
@@ -118,8 +130,10 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
       requested_level: "os_isolated",
       actor: "agent",
       sensitivity: "sensitive",
+      required_controls: ["egress_policy", "remote_worker_isolation"],
     });
     assert.equal(response.decision, "rejected");
+    assert.deepEqual(response.missing_controls, ["remote_worker_isolation"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

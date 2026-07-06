@@ -65,10 +65,15 @@ callers should not parse a second serialized JSON copy out of text.
 
 `POST /v1/browser/admit` and the MCP `admit_browser_session` tool are the
 fail-closed preflight path for browser work. Callers submit the requested
-sandbox level, actor, sensitivity, and any explicit downgrade allowance before
-starting browser automation. The response is the authoritative admission
-decision and currently always rejects because Beatbox has no runnable browser
-launcher or isolation substrate.
+sandbox level, actor, sensitivity, required isolation controls, and any explicit
+downgrade allowance before starting browser automation. Profiles publish their
+planned controls (`fresh_profile`, `egress_policy`, `local_network_block`,
+`sealed_artifacts`, OS/remote isolation, and teardown proof) so Tempo can reason
+about what a level would satisfy without guessing from display text. The
+response echoes the requested controls, reports the requested profile's planned
+controls, and lists missing controls. It is the authoritative admission decision
+and currently always rejects because Beatbox has no runnable browser launcher or
+isolation substrate.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked

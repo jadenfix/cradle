@@ -34,11 +34,25 @@ pub enum BrowserSandboxAvailability {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSandboxControl {
+    FreshProfile,
+    NoAmbientCredentials,
+    EgressPolicy,
+    LocalNetworkBlock,
+    SealedArtifacts,
+    OsProcessIsolation,
+    RemoteWorkerIsolation,
+    TeardownProof,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserSandboxProfile {
     pub level: BrowserSandboxLevel,
     pub availability: BrowserSandboxAvailability,
     pub summary: String,
+    pub controls: Vec<BrowserSandboxControl>,
     pub isolation_boundary: String,
     pub privacy_controls: Vec<String>,
     pub egress_controls: Vec<String>,
@@ -92,6 +106,8 @@ pub struct BrowserAdmissionRequest {
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
     #[serde(default)]
+    pub required_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
     pub allow_downgrade: bool,
     #[serde(default)]
     pub task_label: Option<String>,
@@ -114,6 +130,10 @@ pub struct BrowserAdmissionResponse {
     pub selected_level: Option<BrowserSandboxLevel>,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    pub requested_controls: Vec<BrowserSandboxControl>,
+    pub requested_profile_controls: Vec<BrowserSandboxControl>,
+    pub missing_controls: Vec<BrowserSandboxControl>,
+    pub level_satisfies_requested_controls: bool,
     pub downgrade_allowed: bool,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,

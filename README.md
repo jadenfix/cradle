@@ -56,8 +56,10 @@ deliberately reports
 marks every profile as `planned` or `unavailable` until a real browser launcher,
 egress boundary, storage policy, and teardown path enforce the claim. Call
 `POST /v1/browser/admit` or the MCP `admit_browser_session` tool before starting
-browser work; the current implementation always rejects admission and explains
-which production pieces are still missing.
+browser work; callers can include `required_controls` such as `fresh_profile`,
+`egress_policy`, `local_network_block`, `sealed_artifacts`, or OS/remote
+isolation controls. The current implementation always rejects admission and
+explains which production pieces or requested controls are still missing.
 
 ## Ecosystem
 
