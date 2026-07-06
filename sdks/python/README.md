@@ -65,6 +65,8 @@ client = Client("http://127.0.0.1:7300", api_key="sk-...", timeout=65.0)
 | --- | --- | --- | --- |
 | `client.health()` | `GET /v1/health` | no | `dict` |
 | `client.capabilities()` | `GET /v1/capabilities` | yes | `dict` |
+| `client.browser_profiles()` | `GET /v1/browser/profiles` | yes | `dict` |
+| `client.browser_admit(request)` | `POST /v1/browser/admit` | yes | `dict` |
 | `client.execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `client.create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |

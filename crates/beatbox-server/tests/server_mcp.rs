@@ -2,6 +2,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
+    BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxLevel, BrowserSensitivity, BrowserSessionActor,
     CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord,
     JobStatus, Lane, Policy, Source,
 };
@@ -815,6 +817,169 @@ async fn auth_required_keeps_bearer_compatibility() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
+async fn browser_profiles_are_authenticated_control_plane_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/profiles")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/browser/profiles")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let profiles: BrowserProfilesResponse = serde_json::from_slice(&body)?;
+    assert!(!profiles.runnable_browser_sessions);
+    assert_eq!(profiles.default_level, None);
+    assert_eq!(
+        profiles.integration.status,
+        BrowserSandboxAvailability::Planned
+    );
+    assert!(
+        profiles
+            .profiles
+            .iter()
+            .all(|profile| profile.availability != BrowserSandboxAvailability::Available),
+        "no browser profile is runnable until a real browser substrate enforces it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_admission_is_authenticated_and_fails_closed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let request = BrowserAdmissionRequest {
+        requested_level: BrowserSandboxLevel::OsIsolated,
+        actor: BrowserSessionActor::Agent,
+        sensitivity: BrowserSensitivity::Sensitive,
+        allow_downgrade: true,
+        task_label: Some("pay bills".to_string()),
+    };
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/admit")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/admit")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(serde_json::to_vec(&request)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let decision: beatbox_core::BrowserAdmissionResponse = serde_json::from_slice(&body)?;
+    assert_eq!(decision.decision, BrowserAdmissionDecision::Rejected);
+    assert!(!decision.runnable_browser_sessions);
+    assert_eq!(decision.requested_level, BrowserSandboxLevel::OsIsolated);
+    assert_eq!(decision.selected_level, None);
+    assert_eq!(decision.actor, BrowserSessionActor::Agent);
+    assert_eq!(decision.sensitivity, BrowserSensitivity::Sensitive);
+    assert!(decision.downgrade_allowed);
+    assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
+    assert!(
+        decision
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("no weaker browser profile"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_admission_rejects_unknown_request_fields() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/admit")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "requested_level": "os_isolated",
+                        "actor": "agent",
+                        "sensitivity": "sensitive",
+                        "allow_downgrade": false,
+                        "secret_note": "ignored"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_json");
+    assert!(error.error.message.contains("secret_note"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn capabilities_embed_the_browser_profile_contract() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/v1/capabilities")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["browser_sandbox"]["runnable_browser_sessions"], false);
+    assert_eq!(
+        value["browser_sandbox"]["default_level"],
+        serde_json::Value::Null
+    );
+    assert_eq!(value["browser_sandbox"]["integration"]["consumer"], "tempo");
+    assert!(
+        value["browser_sandbox"]["profiles"]
+            .as_array()
+            .is_some_and(|profiles| profiles
+                .iter()
+                .all(|profile| profile["availability"] != "available"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn auth_required_rejects_mcp_tools_list_without_key() -> Result<(), Box<dyn std::error::Error>>
 {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -886,7 +1051,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
     assert!(
         value["paths"]
             .as_object()
-            .is_some_and(|paths| paths.contains_key("/v1/jobs"))
+            .is_some_and(|paths| paths.contains_key("/v1/jobs")
+                && paths.contains_key("/v1/browser/profiles")
+                && paths.contains_key("/v1/browser/admit"))
     );
 
     // The spec now carries full component schemas so SDKs can be generated from it.
@@ -902,9 +1069,36 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "Metrics",
         "JobRecord",
         "ErrorResponse",
+        "BrowserProfilesResponse",
+        "BrowserSandboxProfile",
+        "BrowserIntegrationContract",
+        "BrowserSandboxLevel",
+        "BrowserSandboxAvailability",
+        "BrowserAdmissionRequest",
+        "BrowserAdmissionResponse",
+        "BrowserAdmissionDecision",
+        "BrowserSessionActor",
+        "BrowserSensitivity",
+        "CapabilitiesResponse",
+        "CapabilityLane",
+        "CapabilityLimits",
     ] {
         assert!(schemas.contains_key(expected), "missing schema: {expected}");
     }
+    let capabilities_200 = &value["paths"]["/v1/capabilities"]["get"]["responses"]["200"];
+    let schema_ref = capabilities_200["content"]["application/json"]["schema"]["$ref"]
+        .as_str()
+        .ok_or("capabilities 200 should reference a schema")?;
+    assert!(
+        schema_ref.ends_with("/CapabilitiesResponse"),
+        "got {schema_ref}"
+    );
+    assert!(
+        schemas["CapabilitiesResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "browser_sandbox")),
+        "capabilities schema should require browser_sandbox"
+    );
     // The execute path references the ExecutionResult schema, not just a status code.
     let execute_200 = &value["paths"]["/v1/execute"]["post"]["responses"]["200"];
     let schema_ref = execute_200["content"]["application/json"]["schema"]["$ref"]
@@ -980,6 +1174,8 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     let tools = &value["result"]["tools"];
     assert!(tools.to_string().contains("run_wasm"));
     assert!(tools.to_string().contains("get_capabilities"));
+    assert!(tools.to_string().contains("get_browser_profiles"));
+    assert!(tools.to_string().contains("admit_browser_session"));
     Ok(())
 }
 
@@ -1062,6 +1258,219 @@ async fn mcp_get_capabilities_rejects_unknown_arguments() -> Result<(), Box<dyn 
         value["error"]["message"]
             .as_str()
             .is_some_and(|message| message.contains("ignored"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_capabilities_returns_structured_content() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_capabilities", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(false));
+    assert_eq!(result["content"][0]["text"], "beatbox capabilities");
+    assert_eq!(
+        result["structuredContent"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(result["structuredContent"]["lanes"].is_array());
+    assert_eq!(
+        result["structuredContent"]["browser_sandbox"]["runnable_browser_sessions"],
+        false
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_profiles_returns_structured_content()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "get_browser_profiles", "arguments": {}}
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(false));
+    assert_eq!(
+        result["content"][0]["text"],
+        "beatbox browser sandbox profiles"
+    );
+    assert_eq!(
+        result["structuredContent"]["runnable_browser_sessions"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["integration"]["selection_field"],
+        "browser_sandbox_level"
+    );
+    assert!(
+        result["structuredContent"]["profiles"]
+            .as_array()
+            .is_some_and(|profiles| profiles
+                .iter()
+                .all(|profile| profile["availability"] != "available"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_get_browser_profiles_rejects_unknown_arguments()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "get_browser_profiles",
+            "arguments": {"level": "os_isolated"}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("level"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_admit_browser_session_returns_structured_rejection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "admit_browser_session",
+            "arguments": {
+                "requested_level": "network_suppressed",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "allow_downgrade": true,
+                "task_label": "review account"
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    let result = &value["result"];
+    assert_eq!(result["isError"], serde_json::json!(true));
+    assert_eq!(
+        result["content"][0]["text"],
+        "beatbox browser admission decision"
+    );
+    assert_eq!(result["structuredContent"]["decision"], "rejected");
+    assert_eq!(
+        result["structuredContent"]["runnable_browser_sessions"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["selected_level"],
+        serde_json::Value::Null
+    );
+    assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
+    assert!(
+        result["structuredContent"]["reasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|reason| reason
+                .as_str()
+                .is_some_and(|reason| reason.contains("no weaker browser profile"))))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_admit_browser_session_rejects_mistyped_arguments()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "admit_browser_session",
+            "arguments": {
+                "requested_level": "network_suppressed",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "allow_downgrade": "yes"
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("boolean"))
     );
     Ok(())
 }

@@ -44,6 +44,21 @@ OpenAPI JSON, MCP tools, and rusqlite-backed async jobs. Native Python, JS,
 exec jails, stateful sessions, and the `beater.js` integration remain later
 milestones.
 
+Browser automation is exposed only as an explicit discovery contract today, not
+as a runnable browser lane. Authenticated callers can read
+`GET /v1/browser/profiles`, call the MCP `get_browser_profiles` tool, or inspect
+the `browser_sandbox` section of `/v1/capabilities` to see the profile levels
+Beatbox intends to support for Tempo-style integrations: external
+instrumentation, ephemeral profiles, network-suppressed browsing, sealed
+persisted state, OS-isolated browsing, and remote isolated workers. The response
+deliberately reports
+`runnable_browser_sessions: false`, serializes `default_level` as `null`, and
+marks every profile as `planned` or `unavailable` until a real browser launcher,
+egress boundary, storage policy, and teardown path enforce the claim. Call
+`POST /v1/browser/admit` or the MCP `admit_browser_session` tool before starting
+browser work; the current implementation always rejects admission and explains
+which production pieces are still missing.
+
 ## Ecosystem
 
 beatbox is part of the [ecosystem](https://github.com/jadenfix/ecosystem) — a family of Rust-first, local-first agent-infrastructure projects. It is fully standalone by design: the CLI, daemon, REST API, and MCP endpoint run on their own, and sibling integrations should plug in only over those protocol boundaries. Planned connection points include:

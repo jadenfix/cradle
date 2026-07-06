@@ -64,6 +64,8 @@ Redirects are never followed, so the api-key header can't leak cross-origin.
 | -------------------------- | ------------------------ | ------------------- |
 | `health()`                 | `GET /v1/health`         | `JsonNode` (raw)    |
 | `capabilities()`           | `GET /v1/capabilities`   | `JsonNode` (raw)    |
+| `browserProfiles()`        | `GET /v1/browser/profiles` | `JsonNode` (raw)  |
+| `browserAdmit(request)`    | `POST /v1/browser/admit` | `JsonNode` (raw)    |
 | `execute(request)`         | `POST /v1/execute`       | `ExecutionResult`   |
 | `createJob(request)`       | `POST /v1/jobs`          | `CreateJobResponse` |
 | `getJob(id)`               | `GET /v1/jobs/{id}`      | `JobRecord`         |

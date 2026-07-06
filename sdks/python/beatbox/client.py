@@ -78,6 +78,14 @@ class Client:
         """GET /v1/capabilities. Returns raw JSON."""
         return self._request("GET", "/v1/capabilities", auth=True)
 
+    def browser_profiles(self) -> Dict[str, Any]:
+        """GET /v1/browser/profiles. Returns raw JSON."""
+        return self._request("GET", "/v1/browser/profiles", auth=True)
+
+    def browser_admit(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """POST /v1/browser/admit. Returns raw admission decision JSON."""
+        return self._request("POST", "/v1/browser/admit", auth=True, body=request)
+
     def execute(self, request: ExecuteRequest) -> ExecutionResult:
         """POST /v1/execute. Returns an :class:`ExecutionResult`."""
         body = self._request("POST", "/v1/execute", auth=True, body=request.to_dict())

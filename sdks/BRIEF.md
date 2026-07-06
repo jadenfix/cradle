@@ -34,6 +34,8 @@ A client is constructed with:
 | --- | --- | --- | --- |
 | `health()` | `GET /v1/health` | no | `{status, version, uptime_s}` (raw JSON ok) |
 | `capabilities()` | `GET /v1/capabilities` | yes | raw JSON |
+| `browser_profiles()` | `GET /v1/browser/profiles` | yes | raw JSON |
+| `browser_admit(request)` | `POST /v1/browser/admit` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
 | `create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` (`202`) |
 | `get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
@@ -69,7 +71,10 @@ Provide ergonomic constructors so the 90% case is one line, e.g.
 
 ## Response models
 
-Mirror these components from `openapi.json`: `ExecutionResult` (status, value,
+Mirror these components from `openapi.json`: `CapabilitiesResponse`,
+`BrowserProfilesResponse`, `BrowserAdmissionRequest`, `BrowserAdmissionResponse`
+(raw JSON return is acceptable until each language adds typed convenience models),
+`ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,
 `fuel_used` nullable, `peak_memory_bytes` nullable), `JobRecord`

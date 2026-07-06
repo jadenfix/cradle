@@ -90,6 +90,8 @@ key can't leak cross-origin.
 | --- | --- | --- |
 | `health()` | `GET /v1/health` | `array` (raw JSON) |
 | `capabilities()` | `GET /v1/capabilities` | `array` (raw JSON) |
+| `browserProfiles()` | `GET /v1/browser/profiles` | `array` (raw JSON) |
+| `browserAdmit($request)` | `POST /v1/browser/admit` | `array` (raw JSON) |
 | `execute($request)` | `POST /v1/execute` | `ExecutionResult` |
 | `createJob($request)` | `POST /v1/jobs` | `CreateJobResponse` |
 | `getJob($jobId)` | `GET /v1/jobs/{id}` | `JobRecord` |

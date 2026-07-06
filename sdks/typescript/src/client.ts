@@ -90,6 +90,25 @@ export class BeatboxClient {
     });
   }
 
+  /** `GET /v1/browser/profiles` — browser sandbox profile discovery. */
+  browserProfiles(): Promise<unknown> {
+    return this.request<unknown>({
+      method: "GET",
+      path: "/v1/browser/profiles",
+      auth: true,
+    });
+  }
+
+  /** `POST /v1/browser/admit` — browser sandbox admission preflight. */
+  admitBrowserSession(request: unknown): Promise<unknown> {
+    return this.request<unknown>({
+      method: "POST",
+      path: "/v1/browser/admit",
+      auth: true,
+      body: request,
+    });
+  }
+
   /** `POST /v1/execute` — run a program synchronously. */
   execute(request: ExecuteRequest): Promise<ExecutionResult> {
     return this.request<ExecutionResult>({

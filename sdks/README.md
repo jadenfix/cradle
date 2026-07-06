@@ -22,12 +22,14 @@ the JDK ships no JSON). None uses a code-gen runtime.
 
 The human-readable design contract is [`BRIEF.md`](./BRIEF.md). The canonical
 machine-readable API spec is [`openapi.json`](./openapi.json). Every SDK exposes
-the same seven methods:
+the same methods:
 
 | Method | HTTP | Auth |
 | --- | --- | --- |
 | `health` | `GET /v1/health` | no |
 | `capabilities` | `GET /v1/capabilities` | yes |
+| `browser_profiles` / `browserProfiles` | `GET /v1/browser/profiles` | yes |
+| `browser_admit` / `admitBrowserSession` | `POST /v1/browser/admit` | yes |
 | `execute` | `POST /v1/execute` | yes |
 | `create_job` | `POST /v1/jobs` | yes |
 | `get_job` | `GET /v1/jobs/{id}` | yes |
