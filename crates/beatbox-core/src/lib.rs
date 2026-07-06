@@ -327,6 +327,43 @@ pub enum BrowserAdapterValidationDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterConformanceExpectation {
+    pub decision: BrowserAdapterValidationDecision,
+    pub manifest_complete: bool,
+    pub launchable: bool,
+    pub trusted_for_sensitive_work: bool,
+    pub endpoint_network_policy_bound: bool,
+    pub missing_levels: Vec<BrowserSandboxLevel>,
+    pub missing_controls: Vec<BrowserSandboxControl>,
+    pub missing_guard_fields: Vec<String>,
+    pub missing_completion_proofs: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterConformanceCase {
+    pub name: String,
+    pub manifest: BrowserAdapterManifestRequest,
+    pub expected_rest_status: u16,
+    #[schema(required = true)]
+    pub expected_rest_error_code: Option<String>,
+    #[schema(required = true)]
+    pub expected_mcp_error_code: Option<i64>,
+    pub expected_mcp_error_message_contains: Vec<String>,
+    #[schema(required = true)]
+    pub expected_validation: Option<BrowserAdapterConformanceExpectation>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterConformanceProfile {
+    pub profile_version: String,
+    pub field_complete_manifest: BrowserAdapterManifestRequest,
+    pub field_complete_expectation: BrowserAdapterConformanceExpectation,
+    pub required_cases: Vec<BrowserAdapterConformanceCase>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterManifestResponse {
     pub decision: BrowserAdapterValidationDecision,
     pub manifest_complete: bool,
@@ -343,6 +380,7 @@ pub struct BrowserAdapterManifestResponse {
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
     pub adapter_contract: BrowserAdapterContract,
+    pub conformance_profile: BrowserAdapterConformanceProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

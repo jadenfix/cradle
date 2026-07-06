@@ -407,7 +407,7 @@ mod tests {
             request_tx
                 .send(request)
                 .map_err(|_| std::io::Error::other("request receiver dropped"))?;
-            let body = r#"{"decision":"rejected","manifest_complete":false,"launchable":false,"trusted_for_sensitive_work":false,"adapter_id":"tempo-os-jail-v1","launch_endpoint":"https://adapter.example/launch","endpoint_network_policy_bound":false,"missing_levels":[],"missing_controls":[],"missing_guard_fields":[],"missing_completion_proofs":[],"reasons":["no trusted adapter registration, endpoint binding, or launch path is implemented"],"required_next_steps":["implement authenticated adapter registration"],"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["guard_plan"],"required_guard_fields":["guard_plan.network.deny_metadata_endpoints"],"required_completion_proofs":["temporary profile directory removed"],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"}}"#;
+            let body = r#"{"decision":"rejected","manifest_complete":false,"launchable":false,"trusted_for_sensitive_work":false,"adapter_id":"tempo-os-jail-v1","launch_endpoint":"https://adapter.example/launch","endpoint_network_policy_bound":false,"missing_levels":[],"missing_controls":[],"missing_guard_fields":[],"missing_completion_proofs":[],"reasons":["no trusted adapter registration, endpoint binding, or launch path is implemented"],"required_next_steps":["implement authenticated adapter registration"],"adapter_contract":{"version":"browser-adapter-v1","status":"planned","launch_endpoint":null,"handoff_fields":["guard_plan"],"required_guard_fields":["guard_plan.network.deny_metadata_endpoints"],"required_completion_proofs":["temporary profile directory removed"],"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"},"conformance_profile":{"profile_version":"browser-adapter-conformance-v1","field_complete_manifest":{"adapter_id":"tempo-conformance-adapter-v1","contract_version":"browser-adapter-v1","launch_endpoint":"https://adapter.example/launch","supported_levels":["os_isolated"],"supported_controls":["os_process_isolation"],"guard_fields":["guard_plan.network.deny_metadata_endpoints"],"completion_proofs":["temporary profile directory removed"]},"field_complete_expectation":{"decision":"rejected","manifest_complete":false,"launchable":false,"trusted_for_sensitive_work":false,"endpoint_network_policy_bound":false,"missing_levels":[],"missing_controls":[],"missing_guard_fields":[],"missing_completion_proofs":[]},"required_cases":[{"name":"insecure_scheme_rejected_before_validation","manifest":{"adapter_id":"tempo-conformance-adapter-v1","contract_version":"browser-adapter-v1","launch_endpoint":"http://adapter.example/launch","supported_levels":["os_isolated"],"supported_controls":["os_process_isolation"],"guard_fields":["guard_plan.network.deny_metadata_endpoints"],"completion_proofs":["temporary profile directory removed"]},"expected_rest_status":400,"expected_rest_error_code":"invalid_browser_adapter_manifest","expected_mcp_error_code":-32602,"expected_mcp_error_message_contains":["must use https"],"expected_validation":null,"notes":["parser failure"]}],"notes":["not a launch grant"]}}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -448,6 +448,10 @@ mod tests {
         assert!(!validation.launchable);
         assert!(!validation.trusted_for_sensitive_work);
         assert!(!validation.endpoint_network_policy_bound);
+        assert_eq!(
+            validation.conformance_profile.profile_version,
+            "browser-adapter-conformance-v1"
+        );
         Ok(())
     }
 

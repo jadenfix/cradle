@@ -91,7 +91,11 @@ missing pieces. It is intentionally not a registration endpoint: even a
 field-complete manifest still returns `decision: rejected`, `manifest_complete:
 false`, `endpoint_network_policy_bound: false`, `launchable: false`, and
 `trusted_for_sensitive_work: false` until Beatbox has production trust,
-endpoint binding, and launch paths.
+endpoint binding, and launch paths. The same response includes a
+`conformance_profile` with a canonical field-complete manifest plus required
+accepted-but-rejected and parser-rejected cases, including separate REST and
+MCP expectations. That profile is the adapter author test fixture for protocol
+compatibility, not a registration credential.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked

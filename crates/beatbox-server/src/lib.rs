@@ -14,15 +14,17 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    BrowserAdapterContract, BrowserAdapterHandoff, BrowserAdapterManifestRequest,
-    BrowserAdapterManifestResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
-    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
-    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
-    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
-    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
-    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
-    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
+    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterHandoff,
+    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
+    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
+    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
+    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
+    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
+    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
+    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
+    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1130,6 +1132,11 @@ fn browser_adapter_manifest_response(
                 .to_string(),
         );
     }
+    let conformance_profile = browser_adapter_conformance_profile(
+        &adapter_contract,
+        &required_levels,
+        &required_controls,
+    );
 
     BrowserAdapterManifestResponse {
         decision: BrowserAdapterValidationDecision::Rejected,
@@ -1153,6 +1160,184 @@ fn browser_adapter_manifest_response(
             "run e2e sensitive-browser tests before marking any adapter launchable".to_string(),
         ],
         adapter_contract,
+        conformance_profile,
+    }
+}
+
+fn browser_adapter_conformance_profile(
+    adapter_contract: &BrowserAdapterContract,
+    required_levels: &[BrowserSandboxLevel],
+    required_controls: &[BrowserSandboxControl],
+) -> BrowserAdapterConformanceProfile {
+    let field_complete_manifest = browser_adapter_field_complete_manifest(
+        adapter_contract,
+        required_levels,
+        required_controls,
+        "tempo-conformance-adapter-v1",
+        Some("https://adapter.example/launch".to_string()),
+    );
+
+    let mut missing_level_manifest = field_complete_manifest.clone();
+    missing_level_manifest.supported_levels = vec![BrowserSandboxLevel::NetworkSuppressed];
+    let missing_level_expectation = browser_adapter_conformance_expectation(
+        vec![
+            BrowserSandboxLevel::EphemeralProfile,
+            BrowserSandboxLevel::SealedState,
+            BrowserSandboxLevel::OsIsolated,
+            BrowserSandboxLevel::RemoteIsolated,
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    let mut external_level_manifest = field_complete_manifest.clone();
+    external_level_manifest
+        .supported_levels
+        .push(BrowserSandboxLevel::InstrumentedExternal);
+
+    let mut http_endpoint_manifest = field_complete_manifest.clone();
+    http_endpoint_manifest.launch_endpoint = Some("http://adapter.example/launch".to_string());
+
+    let mut dns_rebinding_manifest = field_complete_manifest.clone();
+    dns_rebinding_manifest.launch_endpoint = Some("https://127.0.0.1.nip.io/launch".to_string());
+
+    BrowserAdapterConformanceProfile {
+        profile_version: "browser-adapter-conformance-v1".to_string(),
+        field_complete_manifest: field_complete_manifest.clone(),
+        field_complete_expectation: browser_adapter_conformance_expectation(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+        required_cases: vec![
+            BrowserAdapterConformanceCase {
+                name: "field_complete_manifest_stays_fail_closed".to_string(),
+                manifest: field_complete_manifest,
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_mcp_error_code: None,
+                expected_mcp_error_message_contains: Vec::new(),
+                expected_validation: Some(browser_adapter_conformance_expectation(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                notes: vec![
+                    "A field-complete manifest is conformance metadata only; it must not become launchable until endpoint binding and trusted registration exist."
+                        .to_string(),
+                ],
+            },
+            BrowserAdapterConformanceCase {
+                name: "missing_required_level_reports_gap".to_string(),
+                manifest: missing_level_manifest,
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_mcp_error_code: None,
+                expected_mcp_error_message_contains: Vec::new(),
+                expected_validation: Some(missing_level_expectation),
+                notes: vec![
+                    "The response must remain rejected and list missing sandbox levels instead of silently downgrading."
+                        .to_string(),
+                ],
+            },
+            BrowserAdapterConformanceCase {
+                name: "instrumented_external_not_sandbox_capable".to_string(),
+                manifest: external_level_manifest,
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_mcp_error_code: None,
+                expected_mcp_error_message_contains: Vec::new(),
+                expected_validation: Some(browser_adapter_conformance_expectation(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                notes: vec![
+                    "Adapters must not claim instrumented_external as a sensitive-work sandbox level."
+                        .to_string(),
+                ],
+            },
+            BrowserAdapterConformanceCase {
+                name: "insecure_scheme_rejected_before_validation".to_string(),
+                manifest: http_endpoint_manifest,
+                expected_rest_status: StatusCode::BAD_REQUEST.as_u16(),
+                expected_rest_error_code: Some("invalid_browser_adapter_manifest".to_string()),
+                expected_mcp_error_code: Some(-32602),
+                expected_mcp_error_message_contains: vec!["must use https".to_string()],
+                expected_validation: None,
+                notes: vec![
+                    "Endpoint shape errors fail at request validation before a manifest response is emitted; MCP reports the same parser failure as a JSON-RPC invalid-params error."
+                        .to_string(),
+                ],
+            },
+            BrowserAdapterConformanceCase {
+                name: "dns_rebinding_hostname_stays_incomplete".to_string(),
+                manifest: dns_rebinding_manifest,
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_mcp_error_code: None,
+                expected_mcp_error_message_contains: Vec::new(),
+                expected_validation: Some(browser_adapter_conformance_expectation(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                notes: vec![
+                    "A syntactically valid hostname can still resolve to local/private space; conformance requires endpoint_network_policy_bound=false."
+                        .to_string(),
+                ],
+            },
+        ],
+        notes: vec![
+            "Run these cases against both REST and MCP integrations before treating an adapter as compatible; use the protocol-specific expected_rest_* and expected_mcp_* fields."
+                .to_string(),
+            "The profile is not a registration grant and does not authorize browser launch."
+                .to_string(),
+            "Production registration must bind DNS, proxy, redirects, retries, and the request builder to the same endpoint policy."
+                .to_string(),
+        ],
+    }
+}
+
+fn browser_adapter_conformance_expectation(
+    missing_levels: Vec<BrowserSandboxLevel>,
+    missing_controls: Vec<BrowserSandboxControl>,
+    missing_guard_fields: Vec<String>,
+    missing_completion_proofs: Vec<String>,
+) -> BrowserAdapterConformanceExpectation {
+    BrowserAdapterConformanceExpectation {
+        decision: BrowserAdapterValidationDecision::Rejected,
+        manifest_complete: false,
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        missing_levels,
+        missing_controls,
+        missing_guard_fields,
+        missing_completion_proofs,
+    }
+}
+
+fn browser_adapter_field_complete_manifest(
+    adapter_contract: &BrowserAdapterContract,
+    required_levels: &[BrowserSandboxLevel],
+    required_controls: &[BrowserSandboxControl],
+    adapter_id: &str,
+    launch_endpoint: Option<String>,
+) -> BrowserAdapterManifestRequest {
+    BrowserAdapterManifestRequest {
+        adapter_id: adapter_id.to_string(),
+        contract_version: adapter_contract.version.clone(),
+        launch_endpoint,
+        supported_levels: required_levels.to_vec(),
+        supported_controls: required_controls.to_vec(),
+        guard_fields: adapter_contract.required_guard_fields.clone(),
+        completion_proofs: adapter_contract.required_completion_proofs.clone(),
     }
 }
 
@@ -1748,6 +1933,9 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserProfilesResponse,
         beatbox_core::BrowserIntegrationContract,
         beatbox_core::BrowserAdapterContract,
+        beatbox_core::BrowserAdapterConformanceCase,
+        beatbox_core::BrowserAdapterConformanceExpectation,
+        beatbox_core::BrowserAdapterConformanceProfile,
         beatbox_core::BrowserAdapterManifestRequest,
         beatbox_core::BrowserAdapterManifestResponse,
         beatbox_core::BrowserAdapterValidationDecision,
@@ -2165,7 +2353,7 @@ fn mcp_tools() -> Value {
         },
         {
             "name": "validate_browser_adapter",
-            "description": "Validate a proposed browser adapter manifest against beatbox's planned Tempo handoff contract without trusting or launching the adapter.",
+            "description": "Validate a proposed browser adapter manifest against beatbox's planned Tempo handoff contract without trusting or launching the adapter. Responses include a conformance_profile with canonical fail-closed cases for REST/MCP adapter compatibility tests.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,

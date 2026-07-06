@@ -216,16 +216,19 @@ class TestClientRequest(unittest.TestCase):
             captured["req"] = req
             body = {
                 "decision": "rejected",
-                "manifest_complete": True,
+                "manifest_complete": False,
                 "launchable": False,
                 "trusted_for_sensitive_work": False,
                 "adapter_id": "tempo-os-jail-v1",
                 "launch_endpoint": "https://adapter.example/launch",
+                "endpoint_network_policy_bound": False,
                 "missing_levels": [],
                 "missing_controls": [],
                 "missing_guard_fields": [],
                 "missing_completion_proofs": [],
-                "reasons": ["no trusted adapter registration or launch path is implemented"],
+                "reasons": [
+                    "no trusted adapter registration, endpoint binding, or launch path is implemented"
+                ],
                 "required_next_steps": ["implement authenticated adapter registration"],
                 "adapter_contract": {
                     "version": "browser-adapter-v1",
@@ -235,6 +238,50 @@ class TestClientRequest(unittest.TestCase):
                     "required_guard_fields": ["guard_plan.network.deny_metadata_endpoints"],
                     "required_completion_proofs": ["temporary profile directory removed"],
                     "unavailable_reason": "no browser adapter launch endpoint is implemented by this daemon",
+                },
+                "conformance_profile": {
+                    "profile_version": "browser-adapter-conformance-v1",
+                    "field_complete_manifest": {
+                        "adapter_id": "tempo-conformance-adapter-v1",
+                        "contract_version": "browser-adapter-v1",
+                        "launch_endpoint": "https://adapter.example/launch",
+                        "supported_levels": ["os_isolated"],
+                        "supported_controls": ["os_process_isolation"],
+                        "guard_fields": ["guard_plan.network.deny_metadata_endpoints"],
+                        "completion_proofs": ["temporary profile directory removed"],
+                    },
+                    "field_complete_expectation": {
+                        "decision": "rejected",
+                        "manifest_complete": False,
+                        "launchable": False,
+                        "trusted_for_sensitive_work": False,
+                        "endpoint_network_policy_bound": False,
+                        "missing_levels": [],
+                        "missing_controls": [],
+                        "missing_guard_fields": [],
+                        "missing_completion_proofs": [],
+                    },
+                    "required_cases": [
+                        {
+                            "name": "dns_rebinding_hostname_stays_incomplete",
+                            "expected_rest_status": 200,
+                            "expected_rest_error_code": None,
+                            "expected_mcp_error_code": None,
+                            "expected_mcp_error_message_contains": [],
+                            "expected_validation": {
+                                "decision": "rejected",
+                                "manifest_complete": False,
+                                "launchable": False,
+                                "trusted_for_sensitive_work": False,
+                                "endpoint_network_policy_bound": False,
+                                "missing_levels": [],
+                                "missing_controls": [],
+                                "missing_guard_fields": [],
+                                "missing_completion_proofs": [],
+                            },
+                        }
+                    ],
+                    "notes": ["not a launch grant"],
                 },
             }
             return _FakeResponse(200, json.dumps(body).encode())
@@ -254,8 +301,12 @@ class TestClientRequest(unittest.TestCase):
         self.assertEqual(req.get_header("Content-type"), "application/json")
         self.assertEqual(json.loads(req.data.decode()), request)
         self.assertEqual(validation["decision"], "rejected")
-        self.assertTrue(validation["manifest_complete"])
+        self.assertFalse(validation["manifest_complete"])
         self.assertFalse(validation["launchable"])
+        self.assertEqual(
+            validation["conformance_profile"]["profile_version"],
+            "browser-adapter-conformance-v1",
+        )
 
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")

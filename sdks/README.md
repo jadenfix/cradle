@@ -54,7 +54,10 @@ Browser adapter manifests are also raw JSON today. Pass them through to
 syntax-checks the launch endpoint, but does not resolve or bind that endpoint
 to DNS/proxy/redirect/retry policy. Responses still return `manifest_complete:
 false`, `endpoint_network_policy_bound: false`, and `launchable: false` until a
-trusted adapter registration and launch path exists.
+trusted adapter registration and launch path exists. Preserve the
+`conformance_profile` field in raw JSON responses; it contains the canonical
+field-complete manifest, expected missing-gap reports, and protocol-specific
+REST/MCP negative cases Tempo adapters should run.
 
 Language-specific method names are idiomatic: Rust and Python expose
 `browser_adapter_validate`, Ruby exposes `validate_browser_adapter`, TypeScript,

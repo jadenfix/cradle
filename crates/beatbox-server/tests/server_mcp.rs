@@ -2,8 +2,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdapterManifestResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
-    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BrowserAdapterConformanceExpectation, BrowserAdapterManifestResponse, BrowserAdmissionDecision,
+    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
     BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
     ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
@@ -65,6 +65,33 @@ fn complete_adapter_manifest() -> serde_json::Value {
             "egress proxy log sealed or discarded according to artifact_mode"
         ]
     })
+}
+
+fn assert_adapter_validation_matches_expectation(
+    validation: &BrowserAdapterManifestResponse,
+    expected: &BrowserAdapterConformanceExpectation,
+) {
+    assert_eq!(validation.decision, expected.decision);
+    assert_eq!(validation.manifest_complete, expected.manifest_complete);
+    assert_eq!(validation.launchable, expected.launchable);
+    assert_eq!(
+        validation.trusted_for_sensitive_work,
+        expected.trusted_for_sensitive_work
+    );
+    assert_eq!(
+        validation.endpoint_network_policy_bound,
+        expected.endpoint_network_policy_bound
+    );
+    assert_eq!(validation.missing_levels, expected.missing_levels);
+    assert_eq!(validation.missing_controls, expected.missing_controls);
+    assert_eq!(
+        validation.missing_guard_fields,
+        expected.missing_guard_fields
+    );
+    assert_eq!(
+        validation.missing_completion_proofs,
+        expected.missing_completion_proofs
+    );
 }
 
 #[tokio::test]
@@ -1185,6 +1212,186 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .iter()
             .any(|reason| reason.contains("endpoint binding"))
     );
+    assert_eq!(
+        validation.conformance_profile.profile_version,
+        "browser-adapter-conformance-v1"
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_manifest
+            .contract_version,
+        validation.adapter_contract.version
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_manifest
+            .launch_endpoint
+            .as_deref(),
+        Some("https://adapter.example/launch")
+    );
+    assert!(
+        !validation
+            .conformance_profile
+            .field_complete_expectation
+            .launchable
+    );
+    assert!(
+        !validation
+            .conformance_profile
+            .field_complete_expectation
+            .endpoint_network_policy_bound
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .required_cases
+            .iter()
+            .any(
+                |case| case.name == "dns_rebinding_hostname_stays_incomplete"
+                    && case.expected_rest_status == StatusCode::OK.as_u16()
+                    && case.expected_mcp_error_code.is_none()
+                    && case
+                        .expected_validation
+                        .as_ref()
+                        .is_some_and(|expected| !expected.endpoint_network_policy_bound)
+            )
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .required_cases
+            .iter()
+            .any(
+                |case| case.name == "insecure_scheme_rejected_before_validation"
+                    && case.expected_rest_status == StatusCode::BAD_REQUEST.as_u16()
+                    && case.expected_rest_error_code.as_deref()
+                        == Some("invalid_browser_adapter_manifest")
+                    && case.expected_mcp_error_code == Some(-32602)
+                    && case
+                        .expected_mcp_error_message_contains
+                        .iter()
+                        .any(|message| message == "must use https")
+            )
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .required_cases
+            .iter()
+            .any(|case| case.name == "missing_required_level_reports_gap"
+                && case
+                    .expected_validation
+                    .as_ref()
+                    .is_some_and(|expected| expected
+                        .missing_levels
+                        .contains(&BrowserSandboxLevel::OsIsolated)))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(complete_adapter_manifest().to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let validation: BrowserAdapterManifestResponse = serde_json::from_slice(&body)?;
+
+    for case in &validation.conformance_profile.required_cases {
+        let rest_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/adapter/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&case.manifest)?))?,
+            )
+            .await?;
+        assert_eq!(
+            rest_response.status().as_u16(),
+            case.expected_rest_status,
+            "REST conformance case {} returned unexpected status",
+            case.name
+        );
+        let rest_body = to_bytes(rest_response.into_body(), usize::MAX).await?;
+        if let Some(expected_error_code) = &case.expected_rest_error_code {
+            let error: ErrorResponse = serde_json::from_slice(&rest_body)?;
+            assert_eq!(
+                error.error.code, *expected_error_code,
+                "REST conformance case {} returned unexpected error code",
+                case.name
+            );
+        } else {
+            let rest_validation: BrowserAdapterManifestResponse =
+                serde_json::from_slice(&rest_body)?;
+            let expected = case
+                .expected_validation
+                .as_ref()
+                .ok_or("successful REST case should publish expected_validation")?;
+            assert_adapter_validation_matches_expectation(&rest_validation, expected);
+        }
+
+        let mcp_request = json!({
+            "jsonrpc": "2.0",
+            "id": case.name,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_browser_adapter",
+                "arguments": case.manifest
+            }
+        });
+        let mcp_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/mcp")
+                    .header("content-type", "application/json")
+                    .body(Body::from(mcp_request.to_string()))?,
+            )
+            .await?;
+        assert_eq!(mcp_response.status(), StatusCode::OK);
+        let mcp_body = to_bytes(mcp_response.into_body(), usize::MAX).await?;
+        let mcp_value: serde_json::Value = serde_json::from_slice(&mcp_body)?;
+        if let Some(expected_mcp_error_code) = case.expected_mcp_error_code {
+            assert_eq!(
+                mcp_value["error"]["code"], expected_mcp_error_code,
+                "MCP conformance case {} returned unexpected error code",
+                case.name
+            );
+            for expected_message in &case.expected_mcp_error_message_contains {
+                assert!(
+                    mcp_value["error"]["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains(expected_message)),
+                    "MCP conformance case {} error should contain {:?}",
+                    case.name,
+                    expected_message
+                );
+            }
+        } else {
+            let mcp_validation: BrowserAdapterManifestResponse =
+                serde_json::from_value(mcp_value["result"]["structuredContent"].clone())?;
+            let expected = case
+                .expected_validation
+                .as_ref()
+                .ok_or("successful MCP case should publish expected_validation")?;
+            assert_adapter_validation_matches_expectation(&mcp_validation, expected);
+        }
+    }
     Ok(())
 }
 
@@ -1453,6 +1660,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserSandboxProfile",
         "BrowserIntegrationContract",
         "BrowserAdapterContract",
+        "BrowserAdapterConformanceCase",
+        "BrowserAdapterConformanceExpectation",
+        "BrowserAdapterConformanceProfile",
         "BrowserAdapterManifestRequest",
         "BrowserAdapterManifestResponse",
         "BrowserAdapterValidationDecision",
@@ -1503,6 +1713,24 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                 .iter()
                 .any(|field| field == "endpoint_network_policy_bound")),
         "adapter manifest response should require endpoint_network_policy_bound"
+    );
+    assert!(
+        schemas["BrowserAdapterManifestResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "conformance_profile")),
+        "adapter manifest response should require conformance_profile"
+    );
+    assert!(
+        schemas["BrowserAdapterConformanceCase"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "expected_rest_error_code")
+                && required
+                    .iter()
+                    .any(|field| field == "expected_mcp_error_code")
+                && required.iter().any(|field| field == "expected_validation")),
+        "conformance cases should preserve nullable expected fields"
     );
     // The execute path references the ExecutionResult schema, not just a status code.
     let execute_200 = &value["paths"]["/v1/execute"]["post"]["responses"]["200"];
@@ -1992,6 +2220,38 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["launch_endpoint"],
         serde_json::json!("https://adapter.example/launch")
+    );
+    assert_eq!(
+        result["structuredContent"]["conformance_profile"]["profile_version"],
+        serde_json::json!("browser-adapter-conformance-v1")
+    );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["required_cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case["name"]
+                == "dns_rebinding_hostname_stays_incomplete"
+                && case["expected_rest_status"] == StatusCode::OK.as_u16()
+                && case["expected_mcp_error_code"].is_null()
+                && case["expected_validation"]["endpoint_network_policy_bound"] == false))
+    );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["required_cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case["name"]
+                == "insecure_scheme_rejected_before_validation"
+                && case["expected_rest_status"] == StatusCode::BAD_REQUEST.as_u16()
+                && case["expected_rest_error_code"] == "invalid_browser_adapter_manifest"
+                && case["expected_mcp_error_code"] == -32602
+                && case["expected_validation"].is_null()))
+    );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["required_cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case["name"]
+                == "missing_required_level_reports_gap"
+                && case["expected_validation"]["missing_levels"]
+                    .as_array()
+                    .is_some_and(|levels| levels.iter().any(|level| level == "os_isolated"))))
     );
     assert_eq!(
         result["structuredContent"]["missing_guard_fields"],

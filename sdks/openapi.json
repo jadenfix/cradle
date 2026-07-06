@@ -407,6 +407,155 @@
   },
   "components": {
     "schemas": {
+      "BrowserAdapterConformanceCase": {
+        "type": "object",
+        "required": [
+          "name",
+          "manifest",
+          "expected_rest_status",
+          "expected_rest_error_code",
+          "expected_mcp_error_code",
+          "expected_mcp_error_message_contains",
+          "expected_validation",
+          "notes"
+        ],
+        "properties": {
+          "expected_mcp_error_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "expected_mcp_error_message_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected_rest_error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_rest_status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "expected_validation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserAdapterConformanceExpectation"
+              }
+            ]
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
+          },
+          "name": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BrowserAdapterConformanceExpectation": {
+        "type": "object",
+        "required": [
+          "decision",
+          "manifest_complete",
+          "launchable",
+          "trusted_for_sensitive_work",
+          "endpoint_network_policy_bound",
+          "missing_levels",
+          "missing_controls",
+          "missing_guard_fields",
+          "missing_completion_proofs"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/BrowserAdapterValidationDecision"
+          },
+          "endpoint_network_policy_bound": {
+            "type": "boolean"
+          },
+          "launchable": {
+            "type": "boolean"
+          },
+          "manifest_complete": {
+            "type": "boolean"
+          },
+          "missing_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "missing_guard_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxLevel"
+            }
+          },
+          "trusted_for_sensitive_work": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrowserAdapterConformanceProfile": {
+        "type": "object",
+        "required": [
+          "profile_version",
+          "field_complete_manifest",
+          "field_complete_expectation",
+          "required_cases",
+          "notes"
+        ],
+        "properties": {
+          "field_complete_expectation": {
+            "$ref": "#/components/schemas/BrowserAdapterConformanceExpectation"
+          },
+          "field_complete_manifest": {
+            "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "profile_version": {
+            "type": "string"
+          },
+          "required_cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterConformanceCase"
+            }
+          }
+        }
+      },
       "BrowserAdapterContract": {
         "type": "object",
         "required": [
@@ -574,7 +723,8 @@
           "missing_completion_proofs",
           "reasons",
           "required_next_steps",
-          "adapter_contract"
+          "adapter_contract",
+          "conformance_profile"
         ],
         "properties": {
           "adapter_contract": {
@@ -582,6 +732,9 @@
           },
           "adapter_id": {
             "type": "string"
+          },
+          "conformance_profile": {
+            "$ref": "#/components/schemas/BrowserAdapterConformanceProfile"
           },
           "decision": {
             "$ref": "#/components/schemas/BrowserAdapterValidationDecision"

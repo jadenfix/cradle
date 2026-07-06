@@ -79,7 +79,9 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `intent_warnings`, plus the browser admission `guard_plan` and
 `adapter_handoff`; raw JSON return is acceptable until each language adds typed
 convenience models), `BrowserAdapterManifestRequest`,
-`BrowserAdapterManifestResponse`, `BrowserAdapterValidationDecision`,
+`BrowserAdapterManifestResponse` (including `conformance_profile`),
+`BrowserAdapterConformanceProfile`, `BrowserAdapterConformanceCase`,
+`BrowserAdapterConformanceExpectation`, `BrowserAdapterValidationDecision`,
 `ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,

@@ -41,7 +41,9 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   endpoint shapes, reports contract gaps, and marks endpoint network-policy
   binding false because DNS/proxy/redirect/retry binding is not implemented; a
   field-complete manifest is still untrusted metadata rather than permission to
-  launch browser automation.
+  launch browser automation. The returned `conformance_profile` is safe to use
+  as a compatibility fixture because all cases remain fail-closed and no case
+  grants adapter trust.
 
 ## current grades
 

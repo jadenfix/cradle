@@ -244,16 +244,17 @@ test("validateBrowserAdapter sends authenticated JSON manifest", async () => {
     return new Response(
       JSON.stringify({
         decision: "rejected",
-        manifest_complete: true,
+        manifest_complete: false,
         launchable: false,
         trusted_for_sensitive_work: false,
         adapter_id: "tempo-os-jail-v1",
         launch_endpoint: "https://adapter.example/launch",
+        endpoint_network_policy_bound: false,
         missing_levels: [],
         missing_controls: [],
         missing_guard_fields: [],
         missing_completion_proofs: [],
-        reasons: ["no trusted adapter registration or launch path is implemented"],
+        reasons: ["no trusted adapter registration, endpoint binding, or launch path is implemented"],
         required_next_steps: ["implement authenticated adapter registration"],
         adapter_contract: {
           version: "browser-adapter-v1",
@@ -263,6 +264,48 @@ test("validateBrowserAdapter sends authenticated JSON manifest", async () => {
           required_guard_fields: ["guard_plan.network.deny_metadata_endpoints"],
           required_completion_proofs: ["temporary profile directory removed"],
           unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon",
+        },
+        conformance_profile: {
+          profile_version: "browser-adapter-conformance-v1",
+          field_complete_manifest: {
+            adapter_id: "tempo-conformance-adapter-v1",
+            contract_version: "browser-adapter-v1",
+            launch_endpoint: "https://adapter.example/launch",
+            supported_levels: ["os_isolated"],
+            supported_controls: ["os_process_isolation"],
+            guard_fields: ["guard_plan.network.deny_metadata_endpoints"],
+            completion_proofs: ["temporary profile directory removed"],
+          },
+          field_complete_expectation: {
+            decision: "rejected",
+            manifest_complete: false,
+            launchable: false,
+            trusted_for_sensitive_work: false,
+            endpoint_network_policy_bound: false,
+            missing_levels: [],
+            missing_controls: [],
+            missing_guard_fields: [],
+            missing_completion_proofs: [],
+          },
+          required_cases: [{
+            name: "dns_rebinding_hostname_stays_incomplete",
+            expected_rest_status: 200,
+            expected_rest_error_code: null,
+            expected_mcp_error_code: null,
+            expected_mcp_error_message_contains: [],
+            expected_validation: {
+              decision: "rejected",
+              manifest_complete: false,
+              launchable: false,
+              trusted_for_sensitive_work: false,
+              endpoint_network_policy_bound: false,
+              missing_levels: [],
+              missing_controls: [],
+              missing_guard_fields: [],
+              missing_completion_proofs: [],
+            },
+          }],
+          notes: ["not a launch grant"],
         },
       }),
       { status: 200, headers: { "content-type": "application/json" } },
@@ -288,8 +331,12 @@ test("validateBrowserAdapter sends authenticated JSON manifest", async () => {
     });
     assert.deepEqual(JSON.parse(String(capturedInit?.body)), request);
     assert.equal(response.decision, "rejected");
-    assert.equal(response.manifest_complete, true);
+    assert.equal(response.manifest_complete, false);
     assert.equal(response.launchable, false);
+    assert.equal(
+      (response.conformance_profile as Record<string, unknown>).profile_version,
+      "browser-adapter-conformance-v1",
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

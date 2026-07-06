@@ -77,7 +77,10 @@ reports missing levels, controls, guard fields, and completion proofs, but it
 only syntax-checks launch endpoints; DNS, proxy, redirect, retry, and request
 builder binding remain unimplemented, so it still returns `manifest_complete:
 false` and `launchable: false` until a trusted registration and launch path
-exists.
+exists. Validation responses include a `conformance_profile` with a canonical
+field-complete manifest plus protocol-specific REST/MCP expectations and
+required negative cases so Tempo and adapter authors can test compatibility
+without guessing.
 
 ## Ecosystem
 
