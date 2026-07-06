@@ -2,10 +2,10 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
-    BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
-    ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
+    BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode,
+    BrowserProfilesResponse, BrowserSandboxAvailability, BrowserSandboxControl,
+    BrowserSandboxLevel, BrowserSensitivity, BrowserSessionActor, CreateJobResponse, ErrorResponse,
+    ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
@@ -889,6 +889,9 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         requested_level: BrowserSandboxLevel::OsIsolated,
         actor: BrowserSessionActor::Agent,
         sensitivity: BrowserSensitivity::Sensitive,
+        target_origins: vec!["https://bank.example".to_string()],
+        credential_mode: BrowserCredentialMode::UserMediated,
+        artifact_mode: BrowserArtifactMode::SealedArtifacts,
         required_controls: vec![
             BrowserSandboxControl::EgressPolicy,
             BrowserSandboxControl::RemoteWorkerIsolation,
@@ -928,6 +931,12 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     assert_eq!(decision.selected_level, None);
     assert_eq!(decision.actor, BrowserSessionActor::Agent);
     assert_eq!(decision.sensitivity, BrowserSensitivity::Sensitive);
+    assert_eq!(decision.target_origins, vec!["https://bank.example"]);
+    assert_eq!(
+        decision.credential_mode,
+        BrowserCredentialMode::UserMediated
+    );
+    assert_eq!(decision.artifact_mode, BrowserArtifactMode::SealedArtifacts);
     assert_eq!(
         decision.requested_profile_controls,
         vec![
@@ -944,6 +953,7 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         vec![BrowserSandboxControl::RemoteWorkerIsolation]
     );
     assert!(!decision.level_satisfies_requested_controls);
+    assert!(decision.intent_warnings.is_empty());
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
     assert!(
@@ -952,6 +962,43 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .iter()
             .any(|reason| reason.contains("no weaker browser profile"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_admission_rejects_unsafe_target_origins() -> Result<(), Box<dyn std::error::Error>>
+{
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    for target_origin in [
+        "http://127.0.0.1:3000",
+        "https://100.64.0.1",
+        "http://[::ffff:127.0.0.1]",
+        "https://[::ffff:10.0.0.1]",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/admit")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "requested_level": "network_suppressed",
+                            "actor": "agent",
+                            "sensitivity": "sensitive",
+                            "target_origins": [target_origin]
+                        })
+                        .to_string(),
+                    ))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let error: ErrorResponse = serde_json::from_slice(&body)?;
+        assert_eq!(error.error.code, "invalid_browser_intent");
+        assert!(error.error.message.contains("local or private"));
+    }
     Ok(())
 }
 
@@ -1431,6 +1478,9 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
                 "requested_level": "network_suppressed",
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "target_origins": ["https://billing.example"],
+                "credential_mode": "scoped_secrets",
+                "artifact_mode": "explicit_downloads",
                 "required_controls": ["egress_policy", "sealed_artifacts"],
                 "allow_downgrade": true,
                 "task_label": "review account"
@@ -1465,6 +1515,18 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         serde_json::Value::Null
     );
     assert_eq!(
+        result["structuredContent"]["target_origins"],
+        serde_json::json!(["https://billing.example"])
+    );
+    assert_eq!(
+        result["structuredContent"]["credential_mode"],
+        serde_json::json!("scoped_secrets")
+    );
+    assert_eq!(
+        result["structuredContent"]["artifact_mode"],
+        serde_json::json!("explicit_downloads")
+    );
+    assert_eq!(
         result["structuredContent"]["requested_controls"],
         serde_json::json!(["egress_policy", "sealed_artifacts"])
     );
@@ -1476,6 +1538,10 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         result["structuredContent"]["level_satisfies_requested_controls"],
         false
     );
+    assert_eq!(
+        result["structuredContent"]["intent_warnings"],
+        serde_json::json!([])
+    );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
     assert!(
         result["structuredContent"]["reasons"]
@@ -1483,6 +1549,45 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
             .is_some_and(|reasons| reasons.iter().any(|reason| reason
                 .as_str()
                 .is_some_and(|reason| reason.contains("no weaker browser profile"))))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_admit_browser_session_rejects_unsafe_target_origins()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "admit_browser_session",
+            "arguments": {
+                "requested_level": "network_suppressed",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "target_origins": ["https://example.com/path"]
+            }
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("scheme, host, and optional port"))
     );
     Ok(())
 }

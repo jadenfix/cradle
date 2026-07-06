@@ -85,6 +85,9 @@ class TestClientRequest(unittest.TestCase):
                 "selected_level": None,
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "target_origins": ["https://example.com"],
+                "credential_mode": "no_credentials",
+                "artifact_mode": "discard",
                 "requested_controls": ["egress_policy", "remote_worker_isolation"],
                 "requested_profile_controls": [
                     "fresh_profile",
@@ -96,6 +99,7 @@ class TestClientRequest(unittest.TestCase):
                 ],
                 "missing_controls": ["remote_worker_isolation"],
                 "level_satisfies_requested_controls": False,
+                "intent_warnings": [],
                 "downgrade_allowed": False,
                 "reasons": ["no runnable browser sandbox"],
                 "required_next_steps": ["implement a browser launcher"],
@@ -108,6 +112,9 @@ class TestClientRequest(unittest.TestCase):
                 "requested_level": "os_isolated",
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "target_origins": ["https://example.com"],
+                "credential_mode": "no_credentials",
+                "artifact_mode": "discard",
                 "required_controls": ["egress_policy", "remote_worker_isolation"],
             })
 
@@ -120,10 +127,14 @@ class TestClientRequest(unittest.TestCase):
             "requested_level": "os_isolated",
             "actor": "agent",
             "sensitivity": "sensitive",
+            "target_origins": ["https://example.com"],
+            "credential_mode": "no_credentials",
+            "artifact_mode": "discard",
             "required_controls": ["egress_policy", "remote_worker_isolation"],
         })
         self.assertEqual(decision["decision"], "rejected")
         self.assertEqual(decision["missing_controls"], ["remote_worker_isolation"])
+        self.assertEqual(decision["target_origins"], ["https://example.com"])
 
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")

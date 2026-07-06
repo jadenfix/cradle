@@ -378,6 +378,14 @@
           "allow_downgrade": {
             "type": "boolean"
           },
+          "artifact_mode": {
+            "$ref": "#/components/schemas/BrowserArtifactMode",
+            "description": "Artifact persistence posture requested for the session. Non-default\nmodes remain fail-closed until storage and sealing are implemented."
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/BrowserCredentialMode",
+            "description": "Credential posture requested for the session. Non-default modes remain\nfail-closed until a real browser substrate implements scoped handling."
+          },
           "requested_level": {
             "$ref": "#/components/schemas/BrowserSandboxLevel"
           },
@@ -389,6 +397,13 @@
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "target_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bare public HTTP(S) origins this browser session is allowed to target.\nEntries must contain only scheme, host, and optional port. The runtime\nrejects credentials, paths, queries, fragments, localhost, private/LAN\naddress space, link-local metadata ranges, and more than 16 entries."
           },
           "task_label": {
             "type": [
@@ -408,10 +423,14 @@
           "selected_level",
           "actor",
           "sensitivity",
+          "target_origins",
+          "credential_mode",
+          "artifact_mode",
           "requested_controls",
           "requested_profile_controls",
           "missing_controls",
           "level_satisfies_requested_controls",
+          "intent_warnings",
           "downgrade_allowed",
           "reasons",
           "required_next_steps",
@@ -421,11 +440,26 @@
           "actor": {
             "$ref": "#/components/schemas/BrowserSessionActor"
           },
+          "artifact_mode": {
+            "$ref": "#/components/schemas/BrowserArtifactMode",
+            "description": "Echo of the requested artifact persistence posture."
+          },
+          "credential_mode": {
+            "$ref": "#/components/schemas/BrowserCredentialMode",
+            "description": "Echo of the requested credential posture."
+          },
           "decision": {
             "$ref": "#/components/schemas/BrowserAdmissionDecision"
           },
           "downgrade_allowed": {
             "type": "boolean"
+          },
+          "intent_warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-fatal intent issues that matter before any future runnable browser\nsession can be admitted."
           },
           "level_satisfies_requested_controls": {
             "type": "boolean"
@@ -481,8 +515,31 @@
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "target_origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Echo of the validated target origins from the admission request."
           }
         }
+      },
+      "BrowserArtifactMode": {
+        "type": "string",
+        "enum": [
+          "discard",
+          "explicit_downloads",
+          "sealed_artifacts"
+        ]
+      },
+      "BrowserCredentialMode": {
+        "type": "string",
+        "enum": [
+          "no_credentials",
+          "user_mediated",
+          "scoped_secrets"
+        ]
       },
       "BrowserIntegrationContract": {
         "type": "object",

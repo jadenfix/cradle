@@ -40,6 +40,11 @@ The API key is sent only as the `x-beatbox-api-key` header, and never on the
 unauthenticated `health`/`openapi` routes, never in a URL, and never in an error
 message.
 
+Browser admission requests are raw JSON today. Pass through
+`target_origins`, `credential_mode`, `artifact_mode`, and `required_controls`
+exactly as described by `openapi.json`; beatbox validates unsafe target origins
+before returning the fail-closed admission decision.
+
 ## How the fleet stays correct (the rollout pipeline)
 
 This is a Stainless-style pipeline: one source of truth, drift-checked, and a

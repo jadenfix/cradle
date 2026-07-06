@@ -218,10 +218,14 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 			"selected_level":null,
 			"actor":"agent",
 			"sensitivity":"sensitive",
+			"target_origins":["https://example.com"],
+			"credential_mode":"no_credentials",
+			"artifact_mode":"discard",
 			"requested_controls":["egress_policy","remote_worker_isolation"],
 			"requested_profile_controls":["fresh_profile","no_ambient_credentials","egress_policy","local_network_block","os_process_isolation","teardown_proof"],
 			"missing_controls":["remote_worker_isolation"],
 			"level_satisfies_requested_controls":false,
+			"intent_warnings":[],
 			"downgrade_allowed":false,
 			"reasons":["no runnable browser sandbox"],
 			"required_next_steps":["implement a browser launcher"],
@@ -235,6 +239,9 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 		"requested_level": "os_isolated",
 		"actor":           "agent",
 		"sensitivity":     "sensitive",
+		"target_origins":  []any{"https://example.com"},
+		"credential_mode": "no_credentials",
+		"artifact_mode":   "discard",
 		"required_controls": []any{
 			"egress_policy",
 			"remote_worker_isolation",
@@ -259,6 +266,12 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 	if gotBody["requested_level"] != "os_isolated" || gotBody["actor"] != "agent" || gotBody["sensitivity"] != "sensitive" {
 		t.Errorf("server received unexpected admission body: %+v", gotBody)
 	}
+	if origins, ok := gotBody["target_origins"].([]any); !ok || len(origins) != 1 || origins[0] != "https://example.com" {
+		t.Errorf("server received unexpected origins: %+v", gotBody["target_origins"])
+	}
+	if gotBody["credential_mode"] != "no_credentials" || gotBody["artifact_mode"] != "discard" {
+		t.Errorf("server received unexpected intent modes: %+v", gotBody)
+	}
 	if controls, ok := gotBody["required_controls"].([]any); !ok || len(controls) != 2 || controls[1] != "remote_worker_isolation" {
 		t.Errorf("server received unexpected controls: %+v", gotBody["required_controls"])
 	}
@@ -267,6 +280,9 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"missing_controls":["remote_worker_isolation"]`) {
 		t.Errorf("missing controls not surfaced: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"target_origins":["https://example.com"]`) {
+		t.Errorf("target origins not surfaced: %s", raw)
 	}
 }
 

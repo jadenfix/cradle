@@ -88,6 +88,9 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
         selected_level: null,
         actor: "agent",
         sensitivity: "sensitive",
+        target_origins: ["https://example.com"],
+        credential_mode: "no_credentials",
+        artifact_mode: "discard",
         requested_controls: ["egress_policy", "remote_worker_isolation"],
         requested_profile_controls: [
           "fresh_profile",
@@ -99,6 +102,7 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
         ],
         missing_controls: ["remote_worker_isolation"],
         level_satisfies_requested_controls: false,
+        intent_warnings: [],
         downgrade_allowed: false,
         reasons: ["no runnable browser sandbox"],
         required_next_steps: ["implement a browser launcher"],
@@ -116,6 +120,9 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
       requested_level: "os_isolated",
       actor: "agent",
       sensitivity: "sensitive",
+      target_origins: ["https://example.com"],
+      credential_mode: "no_credentials",
+      artifact_mode: "discard",
       required_controls: ["egress_policy", "remote_worker_isolation"],
     }) as Record<string, unknown>;
 
@@ -130,10 +137,14 @@ test("admitBrowserSession sends authenticated JSON preflight", async () => {
       requested_level: "os_isolated",
       actor: "agent",
       sensitivity: "sensitive",
+      target_origins: ["https://example.com"],
+      credential_mode: "no_credentials",
+      artifact_mode: "discard",
       required_controls: ["egress_policy", "remote_worker_isolation"],
     });
     assert.equal(response.decision, "rejected");
     assert.deepEqual(response.missing_controls, ["remote_worker_isolation"]);
+    assert.deepEqual(response.target_origins, ["https://example.com"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -24,10 +24,14 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   `get_browser_profiles` with structured content. `POST /v1/browser/admit` and
   MCP `admit_browser_session` are authenticated fail-closed preflight gates; the
   current decision is always rejected, even when downgrade is allowed. Callers
-  may request specific isolation controls, but those controls remain planned
+  may request specific isolation controls and declare target origins,
+  credential mode, and artifact mode, but those controls remain planned
   metadata until a real implementation enforces fresh profiles, network
   suppression or allowlisting, credential isolation, teardown, and any stated
-  encryption behavior in the production call path.
+  encryption behavior in the production call path. Target origin declarations
+  reject paths, credentials, localhost, private/LAN IP space, and link-local
+  metadata targets so future browser adapters cannot silently turn a sensitive
+  browsing preflight into local control-plane or network exploration.
 
 ## current grades
 

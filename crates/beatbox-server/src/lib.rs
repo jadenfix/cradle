@@ -15,11 +15,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
     BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserAdmissionResponse,
-    BrowserIntegrationContract, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
-    BrowserSessionActor, CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
-    ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane,
-    Policy, Source,
+    BrowserArtifactMode, BrowserCredentialMode, BrowserIntegrationContract,
+    BrowserProfilesResponse, BrowserSandboxAvailability, BrowserSandboxControl,
+    BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity, BrowserSessionActor,
+    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody,
+    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
+    Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -229,6 +230,8 @@ async fn browser_admit(
 ) -> Result<Json<BrowserAdmissionResponse>, ApiError> {
     state.authorize(&headers)?;
     let request = parse_json_body(&state, request).await?;
+    validate_browser_admission_request(&request)
+        .map_err(|message| ApiError::bad_request("invalid_browser_intent", message))?;
     Ok(Json(browser_admission_response(request)))
 }
 
@@ -1055,6 +1058,31 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
             "sensitive browser work requires an explicitly available isolated profile".to_string(),
         );
     }
+    let mut intent_warnings = Vec::new();
+    if request.target_origins.is_empty() {
+        intent_warnings.push(
+            "no target origins were declared; future runnable sensitive sessions will require an origin allowlist"
+                .to_string(),
+        );
+    }
+    if matches!(
+        &request.credential_mode,
+        BrowserCredentialMode::UserMediated | BrowserCredentialMode::ScopedSecrets
+    ) {
+        reasons.push(format!(
+            "credential mode `{}` is not implemented by any runnable browser profile",
+            browser_credential_mode_wire_name(&request.credential_mode)
+        ));
+    }
+    if matches!(
+        &request.artifact_mode,
+        BrowserArtifactMode::ExplicitDownloads | BrowserArtifactMode::SealedArtifacts
+    ) {
+        reasons.push(format!(
+            "artifact mode `{}` is not implemented by any runnable browser profile",
+            browser_artifact_mode_wire_name(&request.artifact_mode)
+        ));
+    }
     if !level_satisfies_requested_controls {
         reasons.push(format!(
             "requested profile does not satisfy required controls: {}",
@@ -1073,10 +1101,14 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         selected_level: None,
         actor: request.actor,
         sensitivity: request.sensitivity,
+        target_origins: request.target_origins,
+        credential_mode: request.credential_mode,
+        artifact_mode: request.artifact_mode,
         requested_controls: request.required_controls,
         requested_profile_controls,
         missing_controls,
         level_satisfies_requested_controls,
+        intent_warnings,
         downgrade_allowed: request.allow_downgrade,
         reasons,
         required_next_steps: vec![
@@ -1128,6 +1160,114 @@ fn browser_profile_controls(level: &BrowserSandboxLevel) -> Vec<BrowserSandboxCo
     }
 }
 
+fn validate_browser_admission_request(request: &BrowserAdmissionRequest) -> Result<(), String> {
+    const MAX_TARGET_ORIGINS: usize = 16;
+    if request.target_origins.len() > MAX_TARGET_ORIGINS {
+        return Err(format!(
+            "browser admission target_origins must contain at most {MAX_TARGET_ORIGINS} entries"
+        ));
+    }
+    for origin in &request.target_origins {
+        validate_browser_target_origin(origin)?;
+    }
+    Ok(())
+}
+
+fn validate_browser_target_origin(origin: &str) -> Result<(), String> {
+    if origin.is_empty() || origin.trim() != origin {
+        return Err("browser admission target_origins entries must be non-empty origins without surrounding whitespace".to_string());
+    }
+    let url = Url::parse(origin).map_err(|error| {
+        format!("browser admission target origin `{origin}` is invalid: {error}")
+    })?;
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "browser admission target origin `{origin}` uses unsupported scheme `{scheme}`"
+            ));
+        }
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!(
+            "browser admission target origin `{origin}` must not contain credentials"
+        ));
+    }
+    if url.host().is_none() {
+        return Err(format!(
+            "browser admission target origin `{origin}` must include a host"
+        ));
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err(format!(
+            "browser admission target origin `{origin}` must be only scheme, host, and optional port"
+        ));
+    }
+    if let Some(host) = url.host() {
+        validate_browser_target_host(origin, host)?;
+    }
+    Ok(())
+}
+
+fn validate_browser_target_host(origin: &str, host: Host<&str>) -> Result<(), String> {
+    match host {
+        Host::Domain(domain) => {
+            let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+            if domain == "localhost" || domain.ends_with(".localhost") {
+                return Err(format!(
+                    "browser admission target origin `{origin}` must not target localhost"
+                ));
+            }
+        }
+        Host::Ipv4(addr) => {
+            if ipv4_is_restricted_browser_target(addr) {
+                return Err(format!(
+                    "browser admission target origin `{origin}` must not target local or private IPv4 space"
+                ));
+            }
+        }
+        Host::Ipv6(addr) => {
+            if let Some(mapped) = addr.to_ipv4_mapped()
+                && ipv4_is_restricted_browser_target(mapped)
+            {
+                return Err(format!(
+                    "browser admission target origin `{origin}` must not target local or private IPv4-mapped IPv6 space"
+                ));
+            }
+            if addr.is_loopback()
+                || addr.is_unspecified()
+                || ipv6_is_unique_local(addr)
+                || ipv6_is_unicast_link_local(addr)
+            {
+                return Err(format!(
+                    "browser admission target origin `{origin}` must not target local or private IPv6 space"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ipv4_is_restricted_browser_target(addr: Ipv4Addr) -> bool {
+    let octets = addr.octets();
+    addr.is_loopback()
+        || addr.is_private()
+        || addr.is_link_local()
+        || addr.is_unspecified()
+        || addr.is_broadcast()
+        || addr.is_multicast()
+        || addr.is_documentation()
+        || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000)
+}
+
+fn ipv6_is_unique_local(addr: Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xfe00) == 0xfc00
+}
+
+fn ipv6_is_unicast_link_local(addr: Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
+}
+
 fn browser_control_wire_name(control: &BrowserSandboxControl) -> &'static str {
     match control {
         BrowserSandboxControl::FreshProfile => "fresh_profile",
@@ -1138,6 +1278,22 @@ fn browser_control_wire_name(control: &BrowserSandboxControl) -> &'static str {
         BrowserSandboxControl::OsProcessIsolation => "os_process_isolation",
         BrowserSandboxControl::RemoteWorkerIsolation => "remote_worker_isolation",
         BrowserSandboxControl::TeardownProof => "teardown_proof",
+    }
+}
+
+fn browser_credential_mode_wire_name(mode: &BrowserCredentialMode) -> &'static str {
+    match mode {
+        BrowserCredentialMode::NoCredentials => "no_credentials",
+        BrowserCredentialMode::UserMediated => "user_mediated",
+        BrowserCredentialMode::ScopedSecrets => "scoped_secrets",
+    }
+}
+
+fn browser_artifact_mode_wire_name(mode: &BrowserArtifactMode) -> &'static str {
+    match mode {
+        BrowserArtifactMode::Discard => "discard",
+        BrowserArtifactMode::ExplicitDownloads => "explicit_downloads",
+        BrowserArtifactMode::SealedArtifacts => "sealed_artifacts",
     }
 }
 
@@ -1205,6 +1361,8 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserSandboxLevel,
         beatbox_core::BrowserSandboxAvailability,
         beatbox_core::BrowserSandboxControl,
+        beatbox_core::BrowserCredentialMode,
+        beatbox_core::BrowserArtifactMode,
         beatbox_core::BrowserAdmissionRequest,
         beatbox_core::BrowserAdmissionResponse,
         beatbox_core::BrowserAdmissionDecision,
@@ -1556,6 +1714,22 @@ fn mcp_tools() -> Value {
                     },
                     "actor": {"type": "string", "enum": ["agent", "human"]},
                     "sensitivity": {"type": "string", "enum": ["public", "sensitive"]},
+                    "target_origins": {
+                        "type": "array",
+                        "description": "Bare public HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port; credentials, paths, queries, fragments, localhost, private/LAN IP ranges, and link-local metadata targets are rejected.",
+                        "maxItems": 16,
+                        "items": {"type": "string"}
+                    },
+                    "credential_mode": {
+                        "type": "string",
+                        "description": "Credential posture requested for the session. Non-default modes remain fail-closed until a real browser substrate implements them.",
+                        "enum": ["no_credentials", "user_mediated", "scoped_secrets"]
+                    },
+                    "artifact_mode": {
+                        "type": "string",
+                        "description": "Artifact persistence posture requested for the session. Non-default modes remain fail-closed until storage and sealing are implemented.",
+                        "enum": ["discard", "explicit_downloads", "sealed_artifacts"]
+                    },
                     "required_controls": {
                         "type": "array",
                         "items": {
@@ -1668,12 +1842,15 @@ fn mcp_browser_admission_request(
             "requested_level",
             "actor",
             "sensitivity",
+            "target_origins",
+            "credential_mode",
+            "artifact_mode",
             "required_controls",
             "allow_downgrade",
             "task_label",
         ],
     )?;
-    Ok(BrowserAdmissionRequest {
+    let request = BrowserAdmissionRequest {
         requested_level: mcp_browser_level_arg(
             arguments,
             "requested_level",
@@ -1685,6 +1862,20 @@ fn mcp_browser_admission_request(
             "sensitivity",
             "admit_browser_session",
         )?,
+        target_origins: mcp_string_array_arg(arguments, "target_origins", "admit_browser_session")?
+            .unwrap_or_default(),
+        credential_mode: mcp_browser_credential_mode_arg(
+            arguments,
+            "credential_mode",
+            "admit_browser_session",
+        )?
+        .unwrap_or_default(),
+        artifact_mode: mcp_browser_artifact_mode_arg(
+            arguments,
+            "artifact_mode",
+            "admit_browser_session",
+        )?
+        .unwrap_or_default(),
         required_controls: mcp_browser_controls_arg(
             arguments,
             "required_controls",
@@ -1694,7 +1885,9 @@ fn mcp_browser_admission_request(
         allow_downgrade: mcp_bool_arg(arguments, "allow_downgrade", "admit_browser_session")?
             .unwrap_or(false),
         task_label: mcp_optional_string_arg(arguments, "task_label", "admit_browser_session")?,
-    })
+    };
+    validate_browser_admission_request(&request).map_err(|message| (-32602, message))?;
+    Ok(request)
 }
 
 fn mcp_run_wasm_request(arguments: &Value) -> Result<ExecuteRequest, (i64, String)> {
@@ -1822,6 +2015,30 @@ fn mcp_optional_string_arg(
         .transpose()
 }
 
+fn mcp_string_array_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<Vec<String>>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|value| {
+            let values = value
+                .as_array()
+                .ok_or((-32602, format!("{tool} argument `{key}` must be an array")))?;
+            values
+                .iter()
+                .map(|value| {
+                    value.as_str().map(str::to_string).ok_or((
+                        -32602,
+                        format!("{tool} argument `{key}` entries must be strings"),
+                    ))
+                })
+                .collect()
+        })
+        .transpose()
+}
+
 fn mcp_bool_arg(
     arguments: &serde_json::Map<String, Value>,
     key: &'static str,
@@ -1931,6 +2148,44 @@ fn mcp_browser_actor_arg(
             format!("{tool} argument `{key}` has unsupported actor `{other}`"),
         )),
     }
+}
+
+fn mcp_browser_credential_mode_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<BrowserCredentialMode>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|_| match mcp_string_arg(arguments, key, tool)?.as_str() {
+            "no_credentials" => Ok(BrowserCredentialMode::NoCredentials),
+            "user_mediated" => Ok(BrowserCredentialMode::UserMediated),
+            "scoped_secrets" => Ok(BrowserCredentialMode::ScopedSecrets),
+            other => Err((
+                -32602,
+                format!("{tool} argument `{key}` has unsupported credential mode `{other}`"),
+            )),
+        })
+        .transpose()
+}
+
+fn mcp_browser_artifact_mode_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<BrowserArtifactMode>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|_| match mcp_string_arg(arguments, key, tool)?.as_str() {
+            "discard" => Ok(BrowserArtifactMode::Discard),
+            "explicit_downloads" => Ok(BrowserArtifactMode::ExplicitDownloads),
+            "sealed_artifacts" => Ok(BrowserArtifactMode::SealedArtifacts),
+            other => Err((
+                -32602,
+                format!("{tool} argument `{key}` has unsupported artifact mode `{other}`"),
+            )),
+        })
+        .transpose()
 }
 
 fn mcp_browser_sensitivity_arg(
