@@ -260,6 +260,19 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 					"OS jail or microVM boundary around the browser process"
 				]
 			},
+			"adapter_handoff":{
+				"contract_version":"browser-adapter-v1",
+				"launch_endpoint":null,
+				"launchable":false,
+				"handoff_fields":["requested_level","actor","sensitivity","target_origins","credential_mode","artifact_mode","requested_controls","guard_plan"],
+				"required_completion_proofs":[
+					"browser process exited or was killed",
+					"temporary profile directory removed",
+					"plaintext artifacts outside the explicit allowlist removed",
+					"egress proxy log sealed or discarded according to artifact_mode"
+				],
+				"unavailable_reason":"no browser adapter launch endpoint is implemented by this daemon"
+			},
 			"downgrade_allowed":false,
 			"reasons":["no runnable browser sandbox"],
 			"required_next_steps":["implement a browser launcher"],
@@ -326,6 +339,12 @@ func TestAdmitBrowserSessionMockServer(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "OS jail") {
 		t.Errorf("OS runtime guard not surfaced: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"launchable":false`) {
+		t.Errorf("adapter handoff did not stay fail-closed: %s", raw)
+	}
+	if !strings.Contains(string(raw), "temporary profile directory removed") {
+		t.Errorf("adapter proof contract not surfaced: %s", raw)
 	}
 }
 

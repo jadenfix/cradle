@@ -357,6 +357,93 @@
   },
   "components": {
     "schemas": {
+      "BrowserAdapterContract": {
+        "type": "object",
+        "required": [
+          "version",
+          "status",
+          "launch_endpoint",
+          "handoff_fields",
+          "required_guard_fields",
+          "required_completion_proofs",
+          "unavailable_reason"
+        ],
+        "properties": {
+          "handoff_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "launch_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_guard_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/BrowserSandboxAvailability"
+          },
+          "unavailable_reason": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "BrowserAdapterHandoff": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "launch_endpoint",
+          "launchable",
+          "handoff_fields",
+          "required_completion_proofs",
+          "unavailable_reason"
+        ],
+        "properties": {
+          "contract_version": {
+            "type": "string"
+          },
+          "handoff_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "launch_endpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "launchable": {
+            "type": "boolean"
+          },
+          "required_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unavailable_reason": {
+            "type": "string"
+          }
+        }
+      },
       "BrowserAdmissionDecision": {
         "type": "string",
         "enum": [
@@ -458,6 +545,7 @@
           "level_satisfies_requested_controls",
           "intent_warnings",
           "guard_plan",
+          "adapter_handoff",
           "downgrade_allowed",
           "reasons",
           "required_next_steps",
@@ -466,6 +554,10 @@
         "properties": {
           "actor": {
             "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_handoff": {
+            "$ref": "#/components/schemas/BrowserAdapterHandoff",
+            "description": "Adapter handoff metadata for future browser launchers. This is\nfail-closed while launch_endpoint is null and launchable is false."
           },
           "artifact_mode": {
             "$ref": "#/components/schemas/BrowserArtifactMode",
@@ -603,9 +695,13 @@
           "endpoint",
           "admission_endpoint",
           "selection_field",
-          "required_consumer_behavior"
+          "required_consumer_behavior",
+          "adapter"
         ],
         "properties": {
+          "adapter": {
+            "$ref": "#/components/schemas/BrowserAdapterContract"
+          },
           "admission_endpoint": {
             "type": "string"
           },

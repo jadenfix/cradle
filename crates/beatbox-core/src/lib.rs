@@ -72,6 +72,69 @@ pub struct BrowserIntegrationContract {
     pub admission_endpoint: String,
     pub selection_field: String,
     pub required_consumer_behavior: Vec<String>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub adapter: BrowserAdapterContract,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterContract {
+    pub version: String,
+    pub status: BrowserSandboxAvailability,
+    #[schema(required = true)]
+    pub launch_endpoint: Option<String>,
+    pub handoff_fields: Vec<String>,
+    pub required_guard_fields: Vec<String>,
+    pub required_completion_proofs: Vec<String>,
+    pub unavailable_reason: String,
+}
+
+impl Default for BrowserAdapterContract {
+    fn default() -> Self {
+        Self {
+            version: "browser-adapter-v1".to_string(),
+            status: BrowserSandboxAvailability::Unavailable,
+            launch_endpoint: None,
+            handoff_fields: vec![
+                "requested_level".to_string(),
+                "actor".to_string(),
+                "sensitivity".to_string(),
+                "target_origins".to_string(),
+                "credential_mode".to_string(),
+                "artifact_mode".to_string(),
+                "requested_controls".to_string(),
+                "guard_plan".to_string(),
+            ],
+            required_guard_fields: vec![
+                "guard_plan.network.allowed_origins".to_string(),
+                "guard_plan.network.deny_private_networks".to_string(),
+                "guard_plan.network.deny_localhost".to_string(),
+                "guard_plan.network.deny_metadata_endpoints".to_string(),
+                "guard_plan.network.require_dns_rebinding_protection".to_string(),
+                "guard_plan.network.require_redirect_revalidation".to_string(),
+                "guard_plan.network.require_proxy_enforcement".to_string(),
+                "guard_plan.network.outbound_network_disabled_without_proxy".to_string(),
+                "guard_plan.credentials.mode".to_string(),
+                "guard_plan.credentials.ambient_credentials_allowed".to_string(),
+                "guard_plan.credentials.user_mediation_required".to_string(),
+                "guard_plan.credentials.scoped_secret_channel_required".to_string(),
+                "guard_plan.storage.mode".to_string(),
+                "guard_plan.storage.plaintext_persistence_allowed".to_string(),
+                "guard_plan.storage.explicit_artifact_allowlist_required".to_string(),
+                "guard_plan.storage.encryption_required_for_persistence".to_string(),
+                "guard_plan.storage.teardown_proof_required".to_string(),
+                "guard_plan.required_runtime_guards".to_string(),
+            ],
+            required_completion_proofs: vec![
+                "browser process exited or was killed".to_string(),
+                "temporary profile directory removed".to_string(),
+                "plaintext artifacts outside the explicit allowlist removed".to_string(),
+                "egress proxy log sealed or discarded according to artifact_mode".to_string(),
+            ],
+            unavailable_reason: "no browser adapter launch endpoint is implemented by this daemon"
+                .to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -208,6 +271,32 @@ impl Default for BrowserAdmissionGuardPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterHandoff {
+    pub contract_version: String,
+    #[schema(required = true)]
+    pub launch_endpoint: Option<String>,
+    pub launchable: bool,
+    pub handoff_fields: Vec<String>,
+    pub required_completion_proofs: Vec<String>,
+    pub unavailable_reason: String,
+}
+
+impl Default for BrowserAdapterHandoff {
+    fn default() -> Self {
+        let adapter = BrowserAdapterContract::default();
+        Self {
+            contract_version: adapter.version,
+            launch_endpoint: adapter.launch_endpoint,
+            launchable: false,
+            handoff_fields: adapter.handoff_fields,
+            required_completion_proofs: adapter.required_completion_proofs,
+            unavailable_reason:
+                "fresh server-issued browser adapter handoff required before launch".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserAdmissionRequest {
     pub requested_level: BrowserSandboxLevel,
@@ -286,6 +375,11 @@ pub struct BrowserAdmissionResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub guard_plan: BrowserAdmissionGuardPlan,
+    /// Adapter handoff metadata for future browser launchers. This is
+    /// fail-closed while launch_endpoint is null and launchable is false.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub adapter_handoff: BrowserAdapterHandoff,
     pub downgrade_allowed: bool,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
@@ -747,6 +841,31 @@ mod tests {
             response.profiles[0].controls,
             Vec::<BrowserSandboxControl>::new()
         );
+        assert_eq!(
+            response.integration.adapter.status,
+            BrowserSandboxAvailability::Unavailable
+        );
+        assert_eq!(response.integration.adapter.launch_endpoint, None);
+        assert!(
+            response
+                .integration
+                .adapter
+                .handoff_fields
+                .iter()
+                .any(|field| field == "guard_plan")
+        );
+        assert!(
+            BrowserAdapterContract::default()
+                .required_guard_fields
+                .iter()
+                .any(|field| field == "guard_plan.storage.teardown_proof_required")
+        );
+        assert!(
+            BrowserAdapterContract::default()
+                .required_guard_fields
+                .iter()
+                .any(|field| field == "guard_plan.network.outbound_network_disabled_without_proxy")
+        );
         Ok(())
     }
 
@@ -809,6 +928,21 @@ mod tests {
                 .required_runtime_guards
                 .iter()
                 .any(|guard| guard.contains("fresh server-issued guard plan"))
+        );
+        assert!(!response.adapter_handoff.launchable);
+        assert_eq!(response.adapter_handoff.launch_endpoint, None);
+        assert!(
+            response
+                .adapter_handoff
+                .handoff_fields
+                .iter()
+                .any(|field| field == "guard_plan")
+        );
+        assert!(
+            response
+                .adapter_handoff
+                .unavailable_reason
+                .contains("fresh server-issued browser adapter handoff")
         );
         assert!(!response.level_satisfies_requested_controls);
         Ok(())

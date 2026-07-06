@@ -984,6 +984,26 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .iter()
             .any(|guard| guard.contains("final socket targets"))
     );
+    assert!(!decision.adapter_handoff.launchable);
+    assert_eq!(decision.adapter_handoff.launch_endpoint, None);
+    assert_eq!(
+        decision.adapter_handoff.contract_version,
+        "browser-adapter-v1"
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .handoff_fields
+            .iter()
+            .any(|field| field == "guard_plan")
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .required_completion_proofs
+            .iter()
+            .any(|proof| proof.contains("temporary profile directory"))
+    );
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
     assert!(
@@ -1083,6 +1103,26 @@ async fn capabilities_embed_the_browser_profile_contract() -> Result<(), Box<dyn
         serde_json::Value::Null
     );
     assert_eq!(value["browser_sandbox"]["integration"]["consumer"], "tempo");
+    assert_eq!(
+        value["browser_sandbox"]["integration"]["adapter"]["status"],
+        "planned"
+    );
+    assert_eq!(
+        value["browser_sandbox"]["integration"]["adapter"]["launch_endpoint"],
+        serde_json::Value::Null
+    );
+    assert!(
+        value["browser_sandbox"]["integration"]["adapter"]["handoff_fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "guard_plan"))
+    );
+    assert!(
+        value["browser_sandbox"]["integration"]["adapter"]["required_completion_proofs"]
+            .as_array()
+            .is_some_and(|proofs| proofs.iter().any(|proof| proof
+                .as_str()
+                .is_some_and(|proof| proof.contains("temporary profile directory"))))
+    );
     assert!(
         value["browser_sandbox"]["profiles"]
             .as_array()
@@ -1186,12 +1226,15 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserProfilesResponse",
         "BrowserSandboxProfile",
         "BrowserIntegrationContract",
+        "BrowserAdapterContract",
         "BrowserSandboxLevel",
         "BrowserSandboxAvailability",
         "BrowserSandboxControl",
         "BrowserAdmissionRequest",
         "BrowserAdmissionResponse",
         "BrowserAdmissionDecision",
+        "BrowserAdmissionGuardPlan",
+        "BrowserAdapterHandoff",
         "BrowserSessionActor",
         "BrowserSensitivity",
         "CapabilitiesResponse",
@@ -1450,6 +1493,21 @@ async fn mcp_get_browser_profiles_returns_structured_content()
         result["structuredContent"]["integration"]["selection_field"],
         "browser_sandbox_level"
     );
+    assert_eq!(
+        result["structuredContent"]["integration"]["adapter"]["launch_endpoint"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["structuredContent"]["integration"]["adapter"]["status"],
+        "planned"
+    );
+    assert!(
+        result["structuredContent"]["integration"]["adapter"]["required_guard_fields"]
+            .as_array()
+            .is_some_and(|fields| fields
+                .iter()
+                .any(|field| field == "guard_plan.storage.teardown_proof_required"))
+    );
     assert!(
         result["structuredContent"]["profiles"]
             .as_array()
@@ -1587,6 +1645,26 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["guard_plan"]["storage"]["explicit_artifact_allowlist_required"],
         true
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launchable"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_endpoint"],
+        serde_json::Value::Null
+    );
+    assert!(
+        result["structuredContent"]["adapter_handoff"]["handoff_fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field == "guard_plan"))
+    );
+    assert!(
+        result["structuredContent"]["adapter_handoff"]["required_completion_proofs"]
+            .as_array()
+            .is_some_and(|proofs| proofs.iter().any(|proof| proof
+                .as_str()
+                .is_some_and(|proof| proof.contains("temporary profile directory"))))
     );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
     assert!(

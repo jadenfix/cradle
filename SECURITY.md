@@ -34,6 +34,9 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   browsing preflight into local control-plane or network exploration.
   Admission responses include a `guard_plan`, but it is a required future
   enforcement plan, not evidence that browser isolation is currently active.
+  The `adapter_handoff` contract remains fail-closed: `launchable` is false and
+  `launch_endpoint` is null until a production launcher, teardown path, and
+  proof channel exist.
 
 ## current grades
 

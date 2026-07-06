@@ -76,9 +76,12 @@ would satisfy without guessing from display text. The response echoes the
 requested intent, reports the requested profile's planned controls, lists
 missing controls, surfaces intent warnings, and returns a `guard_plan` for the
 network, credential, storage, DNS/redirect revalidation, and runtime guards a
-future browser adapter must enforce. It is the authoritative admission decision
-and currently always rejects because Beatbox has no runnable browser launcher or
-isolation substrate.
+future browser adapter must enforce. It also returns `adapter_handoff`, a
+non-launchable handoff contract that names the exact admission fields and
+completion proofs a Tempo-side adapter must bind before any future launch path
+can be trusted. It is the authoritative admission decision and currently always
+rejects because Beatbox has no runnable browser launcher or isolation
+substrate.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked
