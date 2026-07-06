@@ -52,6 +52,9 @@ Beatbox intends to support for Tempo-style integrations: external
 instrumentation, ephemeral profiles, network-suppressed browsing, sealed
 persisted state, OS-isolated browsing, and remote isolated workers. The response
 deliberately reports
-`runnable_browser_sessions: false`, has no default level, and marks every
-profile as `planned` or `unavailable` until a real browser launcher, egress
-boundary, storage policy, and teardown path enforce the claim.
+`runnable_browser_sessions: false`, serializes `default_level` as `null`, and
+marks every profile as `planned` or `unavailable` until a real browser launcher,
+egress boundary, storage policy, and teardown path enforce the claim. Call
+`POST /v1/browser/admit` or the MCP `admit_browser_session` tool before starting
+browser work; the current implementation always rejects admission and explains
+which production pieces are still missing.

@@ -69,6 +69,17 @@ final class Client
         return $this->requestJson('GET', '/v1/browser/profiles', null, true);
     }
 
+    /**
+     * POST /v1/browser/admit. Returns browser sandbox admission decision JSON.
+     *
+     * @param array<string,mixed> $request
+     * @return array<string,mixed>
+     */
+    public function browserAdmit(array $request): array
+    {
+        return $this->requestJson('POST', '/v1/browser/admit', $request, true);
+    }
+
     /** POST /v1/execute — run a program synchronously. */
     public function execute(ExecuteRequest $request): ExecutionResult
     {

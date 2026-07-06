@@ -84,6 +84,7 @@ are never followed, so the api key cannot leak to another origin.
 | `client.health` | `GET /v1/health` | no | `Hash` (raw JSON) |
 | `client.capabilities` | `GET /v1/capabilities` | yes | `Hash` (raw JSON) |
 | `client.browser_profiles` | `GET /v1/browser/profiles` | yes | `Hash` (raw JSON) |
+| `client.browser_admit(request)` | `POST /v1/browser/admit` | yes | `Hash` (raw JSON) |
 | `client.execute(request)` | `POST /v1/execute` | yes | `Beatbox::ExecutionResult` |
 | `client.create_job(request)` | `POST /v1/jobs` | yes | `Beatbox::CreateJobResponse` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `Beatbox::JobRecord` |

@@ -21,11 +21,12 @@ capability access, or out-of-policy network egress is a critical vulnerability.
 - Browser automation: Beatbox does not currently claim a runnable browser
   sandbox. `/v1/browser/profiles` is authenticated control-plane metadata for
   integration planning; MCP exposes the same contract through
-  `get_browser_profiles` with structured content. It reports no default browser
-  profile and no available browser session level until a real implementation
-  enforces fresh profiles, network suppression or allowlisting, credential
-  isolation, teardown, and any stated encryption behavior in the production call
-  path.
+  `get_browser_profiles` with structured content. `POST /v1/browser/admit` and
+  MCP `admit_browser_session` are authenticated fail-closed preflight gates; the
+  current decision is always rejected, even when downgrade is allowed, until a
+  real implementation enforces fresh profiles, network suppression or
+  allowlisting, credential isolation, teardown, and any stated encryption
+  behavior in the production call path.
 
 ## current grades
 

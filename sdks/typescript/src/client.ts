@@ -99,6 +99,16 @@ export class BeatboxClient {
     });
   }
 
+  /** `POST /v1/browser/admit` — browser sandbox admission preflight. */
+  admitBrowserSession(request: unknown): Promise<unknown> {
+    return this.request<unknown>({
+      method: "POST",
+      path: "/v1/browser/admit",
+      auth: true,
+      body: request,
+    });
+  }
+
   /** `POST /v1/execute` — run a program synchronously. */
   execute(request: ExecuteRequest): Promise<ExecutionResult> {
     return this.request<ExecutionResult>({

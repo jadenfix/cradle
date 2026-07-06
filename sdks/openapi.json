@@ -29,6 +29,56 @@
         }
       }
     },
+    "/v1/browser/admit": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_admit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserAdmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Browser sandbox admission decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAdmissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/browser/profiles": {
       "get": {
         "tags": [
@@ -67,10 +117,24 @@
         "operationId": "capabilities",
         "responses": {
           "200": {
-            "description": "Lane availability and host limits"
+            "description": "Lane availability and host limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Missing or invalid bearer token"
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -293,16 +357,116 @@
   },
   "components": {
     "schemas": {
+      "BrowserAdmissionDecision": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "rejected"
+        ]
+      },
+      "BrowserAdmissionRequest": {
+        "type": "object",
+        "required": [
+          "requested_level",
+          "actor",
+          "sensitivity"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "allow_downgrade": {
+            "type": "boolean"
+          },
+          "requested_level": {
+            "$ref": "#/components/schemas/BrowserSandboxLevel"
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "task_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserAdmissionResponse": {
+        "type": "object",
+        "required": [
+          "decision",
+          "runnable_browser_sessions",
+          "requested_level",
+          "actor",
+          "sensitivity",
+          "downgrade_allowed",
+          "reasons",
+          "required_next_steps",
+          "profiles_endpoint"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/BrowserAdmissionDecision"
+          },
+          "downgrade_allowed": {
+            "type": "boolean"
+          },
+          "profiles_endpoint": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requested_level": {
+            "$ref": "#/components/schemas/BrowserSandboxLevel"
+          },
+          "required_next_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "runnable_browser_sessions": {
+            "type": "boolean"
+          },
+          "selected_level": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserSandboxLevel"
+              }
+            ]
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          }
+        },
+        "additionalProperties": false
+      },
       "BrowserIntegrationContract": {
         "type": "object",
         "required": [
           "status",
           "consumer",
           "endpoint",
+          "admission_endpoint",
           "selection_field",
           "required_consumer_behavior"
         ],
         "properties": {
+          "admission_endpoint": {
+            "type": "string"
+          },
           "consumer": {
             "type": "string"
           },
@@ -449,6 +613,165 @@
           },
           "summary": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserSensitivity": {
+        "type": "string",
+        "enum": [
+          "public",
+          "sensitive"
+        ]
+      },
+      "BrowserSessionActor": {
+        "type": "string",
+        "enum": [
+          "agent",
+          "human"
+        ]
+      },
+      "CapabilitiesResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "lanes",
+          "limits",
+          "engines",
+          "browser_sandbox"
+        ],
+        "properties": {
+          "browser_sandbox": {
+            "$ref": "#/components/schemas/BrowserProfilesResponse"
+          },
+          "engines": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapabilityLane"
+            }
+          },
+          "limits": {
+            "$ref": "#/components/schemas/CapabilityLimits"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapabilityLane": {
+        "type": "object",
+        "required": [
+          "lane",
+          "available",
+          "substrate",
+          "grade",
+          "mechanisms"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "grade": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "lane": {
+            "$ref": "#/components/schemas/Lane"
+          },
+          "mechanisms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "substrate": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapabilityLimits": {
+        "type": "object",
+        "required": [
+          "sync_wall_ms",
+          "job_wall_ms",
+          "default_wall_ms",
+          "default_memory_bytes",
+          "default_output_bytes",
+          "max_request_bytes",
+          "max_memory_bytes",
+          "max_output_bytes",
+          "max_fuel",
+          "max_concurrent_sync",
+          "max_concurrent_jobs"
+        ],
+        "properties": {
+          "default_memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "default_output_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "default_wall_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "job_wall_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_concurrent_jobs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_concurrent_sync": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_fuel": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_memory_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_output_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_request_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sync_wall_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         },
         "additionalProperties": false

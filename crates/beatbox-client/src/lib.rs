@@ -73,6 +73,18 @@ impl Client {
         decode_response(response).await
     }
 
+    pub async fn browser_admit(
+        &self,
+        request: &BrowserAdmissionRequest,
+    ) -> Result<BrowserAdmissionResponse, ClientError> {
+        let request_builder = self
+            .http
+            .post(format!("{}/v1/browser/admit", self.base_url))
+            .json(request);
+        let response = self.authorize(request_builder).send().await?;
+        decode_response(response).await
+    }
+
     pub async fn execute(&self, request: &ExecuteRequest) -> Result<ExecutionResult, ClientError> {
         let request_builder = self
             .http

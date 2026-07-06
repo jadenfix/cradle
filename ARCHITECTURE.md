@@ -63,9 +63,16 @@ The MCP tool returns one authoritative structured payload in
 `structuredContent`; the text content is only a short label. Model-facing
 callers should not parse a second serialized JSON copy out of text.
 
+`POST /v1/browser/admit` and the MCP `admit_browser_session` tool are the
+fail-closed preflight path for browser work. Callers submit the requested
+sandbox level, actor, sensitivity, and any explicit downgrade allowance before
+starting browser automation. The response is the authoritative admission
+decision and currently always rejects because Beatbox has no runnable browser
+launcher or isolation substrate.
+
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
-is false, `default_level` is absent, and no profile is marked `available`.
-Profiles describe planned levels rather than enforced behavior:
+is false, `default_level` is serialized as `null`, and no profile is marked
+`available`. Profiles describe planned levels rather than enforced behavior:
 instrumented external browsers, ephemeral profiles, network-suppressed
 profiles, sealed persisted state, OS-isolated browsers, and remote isolated
 workers. A consumer must not silently downgrade sensitive work to a weaker

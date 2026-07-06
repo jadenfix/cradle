@@ -55,6 +55,7 @@ pub struct BrowserIntegrationContract {
     pub status: BrowserSandboxAvailability,
     pub consumer: String,
     pub endpoint: String,
+    pub admission_endpoint: String,
     pub selection_field: String,
     pub required_consumer_behavior: Vec<String>,
 }
@@ -67,6 +68,90 @@ pub struct BrowserProfilesResponse {
     pub default_level: Option<BrowserSandboxLevel>,
     pub integration: BrowserIntegrationContract,
     pub profiles: Vec<BrowserSandboxProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSessionActor {
+    Agent,
+    Human,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSensitivity {
+    Public,
+    Sensitive,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserAdmissionRequest {
+    pub requested_level: BrowserSandboxLevel,
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    #[serde(default)]
+    pub allow_downgrade: bool,
+    #[serde(default)]
+    pub task_label: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAdmissionDecision {
+    Accepted,
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserAdmissionResponse {
+    pub decision: BrowserAdmissionDecision,
+    pub runnable_browser_sessions: bool,
+    pub requested_level: BrowserSandboxLevel,
+    pub selected_level: Option<BrowserSandboxLevel>,
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    pub downgrade_allowed: bool,
+    pub reasons: Vec<String>,
+    pub required_next_steps: Vec<String>,
+    pub profiles_endpoint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityLane {
+    pub lane: Lane,
+    pub available: bool,
+    pub substrate: String,
+    pub grade: BTreeMap<String, String>,
+    pub mechanisms: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityLimits {
+    pub sync_wall_ms: u64,
+    pub job_wall_ms: u64,
+    pub default_wall_ms: u64,
+    pub default_memory_bytes: u64,
+    pub default_output_bytes: u64,
+    pub max_request_bytes: usize,
+    pub max_memory_bytes: u64,
+    pub max_output_bytes: u64,
+    pub max_fuel: u64,
+    pub max_concurrent_sync: usize,
+    pub max_concurrent_jobs: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilitiesResponse {
+    pub version: String,
+    pub lanes: Vec<CapabilityLane>,
+    pub limits: CapabilityLimits,
+    pub engines: BTreeMap<String, String>,
+    pub browser_sandbox: BrowserProfilesResponse,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

@@ -1,6 +1,6 @@
 mod jobs;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,9 +14,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
+    BrowserAdmissionDecision, BrowserAdmissionRequest, BrowserAdmissionResponse,
     BrowserIntegrationContract, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxLevel, BrowserSandboxProfile, CreateJobResponse, ErrorBody, ErrorResponse,
-    ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity, BrowserSessionActor,
+    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody,
+    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
+    Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -187,6 +190,7 @@ pub fn router(config: ServerConfig) -> Router {
         .route("/openapi.json", get(openapi))
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/browser/profiles", get(browser_profiles))
+        .route("/v1/browser/admit", post(browser_admit))
         .route("/v1/execute", post(execute))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job).delete(cancel_job))
@@ -205,7 +209,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
 async fn capabilities(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<CapabilitiesResponse>, ApiError> {
     state.authorize(&headers)?;
     Ok(Json(capabilities_json(&state.config)))
 }
@@ -216,6 +220,16 @@ async fn browser_profiles(
 ) -> Result<Json<BrowserProfilesResponse>, ApiError> {
     state.authorize(&headers)?;
     Ok(Json(browser_profiles_response()))
+}
+
+async fn browser_admit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+) -> Result<Json<BrowserAdmissionResponse>, ApiError> {
+    state.authorize(&headers)?;
+    let request = parse_json_body(&state, request).await?;
+    Ok(Json(browser_admission_response(request)))
 }
 
 async fn execute(
@@ -757,42 +771,85 @@ fn source_kind(source: &Source) -> &'static str {
     }
 }
 
-fn capabilities_json(config: &ServerConfig) -> Value {
-    let browser_profiles = serde_json::to_value(browser_profiles_response()).unwrap_or_else(
-        |error| json!({"error": format!("browser profile serialization failed: {error}")}),
-    );
-    json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "lanes": [
-            {
-                "lane": "wasm",
-                "available": true,
-                "substrate": "wasmtime",
-                "grade": {"linux": "prod", "macos": "prod"},
-                "mechanisms": ["empty-linker", "fuel", "epoch-interruption", "store-limits"]
+fn capabilities_json(config: &ServerConfig) -> CapabilitiesResponse {
+    let planned_wasmtime = BTreeMap::from([
+        ("linux".to_string(), "planned".to_string()),
+        ("macos".to_string(), "planned".to_string()),
+    ]);
+    let planned_os_jail = BTreeMap::from([
+        ("linux".to_string(), "planned".to_string()),
+        ("macos".to_string(), "planned_dev".to_string()),
+    ]);
+    CapabilitiesResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        lanes: vec![
+            CapabilityLane {
+                lane: Lane::Wasm,
+                available: true,
+                substrate: "wasmtime".to_string(),
+                grade: BTreeMap::from([
+                    ("linux".to_string(), "prod".to_string()),
+                    ("macos".to_string(), "prod".to_string()),
+                ]),
+                mechanisms: vec![
+                    "empty-linker".to_string(),
+                    "fuel".to_string(),
+                    "epoch-interruption".to_string(),
+                    "store-limits".to_string(),
+                ],
             },
-            {"lane": "python_wasi", "available": false, "substrate": "wasmtime", "grade": {"linux": "planned", "macos": "planned"}},
-            {"lane": "js_wasm", "available": false, "substrate": "wasmtime", "grade": {"linux": "planned", "macos": "planned"}},
-            {"lane": "python_native", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}},
-            {"lane": "js_native", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}},
-            {"lane": "exec", "available": false, "substrate": "os_jail", "grade": {"linux": "planned", "macos": "planned_dev"}}
+            CapabilityLane {
+                lane: Lane::PythonWasi,
+                available: false,
+                substrate: "wasmtime".to_string(),
+                grade: planned_wasmtime.clone(),
+                mechanisms: Vec::new(),
+            },
+            CapabilityLane {
+                lane: Lane::JsWasm,
+                available: false,
+                substrate: "wasmtime".to_string(),
+                grade: planned_wasmtime,
+                mechanisms: Vec::new(),
+            },
+            CapabilityLane {
+                lane: Lane::PythonNative,
+                available: false,
+                substrate: "os_jail".to_string(),
+                grade: planned_os_jail.clone(),
+                mechanisms: Vec::new(),
+            },
+            CapabilityLane {
+                lane: Lane::JsNative,
+                available: false,
+                substrate: "os_jail".to_string(),
+                grade: planned_os_jail.clone(),
+                mechanisms: Vec::new(),
+            },
+            CapabilityLane {
+                lane: Lane::Exec,
+                available: false,
+                substrate: "os_jail".to_string(),
+                grade: planned_os_jail,
+                mechanisms: Vec::new(),
+            },
         ],
-        "limits": {
-            "sync_wall_ms": config.sync_wall_ms,
-            "job_wall_ms": config.job_wall_ms,
-            "default_wall_ms": Policy::default().limits.wall_ms,
-            "default_memory_bytes": Policy::default().limits.memory_bytes,
-            "default_output_bytes": Policy::default().limits.output_bytes,
-            "max_request_bytes": config.max_request_bytes,
-            "max_memory_bytes": config.max_memory_bytes,
-            "max_output_bytes": config.max_output_bytes,
-            "max_fuel": config.max_fuel,
-            "max_concurrent_sync": config.max_concurrent_sync,
-            "max_concurrent_jobs": config.max_concurrent_jobs
+        limits: CapabilityLimits {
+            sync_wall_ms: config.sync_wall_ms,
+            job_wall_ms: config.job_wall_ms,
+            default_wall_ms: Policy::default().limits.wall_ms,
+            default_memory_bytes: Policy::default().limits.memory_bytes,
+            default_output_bytes: Policy::default().limits.output_bytes,
+            max_request_bytes: config.max_request_bytes,
+            max_memory_bytes: config.max_memory_bytes,
+            max_output_bytes: config.max_output_bytes,
+            max_fuel: config.max_fuel,
+            max_concurrent_sync: config.max_concurrent_sync,
+            max_concurrent_jobs: config.max_concurrent_jobs,
         },
-        "engines": {"wasmtime": "45"},
-        "browser_sandbox": browser_profiles
-    })
+        engines: BTreeMap::from([("wasmtime".to_string(), "45".to_string())]),
+        browser_sandbox: browser_profiles_response(),
+    }
 }
 
 fn browser_profiles_response() -> BrowserProfilesResponse {
@@ -804,9 +861,11 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
             status: BrowserSandboxAvailability::Planned,
             consumer: "tempo".to_string(),
             endpoint: "/v1/browser/profiles".to_string(),
+            admission_endpoint: "/v1/browser/admit".to_string(),
             selection_field: "browser_sandbox_level".to_string(),
             required_consumer_behavior: vec![
                 "read this endpoint before offering browser work".to_string(),
+                "call /v1/browser/admit before starting browser work".to_string(),
                 "treat planned or unavailable profiles as non-runnable".to_string(),
                 "do not downgrade to a weaker profile without an explicit user or policy decision".to_string(),
                 "bind sensitive browsing to a fresh user-approved profile selection".to_string(),
@@ -941,6 +1000,67 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
     }
 }
 
+fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmissionResponse {
+    let mut reasons = vec![
+        "beatbox does not currently expose a runnable browser sandbox".to_string(),
+        "no browser launcher, teardown path, egress boundary, storage policy, or encryption behavior is implemented"
+            .to_string(),
+    ];
+    match request.requested_level {
+        BrowserSandboxLevel::InstrumentedExternal => {
+            reasons.push(
+                "instrumented_external is explicitly not a sandbox and is unavailable for sensitive work"
+                    .to_string(),
+            );
+        }
+        BrowserSandboxLevel::EphemeralProfile => {
+            reasons.push("ephemeral profile launcher and cleanup are not implemented".to_string());
+        }
+        BrowserSandboxLevel::NetworkSuppressed => {
+            reasons.push("network suppression proxy is not implemented".to_string());
+        }
+        BrowserSandboxLevel::SealedState => {
+            reasons.push("encrypted artifact sealing is not implemented".to_string());
+        }
+        BrowserSandboxLevel::OsIsolated => {
+            reasons.push("OS jail or microVM browser substrate is not implemented".to_string());
+        }
+        BrowserSandboxLevel::RemoteIsolated => {
+            reasons
+                .push("remote disposable browser worker protocol is not implemented".to_string());
+        }
+    }
+    if request.allow_downgrade {
+        reasons.push(
+            "downgrade was allowed, but no weaker browser profile is currently runnable"
+                .to_string(),
+        );
+    }
+    if matches!(request.sensitivity, BrowserSensitivity::Sensitive) {
+        reasons.push(
+            "sensitive browser work requires an explicitly available isolated profile".to_string(),
+        );
+    }
+
+    BrowserAdmissionResponse {
+        decision: BrowserAdmissionDecision::Rejected,
+        runnable_browser_sessions: false,
+        requested_level: request.requested_level,
+        selected_level: None,
+        actor: request.actor,
+        sensitivity: request.sensitivity,
+        downgrade_allowed: request.allow_downgrade,
+        reasons,
+        required_next_steps: vec![
+            "implement a browser launcher with a fresh profile per task".to_string(),
+            "enforce network egress through a deny-by-default policy boundary".to_string(),
+            "prove teardown removes plaintext browser state".to_string(),
+            "add production-path tests before marking any browser profile available".to_string(),
+        ],
+        profiles_endpoint: "/v1/browser/profiles".to_string(),
+    }
+}
+
 async fn openapi() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
@@ -969,6 +1089,7 @@ pub fn openapi_spec_json() -> String {
         openapi_paths::health,
         openapi_paths::capabilities,
         openapi_paths::browser_profiles,
+        openapi_paths::browser_admit,
         openapi_paths::execute,
         openapi_paths::create_job,
         openapi_paths::get_job,
@@ -1003,6 +1124,14 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserSandboxProfile,
         beatbox_core::BrowserSandboxLevel,
         beatbox_core::BrowserSandboxAvailability,
+        beatbox_core::BrowserAdmissionRequest,
+        beatbox_core::BrowserAdmissionResponse,
+        beatbox_core::BrowserAdmissionDecision,
+        beatbox_core::BrowserSessionActor,
+        beatbox_core::BrowserSensitivity,
+        beatbox_core::CapabilitiesResponse,
+        beatbox_core::CapabilityLane,
+        beatbox_core::CapabilityLimits,
     )),
     tags(
         (name = "v1", description = "beatbox REST API"),
@@ -1014,7 +1143,8 @@ struct ApiDoc;
 #[allow(dead_code)]
 mod openapi_paths {
     use beatbox_core::{
-        BrowserProfilesResponse, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
+        BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserProfilesResponse,
+        CapabilitiesResponse, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
         JobRecord,
     };
 
@@ -1031,8 +1161,8 @@ mod openapi_paths {
         path = "/v1/capabilities",
         tag = "v1",
         responses(
-            (status = 200, description = "Lane availability and host limits"),
-            (status = 401, description = "Missing or invalid bearer token")
+            (status = 200, description = "Lane availability and host limits", body = CapabilitiesResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse)
         )
     )]
     pub fn capabilities() {}
@@ -1047,6 +1177,19 @@ mod openapi_paths {
         )
     )]
     pub fn browser_profiles() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/browser/admit",
+        tag = "v1",
+        request_body = BrowserAdmissionRequest,
+        responses(
+            (status = 200, description = "Browser sandbox admission decision", body = BrowserAdmissionResponse),
+            (status = 400, description = "Malformed JSON body", body = ErrorResponse),
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse)
+        )
+    )]
+    pub fn browser_admit() {}
 
     #[utoipa::path(
         post,
@@ -1310,6 +1453,32 @@ fn mcp_tools() -> Value {
             "name": "get_browser_profiles",
             "description": "Return beatbox browser sandbox profile discovery metadata for Tempo-style integrations.",
             "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "admit_browser_session",
+            "description": "Return a fail-closed browser sandbox admission decision for a requested actor, sensitivity, and sandbox level.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["requested_level", "actor", "sensitivity"],
+                "properties": {
+                    "requested_level": {
+                        "type": "string",
+                        "enum": [
+                            "instrumented_external",
+                            "ephemeral_profile",
+                            "network_suppressed",
+                            "sealed_state",
+                            "os_isolated",
+                            "remote_isolated"
+                        ]
+                    },
+                    "actor": {"type": "string", "enum": ["agent", "human"]},
+                    "sensitivity": {"type": "string", "enum": ["public", "sensitive"]},
+                    "allow_downgrade": {"type": "boolean"},
+                    "task_label": {"type": "string"}
+                }
+            }
         }
     ])
 }
@@ -1351,6 +1520,22 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
+        "admit_browser_session" => {
+            let request = mcp_browser_admission_request(&arguments)?;
+            let decision = browser_admission_response(request);
+            let is_error = decision.decision != BrowserAdmissionDecision::Accepted;
+            let decision = serde_json::to_value(decision).map_err(|error| {
+                (
+                    -32603,
+                    format!("failed to serialize browser admission decision: {error}"),
+                )
+            })?;
+            Ok(json!({
+                "content": [{"type": "text", "text": "beatbox browser admission decision"}],
+                "structuredContent": decision,
+                "isError": is_error,
+            }))
+        }
         "run_wasm" => {
             let request = mcp_run_wasm_request(&arguments)?;
             let result = execute_sync(state, request)
@@ -1374,6 +1559,38 @@ async fn mcp_tools_call(
         }
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
+}
+
+fn mcp_browser_admission_request(
+    arguments: &Value,
+) -> Result<BrowserAdmissionRequest, (i64, String)> {
+    let arguments = mcp_tool_arguments(
+        arguments,
+        "admit_browser_session",
+        &[
+            "requested_level",
+            "actor",
+            "sensitivity",
+            "allow_downgrade",
+            "task_label",
+        ],
+    )?;
+    Ok(BrowserAdmissionRequest {
+        requested_level: mcp_browser_level_arg(
+            arguments,
+            "requested_level",
+            "admit_browser_session",
+        )?,
+        actor: mcp_browser_actor_arg(arguments, "actor", "admit_browser_session")?,
+        sensitivity: mcp_browser_sensitivity_arg(
+            arguments,
+            "sensitivity",
+            "admit_browser_session",
+        )?,
+        allow_downgrade: mcp_bool_arg(arguments, "allow_downgrade", "admit_browser_session")?
+            .unwrap_or(false),
+        task_label: mcp_optional_string_arg(arguments, "task_label", "admit_browser_session")?,
+    })
 }
 
 fn mcp_run_wasm_request(arguments: &Value) -> Result<ExecuteRequest, (i64, String)> {
@@ -1501,6 +1718,21 @@ fn mcp_optional_string_arg(
         .transpose()
 }
 
+fn mcp_bool_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<bool>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or((-32602, format!("{tool} argument `{key}` must be a boolean")))
+        })
+        .transpose()
+}
+
 fn mcp_u64_arg(
     arguments: &serde_json::Map<String, Value>,
     key: &'static str,
@@ -1515,6 +1747,55 @@ fn mcp_u64_arg(
             ))
         })
         .transpose()
+}
+
+fn mcp_browser_level_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<BrowserSandboxLevel, (i64, String)> {
+    match mcp_string_arg(arguments, key, tool)?.as_str() {
+        "instrumented_external" => Ok(BrowserSandboxLevel::InstrumentedExternal),
+        "ephemeral_profile" => Ok(BrowserSandboxLevel::EphemeralProfile),
+        "network_suppressed" => Ok(BrowserSandboxLevel::NetworkSuppressed),
+        "sealed_state" => Ok(BrowserSandboxLevel::SealedState),
+        "os_isolated" => Ok(BrowserSandboxLevel::OsIsolated),
+        "remote_isolated" => Ok(BrowserSandboxLevel::RemoteIsolated),
+        other => Err((
+            -32602,
+            format!("{tool} argument `{key}` has unsupported browser sandbox level `{other}`"),
+        )),
+    }
+}
+
+fn mcp_browser_actor_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<BrowserSessionActor, (i64, String)> {
+    match mcp_string_arg(arguments, key, tool)?.as_str() {
+        "agent" => Ok(BrowserSessionActor::Agent),
+        "human" => Ok(BrowserSessionActor::Human),
+        other => Err((
+            -32602,
+            format!("{tool} argument `{key}` has unsupported actor `{other}`"),
+        )),
+    }
+}
+
+fn mcp_browser_sensitivity_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<BrowserSensitivity, (i64, String)> {
+    match mcp_string_arg(arguments, key, tool)?.as_str() {
+        "public" => Ok(BrowserSensitivity::Public),
+        "sensitive" => Ok(BrowserSensitivity::Sensitive),
+        other => Err((
+            -32602,
+            format!("{tool} argument `{key}` has unsupported sensitivity `{other}`"),
+        )),
+    }
 }
 
 fn tool_result(result: ExecutionResult) -> Result<Value, (i64, String)> {

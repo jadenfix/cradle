@@ -107,6 +107,14 @@ func (c *Client) BrowserProfiles(ctx context.Context) (json.RawMessage, error) {
 	return out, err
 }
 
+// AdmitBrowserSession returns a browser sandbox admission preflight decision
+// (POST /v1/browser/admit).
+func (c *Client) AdmitBrowserSession(ctx context.Context, req any) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodPost, c.baseURL+"/v1/browser/admit", true, req, &out)
+	return out, err
+}
+
 // Execute runs the request synchronously (POST /v1/execute) and returns the
 // ExecutionResult.
 func (c *Client) Execute(ctx context.Context, req ExecuteRequest) (*ExecutionResult, error) {

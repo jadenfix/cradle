@@ -77,6 +77,12 @@ public final class BeatboxClient {
         return sendForJson("GET", uri("/v1/browser/profiles"), true, null);
     }
 
+    /** {@code POST /v1/browser/admit}. Returns browser sandbox admission decision JSON. */
+    public JsonNode browserAdmit(JsonNode request) {
+        Objects.requireNonNull(request, "request");
+        return sendForJson("POST", uri("/v1/browser/admit"), true, encode(request));
+    }
+
     /** {@code POST /v1/execute}. Runs the request synchronously. */
     public ExecutionResult execute(ExecuteRequest request) {
         Objects.requireNonNull(request, "request");
