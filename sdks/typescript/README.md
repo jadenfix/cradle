@@ -50,6 +50,11 @@ new BeatboxClient({
 });
 ```
 
+`baseUrl` must be an absolute `https://` URL, or `http://127.0.0.1...` /
+`http://[::1]...` for local development. Credentials, query strings,
+fragments, and path prefixes with dot segments or encoded separators are
+rejected before any request can be built.
+
 When `apiKey` is set it is sent as the header `x-beatbox-api-key` on every
 request **except** `health()` and `openapi()`, which are unauthenticated.
 Redirects are never followed, so the key can't leak cross-origin. The API key

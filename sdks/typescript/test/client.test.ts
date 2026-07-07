@@ -73,6 +73,108 @@ test("BeatboxClient trims trailing slashes on baseUrl", () => {
   assert.throws(() => new BeatboxClient({ baseUrl: "" }), TypeError);
 });
 
+test("BeatboxClient accepts secure and loopback-literal base URLs", () => {
+  for (const baseUrl of [
+    "https://daemon.example",
+    "https://daemon.example/prefix/",
+    "http://127.0.0.1:7300",
+    "http://[::1]:7300",
+  ]) {
+    assert.doesNotThrow(() => new BeatboxClient({ baseUrl }), baseUrl);
+  }
+});
+
+test("BeatboxClient rejects base URLs that could leak api keys", () => {
+  for (const baseUrl of [
+    " http://127.0.0.1:7300",
+    "http://127.0.0.1:7300 ",
+    "http://localhost:7300",
+    "http://127.1:7300",
+    "http://10.0.0.1:7300",
+    "http://192.168.1.10:7300",
+    "http://example.com",
+    "ftp://127.0.0.1:7300",
+    "https://user@example.com",
+    "https://user:pass@example.com",
+    "https://example.com?api=v1",
+    "https://example.com#fragment",
+    "/relative",
+  ]) {
+    assert.throws(() => new BeatboxClient({ baseUrl }), TypeError, baseUrl);
+  }
+});
+
+test("BeatboxClient rejects retargeting path prefixes", () => {
+  for (const baseUrl of [
+    "https://example.com/base/../admin",
+    "https://example.com/base/%2e%2e/admin",
+    "https://example.com/base/%2E/admin",
+    "https://example.com/base/%2Fadmin",
+    "https://example.com/base/%5Cadmin",
+    "https://example.com/base\\admin",
+    "https://example.com/base/%",
+  ]) {
+    assert.throws(() => new BeatboxClient({ baseUrl }), TypeError, baseUrl);
+  }
+});
+
+test("BeatboxClient preserves validated path prefixes on authenticated requests", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(JSON.stringify({ lanes: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "https://daemon.example/proxy/beatbox/",
+      apiKey: "secret-key",
+    });
+
+    await client.capabilities();
+
+    assert.equal(capturedUrl, "https://daemon.example/proxy/beatbox/v1/capabilities");
+    assert.equal(capturedInit?.method, "GET");
+    assert.equal(capturedInit?.redirect, "manual");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("BeatboxClient rejects redirects without exposing response bodies", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("redirect target body", {
+      status: 302,
+      headers: { location: "https://attacker.example/collect" },
+    })) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "https://daemon.example",
+      apiKey: "secret-key",
+    });
+
+    await assert.rejects(
+      () => client.capabilities(),
+      (err: unknown) =>
+        err instanceof BeatboxTransportError &&
+        /unexpected redirect/.test(err.message) &&
+        !err.message.includes("attacker.example") &&
+        !err.message.includes("redirect target body"),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("admitBrowserSession sends authenticated JSON preflight", async () => {
   const originalFetch = globalThis.fetch;
   let capturedUrl = "";

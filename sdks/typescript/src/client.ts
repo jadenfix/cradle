@@ -45,6 +45,92 @@ export function encodeJobId(jobId: string): string {
   return encodeURIComponent(jobId);
 }
 
+function normalizeBaseUrl(input: string): string {
+  if (input.trim() !== input) {
+    throw new TypeError("BeatboxClient baseUrl must not contain leading or trailing whitespace");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new TypeError("BeatboxClient baseUrl must be an absolute URL");
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new TypeError("BeatboxClient baseUrl must use http or https");
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new TypeError("BeatboxClient baseUrl must not include credentials");
+  }
+  if (parsed.search !== "" || parsed.hash !== "") {
+    throw new TypeError("BeatboxClient baseUrl must not include query or fragment");
+  }
+  if (input.includes("\\")) {
+    throw new TypeError("BeatboxClient baseUrl path must not include backslashes");
+  }
+  if (parsed.protocol === "http:" && !isAllowedPlaintextLoopback(input)) {
+    throw new TypeError("BeatboxClient baseUrl may use plaintext http only with loopback IP literals");
+  }
+
+  validateRawPathPrefix(input);
+  return parsed.href.replace(/\/+$/, "");
+}
+
+function isAllowedPlaintextLoopback(input: string): boolean {
+  const schemeEnd = input.indexOf("://");
+  const authorityStart = schemeEnd + 3;
+  const authorityEndCandidates = [
+    input.indexOf("/", authorityStart),
+    input.indexOf("?", authorityStart),
+    input.indexOf("#", authorityStart),
+  ].filter((idx) => idx >= 0);
+  const authorityEnd = authorityEndCandidates.length === 0 ? input.length : Math.min(...authorityEndCandidates);
+  const authority = input.slice(authorityStart, authorityEnd);
+  const hostPort = authority.includes("@") ? authority.slice(authority.lastIndexOf("@") + 1) : authority;
+  const host = hostPort.startsWith("[")
+    ? hostPort.slice(0, hostPort.indexOf("]") + 1)
+    : hostPort.split(":", 1)[0] ?? "";
+  return host === "127.0.0.1" || host.toLowerCase() === "[::1]";
+}
+
+function validateRawPathPrefix(input: string): void {
+  const schemeEnd = input.indexOf("://");
+  if (schemeEnd < 0) {
+    return;
+  }
+  const authorityStart = schemeEnd + 3;
+  const pathStart = input.indexOf("/", authorityStart);
+  if (pathStart < 0) {
+    return;
+  }
+  const queryStart = input.indexOf("?", pathStart);
+  const fragmentStart = input.indexOf("#", pathStart);
+  const pathEndCandidates = [queryStart, fragmentStart].filter((idx) => idx >= 0);
+  const pathEnd = pathEndCandidates.length === 0 ? input.length : Math.min(...pathEndCandidates);
+  const rawPath = input.slice(pathStart, pathEnd);
+
+  for (const segment of rawPath.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") {
+      if (segment === "." || segment === "..") {
+        throw new TypeError("BeatboxClient baseUrl path must not contain dot segments");
+      }
+      continue;
+    }
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new TypeError("BeatboxClient baseUrl path contains invalid percent encoding");
+    }
+    if (decoded === "." || decoded === "..") {
+      throw new TypeError("BeatboxClient baseUrl path must not contain encoded dot segments");
+    }
+    if (decoded.includes("/") || decoded.includes("\\")) {
+      throw new TypeError("BeatboxClient baseUrl path segments must not encode separators");
+    }
+  }
+}
+
 interface RequestOptions {
   method: string;
   path: string;
@@ -63,8 +149,7 @@ export class BeatboxClient {
     if (!config || typeof config.baseUrl !== "string" || config.baseUrl === "") {
       throw new TypeError("BeatboxClient requires a non-empty baseUrl");
     }
-    // Trim trailing slashes so path joins are unambiguous.
-    this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeBaseUrl(config.baseUrl);
     this.apiKey = config.apiKey;
     this.timeoutMs =
       config.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : config.timeoutMs;
