@@ -1379,6 +1379,9 @@
         "type": "object",
         "required": [
           "request_id",
+          "issued_at",
+          "expires_at",
+          "max_session_seconds",
           "adapter_id",
           "contract_version",
           "requested_level",
@@ -1394,6 +1397,7 @@
           "completion_report_template",
           "same_user_capability_required",
           "endpoint_network_policy_binding_required",
+          "replay_protection_required",
           "notes"
         ],
         "properties": {
@@ -1430,14 +1434,32 @@
           "endpoint_network_policy_binding_required": {
             "type": "boolean"
           },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC3339 timestamp after which a future launcher must reject this\nenvelope instead of attempting adapter execution."
+          },
           "guard_plan": {
             "$ref": "#/components/schemas/BrowserAdmissionGuardPlan"
+          },
+          "issued_at": {
+            "type": "string",
+            "description": "RFC3339 timestamp for when this envelope was issued. Discovery and\nconformance templates use a deterministic placeholder; live launch-plan\npreflights use server time."
+          },
+          "max_session_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Maximum browser session lifetime represented by this envelope.",
+            "minimum": 1
           },
           "notes": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "replay_protection_required": {
+            "type": "boolean",
+            "description": "Future launchers must reject reused request_id values for this adapter."
           },
           "request_id": {
             "type": "string",

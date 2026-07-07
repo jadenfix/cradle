@@ -84,7 +84,9 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `intent_warnings`, plus the browser admission `guard_plan` and
 `adapter_handoff` with its `launch_request_template`,
 `completion_proof_contract`, and `completion_report_template`; raw JSON return
-is acceptable until each language adds typed convenience models),
+is acceptable until each language adds typed convenience models; preserve
+`issued_at`, `expires_at`, `max_session_seconds`, and
+`replay_protection_required` on every launch request envelope),
 `BrowserAdapterManifestRequest`,
 `BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
 `BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,

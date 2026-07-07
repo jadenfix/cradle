@@ -2,20 +2,23 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionValidationDecision,
-    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceExpectation,
-    BrowserAdapterContractResponse, BrowserAdapterLaunchPlanResponse,
-    BrowserAdapterManifestResponse, BrowserAdapterRegistrationResponse, BrowserAdmissionDecision,
-    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS, BrowserAdapterCapabilityIssueResponse,
+    BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
+    BrowserAdapterConformanceExpectation, BrowserAdapterContractResponse,
+    BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestResponse,
+    BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
+    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
     BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
     ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
+    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
     AETHER_PAYMENT_HASH_HEADER, AETHER_PAYMENT_HEADER, AuthMode, DEFAULT_JOB_WALL_MS,
     DEFAULT_SYNC_WALL_MS, JobStore, ServerConfig, origin_allowed, router,
 };
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use tower::ServiceExt;
 
@@ -1177,6 +1180,27 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .launch_request_template
             .endpoint_network_policy_binding_required
     );
+    assert!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .replay_protection_required
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.issued_at,
+        browser_adapter_launch_template_issued_at()
+    );
+    assert_eq!(
+        decision.adapter_handoff.launch_request_template.expires_at,
+        browser_adapter_launch_template_expires_at()
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .max_session_seconds,
+        BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS
+    );
     assert_eq!(
         decision
             .adapter_handoff
@@ -1404,6 +1428,26 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .conformance_profile
             .field_complete_launch_request
             .endpoint_network_policy_binding_required
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .replay_protection_required
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .issued_at,
+        browser_adapter_launch_template_issued_at()
+    );
+    assert_eq!(
+        validation
+            .conformance_profile
+            .field_complete_launch_request
+            .expires_at,
+        browser_adapter_launch_template_expires_at()
     );
     assert!(
         validation
@@ -1946,6 +1990,20 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert_eq!(plan.sensitivity, BrowserSensitivity::Sensitive);
     assert!(plan.request_id.starts_with("bbx-browser-launch-plan-v1."));
     assert_eq!(plan.launch_request.request_id, plan.request_id);
+    let issued_at =
+        DateTime::parse_from_rfc3339(&plan.launch_request.issued_at)?.with_timezone(&Utc);
+    let expires_at =
+        DateTime::parse_from_rfc3339(&plan.launch_request.expires_at)?.with_timezone(&Utc);
+    assert!(expires_at > issued_at);
+    assert_eq!(
+        (expires_at - issued_at).num_seconds(),
+        BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS as i64
+    );
+    assert_eq!(
+        plan.launch_request.max_session_seconds,
+        BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS
+    );
+    assert!(plan.launch_request.replay_protection_required);
     assert_eq!(
         plan.launch_request.adapter_id.as_deref(),
         Some("tempo-os-jail-v1")
@@ -2917,6 +2975,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_array()
             .is_some_and(
                 |required| required.iter().any(|field| field == "request_id")
+                    && required.iter().any(|field| field == "issued_at")
+                    && required.iter().any(|field| field == "expires_at")
+                    && required.iter().any(|field| field == "max_session_seconds")
                     && required.iter().any(|field| field == "adapter_id")
                     && required.iter().any(|field| field == "guard_plan")
                     && required
@@ -2931,6 +2992,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required
                         .iter()
                         .any(|field| field == "endpoint_network_policy_binding_required")
+                    && required
+                        .iter()
+                        .any(|field| field == "replay_protection_required")
             ),
         "launch request schema should expose the full adapter handoff envelope"
     );

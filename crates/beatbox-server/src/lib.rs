@@ -14,23 +14,24 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    AetherPaymentContextCapabilities, BrowserAdapterCapabilityIssueRequest,
-    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionReport,
-    BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
-    BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
-    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
-    BrowserAdapterHandoff, BrowserAdapterLaunchPlanDecision, BrowserAdapterLaunchPlanRequest,
-    BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
-    BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
-    BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
-    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
-    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
-    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
-    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
-    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
-    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
-    ExecutionStatus, JobRecord, Lane, Policy, Source,
+    AetherPaymentContextCapabilities, BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
+    BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
+    BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationDecision,
+    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceCase,
+    BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
+    BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchPlanDecision,
+    BrowserAdapterLaunchPlanRequest, BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest,
+    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
+    BrowserAdapterRegistrationDecision, BrowserAdapterRegistrationRequest,
+    BrowserAdapterRegistrationResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
+    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
+    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
+    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
+    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
+    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1189,9 +1190,56 @@ fn browser_adapter_launch_request_template(
     guard_plan: &BrowserAdmissionGuardPlan,
     required_completion_proofs: Vec<String>,
 ) -> BrowserAdapterLaunchRequest {
+    let lease = browser_adapter_template_launch_lease();
+    browser_adapter_launch_request_template_with_lease(
+        request_id,
+        adapter_id,
+        request,
+        guard_plan,
+        required_completion_proofs,
+        lease,
+    )
+}
+
+fn browser_adapter_live_launch_request_template(
+    request_id: &str,
+    adapter_id: Option<String>,
+    request: &BrowserAdmissionRequest,
+    guard_plan: &BrowserAdmissionGuardPlan,
+    required_completion_proofs: Vec<String>,
+) -> BrowserAdapterLaunchRequest {
+    let lease = browser_adapter_live_launch_lease();
+    browser_adapter_launch_request_template_with_lease(
+        request_id,
+        adapter_id,
+        request,
+        guard_plan,
+        required_completion_proofs,
+        lease,
+    )
+}
+
+#[derive(Clone, Debug)]
+struct BrowserAdapterLaunchLease {
+    issued_at: String,
+    expires_at: String,
+    max_session_seconds: u64,
+}
+
+fn browser_adapter_launch_request_template_with_lease(
+    request_id: &str,
+    adapter_id: Option<String>,
+    request: &BrowserAdmissionRequest,
+    guard_plan: &BrowserAdmissionGuardPlan,
+    required_completion_proofs: Vec<String>,
+    lease: BrowserAdapterLaunchLease,
+) -> BrowserAdapterLaunchRequest {
     let adapter_contract = BrowserAdapterContract::default();
     BrowserAdapterLaunchRequest {
         request_id: request_id.to_string(),
+        issued_at: lease.issued_at,
+        expires_at: lease.expires_at,
+        max_session_seconds: lease.max_session_seconds,
         adapter_id: adapter_id.clone(),
         contract_version: adapter_contract.version.clone(),
         requested_level: request.requested_level.clone(),
@@ -1211,11 +1259,33 @@ fn browser_adapter_launch_request_template(
         ),
         same_user_capability_required: true,
         endpoint_network_policy_binding_required: true,
+        replay_protection_required: true,
         notes: vec![
             "launch request template only; beatbox does not currently call adapter launch endpoints"
                 .to_string(),
             "do not treat this envelope as a registration, trust, or launch grant".to_string(),
+            "future launchers must enforce expires_at and reject replayed request_id values"
+                .to_string(),
         ],
+    }
+}
+
+fn browser_adapter_template_launch_lease() -> BrowserAdapterLaunchLease {
+    BrowserAdapterLaunchLease {
+        issued_at: browser_adapter_launch_template_issued_at(),
+        expires_at: browser_adapter_launch_template_expires_at(),
+        max_session_seconds: BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
+    }
+}
+
+fn browser_adapter_live_launch_lease() -> BrowserAdapterLaunchLease {
+    let issued_at = Utc::now();
+    let expires_at =
+        issued_at + ChronoDuration::seconds(BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS as i64);
+    BrowserAdapterLaunchLease {
+        issued_at: issued_at.to_rfc3339(),
+        expires_at: expires_at.to_rfc3339(),
+        max_session_seconds: BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
     }
 }
 
@@ -1675,7 +1745,7 @@ fn browser_adapter_launch_plan_response(
     let sensitivity = request.admission.sensitivity.clone();
     let admission = browser_admission_response(request.admission.clone());
     let manifest_validation = browser_adapter_manifest_response(request.manifest);
-    let launch_request = browser_adapter_launch_request_template(
+    let launch_request = browser_adapter_live_launch_request_template(
         &request_id,
         Some(adapter_id.clone()),
         &request.admission,

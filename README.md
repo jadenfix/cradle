@@ -74,9 +74,11 @@ publishes `adapter_handoff.completion_proof_contract`; the nested
 `adapter_handoff.launch_request_template.completion_report_template` shows the
 matching completion report shape so adapter authors can wire teardown and
 storage evidence to stable machine-readable proof ids instead of guessing from
-display labels. Its `launch_endpoint` is currently `null` and `launchable` is
-`false`. The current implementation always rejects admission and explains which
-production pieces or requested controls are still missing.
+display labels. Template launch envelopes also name the future lease and replay
+contract through `issued_at`, `expires_at`, `max_session_seconds`, and
+`replay_protection_required`. Its `launch_endpoint` is currently `null` and
+`launchable` is `false`. The current implementation always rejects admission
+and explains which production pieces or requested controls are still missing.
 `GET /v1/browser/adapter/contract` and MCP `get_browser_adapter_contract`
 return the same planned adapter contract plus the `conformance_profile` without
 requiring a submitted manifest. This is authenticated compatibility metadata
@@ -104,7 +106,10 @@ preflight for Tempo control-plane code. It submits a same-user capability,
 browser admission intent, and adapter manifest together; Beatbox consumes a
 matching live capability at most once and returns a server-issued
 `launch_request` envelope plus completion report template without echoing the
-capability. The response remains `rejected`, `launchable: false`,
+capability. The live envelope includes `issued_at`, `expires_at`,
+`max_session_seconds`, and `replay_protection_required` so future Tempo
+launchers can reject stale or replayed request ids. The response remains
+`rejected`, `launchable: false`,
 `trusted_for_sensitive_work: false`, and `endpoint_network_policy_bound: false`
 because no production launcher or endpoint request-builder binding exists yet.
 There is intentionally no MCP tool for this route because the request carries

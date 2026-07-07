@@ -54,7 +54,10 @@ carry `guard_plan` and `adapter_handoff` blocks; SDKs that return raw JSON must
 preserve both, including `adapter_handoff.launch_request_template`,
 `adapter_handoff.completion_proof_contract`, and the launch template's
 `completion_report_template`, so Tempo-style adapters can bind the future
-launch and teardown contracts without guessing.
+launch and teardown contracts without guessing. Preserve launch-envelope
+lease/replay fields (`issued_at`, `expires_at`, `max_session_seconds`, and
+`replay_protection_required`) as opaque raw JSON fields until a typed model is
+added.
 
 Browser adapter manifests are also raw JSON today. Pass them through to
 `POST /v1/browser/adapter/validate`; beatbox validates the manifest shape and
@@ -82,9 +85,11 @@ REST/MCP negative cases Tempo adapters should run.
 Launch planning requests are also raw JSON and REST-only:
 `POST /v1/browser/adapter/launch/plan` combines a same-user capability,
 admission intent, and manifest into a server-issued launch envelope and
-completion report template. SDKs must never expose this as MCP/model-visible
-tooling, and callers must still treat the response as non-launchable and
-untrusted until production endpoint binding, launch, and teardown checks exist.
+completion report template. The envelope includes current server lease
+timestamps and a replay-protection requirement, but SDKs must never expose this
+as MCP/model-visible tooling, and callers must still treat the response as
+non-launchable and untrusted until production endpoint binding, launch,
+replay-state storage, and teardown checks exist.
 Completion reports are raw JSON too. Pass them through to
 `POST /v1/browser/adapter/completion/validate`; beatbox checks the submitted
 shape, proof ids, and teardown evidence booleans against the same proof

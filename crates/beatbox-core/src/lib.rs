@@ -101,6 +101,9 @@ impl Default for BrowserAdapterContract {
             launch_endpoint: None,
             handoff_fields: vec![
                 "request_id".to_string(),
+                "issued_at".to_string(),
+                "expires_at".to_string(),
+                "max_session_seconds".to_string(),
                 "adapter_id".to_string(),
                 "contract_version".to_string(),
                 "requested_level".to_string(),
@@ -114,6 +117,7 @@ impl Default for BrowserAdapterContract {
                 "required_completion_proofs".to_string(),
                 "completion_proof_contract".to_string(),
                 "completion_report_template".to_string(),
+                "replay_protection_required".to_string(),
             ],
             required_guard_fields: vec![
                 "guard_plan.network.allowed_origins".to_string(),
@@ -445,11 +449,39 @@ fn browser_adapter_completion_report_template_for_launch(
     }
 }
 
+pub const BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS: u64 = 10 * 60;
+
+pub fn browser_adapter_launch_template_issued_at() -> String {
+    "1970-01-01T00:00:00Z".to_string()
+}
+
+pub fn browser_adapter_launch_template_expires_at() -> String {
+    "1970-01-01T00:10:00Z".to_string()
+}
+
+pub fn browser_adapter_launch_default_max_session_seconds() -> u64 {
+    BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS
+}
+
+pub fn browser_adapter_launch_default_replay_protection_required() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct BrowserAdapterLaunchRequest {
     /// Server-issued request identifier for adapter logs and completion proofs.
     #[schema(min_length = 1, max_length = 128)]
     pub request_id: String,
+    /// RFC3339 timestamp for when this envelope was issued. Discovery and
+    /// conformance templates use a deterministic placeholder; live launch-plan
+    /// preflights use server time.
+    pub issued_at: String,
+    /// RFC3339 timestamp after which a future launcher must reject this
+    /// envelope instead of attempting adapter execution.
+    pub expires_at: String,
+    /// Maximum browser session lifetime represented by this envelope.
+    #[schema(minimum = 1)]
+    pub max_session_seconds: u64,
     /// Adapter identifier for the envelope. Runtime launch requests use the
     /// trusted registered adapter id; conformance fixtures may carry a sample
     /// id and still do not imply adapter registration, trust, or launchability.
@@ -474,6 +506,8 @@ pub struct BrowserAdapterLaunchRequest {
     pub completion_report_template: BrowserAdapterCompletionReport,
     pub same_user_capability_required: bool,
     pub endpoint_network_policy_binding_required: bool,
+    /// Future launchers must reject reused request_id values for this adapter.
+    pub replay_protection_required: bool,
     pub notes: Vec<String>,
 }
 
@@ -485,6 +519,12 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
         #[derive(Deserialize)]
         struct Wire {
             request_id: String,
+            #[serde(default = "browser_adapter_launch_template_issued_at")]
+            issued_at: String,
+            #[serde(default = "browser_adapter_launch_template_expires_at")]
+            expires_at: String,
+            #[serde(default = "browser_adapter_launch_default_max_session_seconds")]
+            max_session_seconds: u64,
             #[serde(default)]
             adapter_id: Option<String>,
             contract_version: String,
@@ -506,6 +546,8 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
             completion_report_template: Option<BrowserAdapterCompletionReport>,
             same_user_capability_required: bool,
             endpoint_network_policy_binding_required: bool,
+            #[serde(default = "browser_adapter_launch_default_replay_protection_required")]
+            replay_protection_required: bool,
             #[serde(default)]
             notes: Vec<String>,
         }
@@ -522,6 +564,9 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
 
         Ok(Self {
             request_id: wire.request_id,
+            issued_at: wire.issued_at,
+            expires_at: wire.expires_at,
+            max_session_seconds: wire.max_session_seconds,
             adapter_id: wire.adapter_id,
             contract_version: wire.contract_version,
             requested_level: wire.requested_level,
@@ -537,6 +582,7 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
             completion_report_template,
             same_user_capability_required: wire.same_user_capability_required,
             endpoint_network_policy_binding_required: wire.endpoint_network_policy_binding_required,
+            replay_protection_required: wire.replay_protection_required,
             notes: wire.notes,
         })
     }
@@ -550,6 +596,9 @@ impl Default for BrowserAdapterLaunchRequest {
         guard_plan.network.allowed_origins = target_origins.clone();
         Self {
             request_id: "browser-adapter-launch-template-v1".to_string(),
+            issued_at: browser_adapter_launch_template_issued_at(),
+            expires_at: browser_adapter_launch_template_expires_at(),
+            max_session_seconds: BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
             adapter_id: None,
             contract_version: adapter.version.clone(),
             requested_level: BrowserSandboxLevel::OsIsolated,
@@ -576,6 +625,7 @@ impl Default for BrowserAdapterLaunchRequest {
             ),
             same_user_capability_required: true,
             endpoint_network_policy_binding_required: true,
+            replay_protection_required: true,
             notes: vec![
                 "template only; not a browser launch grant".to_string(),
                 "same-user capability and endpoint network policy must be bound before use"
@@ -1609,6 +1659,19 @@ mod tests {
         )?;
 
         assert_eq!(request.request_id, "old-launch-123");
+        assert_eq!(
+            request.issued_at,
+            browser_adapter_launch_template_issued_at()
+        );
+        assert_eq!(
+            request.expires_at,
+            browser_adapter_launch_template_expires_at()
+        );
+        assert_eq!(
+            request.max_session_seconds,
+            BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS
+        );
+        assert!(request.replay_protection_required);
         assert_eq!(request.adapter_id.as_deref(), Some("tempo-old-adapter"));
         assert!(
             request
@@ -1711,6 +1774,15 @@ mod tests {
                 .adapter_id,
             "adapter-id-bound-at-registration"
         );
+        assert_eq!(
+            handoff.launch_request_template.issued_at,
+            browser_adapter_launch_template_issued_at()
+        );
+        assert_eq!(
+            handoff.launch_request_template.expires_at,
+            browser_adapter_launch_template_expires_at()
+        );
+        assert!(handoff.launch_request_template.replay_protection_required);
 
         let contract: BrowserAdapterContract = serde_json::from_str(
             r#"{

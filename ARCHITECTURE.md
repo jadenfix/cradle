@@ -85,7 +85,10 @@ guard plan; it is a compatibility fixture, not permission to launch. It also
 publishes a typed `adapter_handoff.completion_proof_contract`, while
 `adapter_handoff.launch_request_template.completion_report_template` shows the
 matching report shape, binding each proof label to a stable proof id, evidence
-field, and invariant expected on the eventual teardown path. Admission is the
+field, and invariant expected on the eventual teardown path. The launch
+envelope also carries lease/replay fields (`issued_at`, `expires_at`,
+`max_session_seconds`, and `replay_protection_required`) so a future launcher
+has an explicit stale-request and replay boundary to enforce. Admission is the
 authoritative decision and currently always rejects because Beatbox has no
 runnable browser launcher or isolation substrate.
 
@@ -135,10 +138,13 @@ admission intent, adapter manifest, and same-user capability binding. It
 validates the nested admission and manifest through the production parsers,
 consumes a matching one-time capability, and emits a server-issued
 `BrowserAdapterLaunchRequest` plus completion report template that Tempo can
-carry into a future adapter launcher. It is not exposed through MCP because the
-request includes bearer capability material. The response is still rejected and
-non-launchable; capability binding only proves that this local control-plane
-preflight saw a live token for the same actor, sensitivity, and adapter id.
+carry into a future adapter launcher. Live launch-plan envelopes use current
+server `issued_at`/`expires_at` values and require request-id replay
+protection; discovery and conformance templates keep deterministic placeholder
+lease values. It is not exposed through MCP because the request includes bearer
+capability material. The response is still rejected and non-launchable;
+capability binding only proves that this local control-plane preflight saw a
+live token for the same actor, sensitivity, and adapter id.
 
 `POST /v1/browser/adapter/completion/validate` and MCP
 `validate_browser_adapter_completion` validate a submitted completion report
