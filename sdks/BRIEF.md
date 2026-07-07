@@ -90,8 +90,11 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 (including `target_origins`, `credential_mode`, `artifact_mode`,
 `sensitive_activity_mode`, `required_controls`, profile `controls`,
 profile-discovery `suppression_modes`,
-`missing_controls`, and `intent_warnings`, plus the browser admission
-`guard_plan` with `suppression` and
+`missing_controls`, `sensitive_activity_mode_compatible`,
+`sensitive_activity_mode_compatible_levels`,
+`sensitive_activity_mode_required_controls`,
+`sensitive_activity_mode_missing_controls`, and `intent_warnings`, plus the
+browser admission `guard_plan` with `suppression` and
 `adapter_handoff` with its `launch_request_template`,
 `completion_proof_contract`, and `completion_report_template`; raw JSON return
 is acceptable until each language adds typed convenience models; preserve

@@ -2109,6 +2109,10 @@
           "requested_controls",
           "requested_profile_controls",
           "missing_controls",
+          "sensitive_activity_mode_compatible",
+          "sensitive_activity_mode_compatible_levels",
+          "sensitive_activity_mode_required_controls",
+          "sensitive_activity_mode_missing_controls",
           "level_satisfies_requested_controls",
           "intent_warnings",
           "guard_plan",
@@ -2206,6 +2210,31 @@
           "sensitive_activity_mode": {
             "$ref": "#/components/schemas/BrowserSensitiveActivityMode",
             "description": "Echo of the requested privacy/suppression posture."
+          },
+          "sensitive_activity_mode_compatible": {
+            "type": "boolean",
+            "description": "True when the requested sensitive_activity_mode can be satisfied by the\nrequested browser sandbox level once that level is implemented."
+          },
+          "sensitive_activity_mode_compatible_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxLevel"
+            },
+            "description": "Browser levels published as compatible with the requested\nsensitive_activity_mode in /v1/browser/profiles."
+          },
+          "sensitive_activity_mode_missing_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            },
+            "description": "Required controls for sensitive_activity_mode that the requested browser\nlevel does not provide."
+          },
+          "sensitive_activity_mode_required_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            },
+            "description": "Controls the requested sensitive_activity_mode requires from the selected\nbrowser profile before the mode can ever become runnable."
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"

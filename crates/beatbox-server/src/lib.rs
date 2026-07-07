@@ -1467,7 +1467,18 @@ fn browser_adapter_contract() -> BrowserAdapterContract {
 
 fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContract> {
     vec![
-        browser_suppression_mode_contract(
+        browser_suppression_mode_contract_for(&BrowserSensitiveActivityMode::Standard),
+        browser_suppression_mode_contract_for(&BrowserSensitiveActivityMode::Private),
+        browser_suppression_mode_contract_for(&BrowserSensitiveActivityMode::NetworkSuppressed),
+        browser_suppression_mode_contract_for(&BrowserSensitiveActivityMode::Sealed),
+    ]
+}
+
+fn browser_suppression_mode_contract_for(
+    mode: &BrowserSensitiveActivityMode,
+) -> BrowserSensitiveActivityModeContract {
+    match mode {
+        BrowserSensitiveActivityMode::Standard => browser_suppression_mode_contract(
             BrowserSensitiveActivityMode::Standard,
             "No extra sensitive-activity suppression beyond the selected browser profile.",
             vec![
@@ -1481,7 +1492,7 @@ fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContr
             Vec::new(),
             vec!["implement and verify the selected browser profile before launch"],
         ),
-        browser_suppression_mode_contract(
+        BrowserSensitiveActivityMode::Private => browser_suppression_mode_contract(
             BrowserSensitiveActivityMode::Private,
             "Suppress ambient browser state, ambient credentials, and persistent artifacts.",
             vec![
@@ -1501,7 +1512,7 @@ fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContr
                 "prove no host browser profile, cookies, extensions, or password store are reused",
             ],
         ),
-        browser_suppression_mode_contract(
+        BrowserSensitiveActivityMode::NetworkSuppressed => browser_suppression_mode_contract(
             BrowserSensitiveActivityMode::NetworkSuppressed,
             "Add deny-by-default egress suppression to private browser-state controls.",
             vec![
@@ -1522,7 +1533,7 @@ fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContr
                 "revalidate DNS, redirects, proxy decisions, retries, and final socket targets",
             ],
         ),
-        browser_suppression_mode_contract(
+        BrowserSensitiveActivityMode::Sealed => browser_suppression_mode_contract(
             BrowserSensitiveActivityMode::Sealed,
             "Add explicit encrypted artifact sealing to network-suppressed private browsing.",
             vec![BrowserSandboxLevel::SealedState],
@@ -1540,7 +1551,7 @@ fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContr
                 "prove plaintext browser state is removed after sealing",
             ],
         ),
-    ]
+    }
 }
 
 fn browser_suppression_mode_contract(
@@ -2378,8 +2389,14 @@ fn browser_adapter_launch_plan_response(
         &admission.guard_plan,
         browser_adapter_contract().required_completion_proofs,
     );
+    let admission_contract_complete = admission.sensitive_activity_mode_compatible
+        && admission
+            .sensitive_activity_mode_missing_controls
+            .is_empty()
+        && admission.level_satisfies_requested_controls;
     let replay_protection_bound = same_user_capability_bound
         && adapter_contract_fields_complete
+        && admission_contract_complete
         && browser_adapter_record_launch_request(state, &launch_request);
     let mut reasons = vec![
         "browser adapter launch planning is a fail-closed compatibility preflight; beatbox does not call adapter launch endpoints yet"
@@ -2399,7 +2416,7 @@ fn browser_adapter_launch_plan_response(
             );
         } else {
             reasons.push(
-                "launch request id was not recorded in this daemon's replay ledger because the adapter field contract was incomplete or the ledger was full"
+                "launch request id was not recorded in this daemon's replay ledger because the adapter field contract was incomplete, admission profile/mode requirements were incomplete, or the ledger was full"
                     .to_string(),
             );
         }
@@ -2742,6 +2759,17 @@ fn browser_adapter_required_controls(
 
 fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmissionResponse {
     let requested_profile_controls = browser_profile_controls(&request.requested_level);
+    let sensitive_activity_mode_contract =
+        browser_suppression_mode_contract_for(&request.sensitive_activity_mode);
+    let sensitive_activity_mode_compatible = sensitive_activity_mode_contract
+        .compatible_levels
+        .contains(&request.requested_level);
+    let sensitive_activity_mode_missing_controls: Vec<_> = sensitive_activity_mode_contract
+        .required_controls
+        .iter()
+        .filter(|control| !requested_profile_controls.contains(control))
+        .cloned()
+        .collect();
     let missing_controls: Vec<_> = request
         .required_controls
         .iter()
@@ -2804,6 +2832,29 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
             browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode)
         )),
     }
+    if !sensitive_activity_mode_compatible {
+        reasons.push(format!(
+            "sensitive activity mode `{}` is compatible only with browser levels: {}",
+            browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode),
+            sensitive_activity_mode_contract
+                .compatible_levels
+                .iter()
+                .map(browser_sandbox_level_wire_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !sensitive_activity_mode_missing_controls.is_empty() {
+        reasons.push(format!(
+            "requested level lacks controls required by sensitive activity mode `{}`: {}",
+            browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode),
+            sensitive_activity_mode_missing_controls
+                .iter()
+                .map(browser_control_wire_name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     let mut intent_warnings = Vec::new();
     if request.target_origins.is_empty() {
         intent_warnings.push(
@@ -2862,6 +2913,12 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         requested_controls: request.required_controls,
         requested_profile_controls,
         missing_controls,
+        sensitive_activity_mode_compatible,
+        sensitive_activity_mode_compatible_levels: sensitive_activity_mode_contract
+            .compatible_levels,
+        sensitive_activity_mode_required_controls: sensitive_activity_mode_contract
+            .required_controls,
+        sensitive_activity_mode_missing_controls,
         level_satisfies_requested_controls,
         intent_warnings,
         guard_plan,
@@ -3699,6 +3756,17 @@ fn browser_control_wire_name(control: &BrowserSandboxControl) -> &'static str {
         BrowserSandboxControl::OsProcessIsolation => "os_process_isolation",
         BrowserSandboxControl::RemoteWorkerIsolation => "remote_worker_isolation",
         BrowserSandboxControl::TeardownProof => "teardown_proof",
+    }
+}
+
+fn browser_sandbox_level_wire_name(level: &BrowserSandboxLevel) -> &'static str {
+    match level {
+        BrowserSandboxLevel::InstrumentedExternal => "instrumented_external",
+        BrowserSandboxLevel::EphemeralProfile => "ephemeral_profile",
+        BrowserSandboxLevel::NetworkSuppressed => "network_suppressed",
+        BrowserSandboxLevel::SealedState => "sealed_state",
+        BrowserSandboxLevel::OsIsolated => "os_isolated",
+        BrowserSandboxLevel::RemoteIsolated => "remote_isolated",
     }
 }
 

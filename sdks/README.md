@@ -57,8 +57,12 @@ Browser admission requests are raw JSON today. Pass through
 fail-closed admission decision. Profile discovery responses publish
 `suppression_modes` for the supported sensitive-activity postures, with each
 mode's compatible levels, required controls, guard-plan effects, runnable flag,
-and required next steps. Admission responses also carry `guard_plan` and
-`adapter_handoff` blocks; SDKs that return raw JSON must preserve both,
+and required next steps. Admission responses carry
+`sensitive_activity_mode_compatible`,
+`sensitive_activity_mode_compatible_levels`,
+`sensitive_activity_mode_required_controls`, and
+`sensitive_activity_mode_missing_controls`, plus `guard_plan` and
+`adapter_handoff` blocks; SDKs that return raw JSON must preserve all of these,
 including `guard_plan.suppression`, `adapter_handoff.launch_request_template`,
 `adapter_handoff.completion_proof_contract`, and the launch template's
 `completion_report_template`, so Tempo-style adapters can bind the future

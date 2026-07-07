@@ -1148,6 +1148,26 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         decision.missing_controls,
         vec![BrowserSandboxControl::RemoteWorkerIsolation]
     );
+    assert!(!decision.sensitive_activity_mode_compatible);
+    assert_eq!(
+        decision.sensitive_activity_mode_compatible_levels,
+        vec![BrowserSandboxLevel::SealedState]
+    );
+    assert_eq!(
+        decision.sensitive_activity_mode_required_controls,
+        vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
+            BrowserSandboxControl::SealedArtifacts,
+            BrowserSandboxControl::TeardownProof,
+        ]
+    );
+    assert_eq!(
+        decision.sensitive_activity_mode_missing_controls,
+        vec![BrowserSandboxControl::SealedArtifacts]
+    );
     assert!(!decision.level_satisfies_requested_controls);
     assert!(decision.intent_warnings.is_empty());
     assert_eq!(
@@ -1198,6 +1218,15 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .iter()
             .any(|confirmation| confirmation.contains("encrypted"))
     );
+    assert!(decision.reasons.iter().any(|reason| {
+        reason.contains("sensitive activity mode `sealed` is compatible only")
+            && reason.contains("sealed_state")
+    }));
+    assert!(decision.reasons.iter().any(|reason| {
+        reason
+            .contains("requested level lacks controls required by sensitive activity mode `sealed`")
+            && reason.contains("sealed_artifacts")
+    }));
     assert!(
         decision
             .guard_plan
@@ -2103,6 +2132,21 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
         plan.admission.sensitive_activity_mode,
         BrowserSensitiveActivityMode::NetworkSuppressed
     );
+    assert!(plan.admission.sensitive_activity_mode_compatible);
+    assert_eq!(
+        plan.admission.sensitive_activity_mode_compatible_levels,
+        vec![
+            BrowserSandboxLevel::NetworkSuppressed,
+            BrowserSandboxLevel::SealedState,
+            BrowserSandboxLevel::OsIsolated,
+            BrowserSandboxLevel::RemoteIsolated,
+        ]
+    );
+    assert!(
+        plan.admission
+            .sensitive_activity_mode_missing_controls
+            .is_empty()
+    );
     assert!(plan.request_id.starts_with("bbx-browser-launch-plan-v1."));
     assert_eq!(plan.launch_request.request_id, plan.request_id);
     let issued_at =
@@ -2417,6 +2461,98 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let error: ErrorResponse = serde_json::from_slice(&body)?;
     assert_eq!(error.error.code, "invalid_json");
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_launch_plan_does_not_bind_incompatible_sensitive_mode()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "sensitive_activity_mode": "sealed",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let mut launch_plan = complete_adapter_launch_plan(&issued.same_user_capability);
+    launch_plan["admission"]["sensitive_activity_mode"] = json!("sealed");
+    launch_plan["admission"]["artifact_mode"] = json!("sealed_artifacts");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(plan.adapter_contract_fields_complete);
+    assert!(!plan.replay_protection_bound);
+    assert!(!plan.launchable);
+    assert_eq!(
+        plan.admission.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Sealed
+    );
+    assert!(!plan.admission.sensitive_activity_mode_compatible);
+    assert_eq!(
+        plan.admission.sensitive_activity_mode_compatible_levels,
+        vec![BrowserSandboxLevel::SealedState]
+    );
+    assert_eq!(
+        plan.admission.sensitive_activity_mode_missing_controls,
+        vec![BrowserSandboxControl::SealedArtifacts]
+    );
+    assert!(plan.admission.reasons.iter().any(|reason| {
+        reason.contains("sensitive activity mode `sealed` is compatible only")
+            && reason.contains("sealed_state")
+    }));
+    assert!(
+        plan.reasons.iter().any(|reason| {
+            reason.contains("admission profile/mode requirements were incomplete")
+        })
+    );
+
+    let claim_request = json!({ "launch_request": plan.launch_request });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(claim_request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let claim: BrowserAdapterLaunchClaimResponse = serde_json::from_slice(&body)?;
+    assert_eq!(claim.decision, BrowserAdapterLaunchClaimDecision::Rejected);
+    assert!(!claim.server_issued_launch_request);
+    assert!(!claim.launch_request_claim_bound);
     Ok(())
 }
 
@@ -3642,8 +3778,20 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_array()
             .is_some_and(|required| required
                 .iter()
-                .any(|field| field == "sensitive_activity_mode")),
-        "browser admission response should require sensitive_activity_mode"
+                .any(|field| field == "sensitive_activity_mode")
+                && required
+                    .iter()
+                    .any(|field| field == "sensitive_activity_mode_compatible")
+                && required
+                    .iter()
+                    .any(|field| field == "sensitive_activity_mode_compatible_levels")
+                && required
+                    .iter()
+                    .any(|field| field == "sensitive_activity_mode_required_controls")
+                && required
+                    .iter()
+                    .any(|field| field == "sensitive_activity_mode_missing_controls")),
+        "browser admission response should require sensitive mode compatibility metadata"
     );
     assert!(
         schemas["BrowserAdapterLaunchRequest"]["required"]
@@ -4566,6 +4714,33 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["missing_controls"],
         serde_json::json!(["sealed_artifacts"])
+    );
+    assert_eq!(
+        result["structuredContent"]["sensitive_activity_mode_compatible"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        result["structuredContent"]["sensitive_activity_mode_compatible_levels"],
+        serde_json::json!([
+            "network_suppressed",
+            "sealed_state",
+            "os_isolated",
+            "remote_isolated"
+        ])
+    );
+    assert_eq!(
+        result["structuredContent"]["sensitive_activity_mode_required_controls"],
+        serde_json::json!([
+            "fresh_profile",
+            "no_ambient_credentials",
+            "egress_policy",
+            "local_network_block",
+            "teardown_proof"
+        ])
+    );
+    assert_eq!(
+        result["structuredContent"]["sensitive_activity_mode_missing_controls"],
+        serde_json::json!([])
     );
     assert_eq!(
         result["structuredContent"]["level_satisfies_requested_controls"],
