@@ -39,7 +39,7 @@ Do not document API-key fields as canonical.
 | --- | --- | --- | --- |
 | `health()` | `GET /v1/health` | no | `{status, version, uptime_s}` (raw JSON ok) |
 | `capabilities()` | `GET /v1/capabilities` | yes | raw JSON |
-| `integration()` / `getIntegrationContract()` | `GET /v1/integration` | yes | raw JSON / `EcosystemIntegrationContract` |
+| `integration()` (OpenAPI operation `getIntegrationContract`) | `GET /v1/integration` | yes | raw JSON / `EcosystemIntegrationContract` |
 | `browser_profiles()` | `GET /v1/browser/profiles` | yes | raw JSON |
 | `browser_admit(request)` | `POST /v1/browser/admit` | yes | raw JSON |
 | `browser_adapter_contract` / `browserAdapterContract` / `BrowserAdapterContract` | `GET /v1/browser/adapter/contract` | yes | raw JSON |

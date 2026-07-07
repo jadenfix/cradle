@@ -23,6 +23,16 @@
           "202": {
             "description": "JSON-RPC notification accepted"
           },
+          "401": {
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsonRpcErrorResponse"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Origin not allowed"
           }
@@ -3565,6 +3575,38 @@
           "failed",
           "canceled"
         ]
+      },
+      "JsonRpcErrorObject": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "JsonRpcErrorResponse": {
+        "type": "object",
+        "required": [
+          "jsonrpc",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/JsonRpcErrorObject"
+          },
+          "id": {},
+          "jsonrpc": {
+            "type": "string"
+          }
+        }
       },
       "Lane": {
         "type": "string",

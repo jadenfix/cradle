@@ -3892,10 +3892,7 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
     assert!(
         value["auth"]["required_for"]
             .as_array()
-            .is_some_and(
-                |required| required.iter().any(|item| item == "/mcp tools/list")
-                    && required.iter().any(|item| item == "/mcp tools/call")
-            )
+            .is_some_and(|required| required.iter().any(|item| item == "POST /mcp"))
     );
     let rest = value["rest"]
         .as_array()
@@ -3920,15 +3917,33 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
         mcp.iter()
             .any(|tool| tool["name"] == "register_browser_adapter")
     );
-    assert!(value["sdk_methods"].as_array().is_some_and(|methods| {
-        methods.iter().any(|method| method == "integration")
-            && methods
-                .iter()
-                .any(|method| method == "browser_adapter_capability")
-            && methods
-                .iter()
-                .any(|method| method == "browser_adapter_launch_claim")
-    }));
+    let sdk_methods = value["sdk_methods"]
+        .as_array()
+        .ok_or("integration contract should include sdk_methods")?;
+    for method in [
+        "health",
+        "capabilities",
+        "integration",
+        "openapi",
+        "execute",
+        "create_job",
+        "get_job",
+        "cancel_job",
+        "browser_profiles",
+        "browser_admit",
+        "browser_adapter_contract",
+        "browser_adapter_capability",
+        "browser_adapter_register",
+        "browser_adapter_launch_plan",
+        "browser_adapter_launch_claim",
+        "browser_adapter_validate",
+        "browser_adapter_completion_validate",
+    ] {
+        assert!(
+            sdk_methods.iter().any(|item| item == method),
+            "missing SDK method {method}"
+        );
+    }
     assert!(
         wasm["accepted_sources"]
             .as_array()
@@ -3972,6 +3987,16 @@ async fn auth_required_rejects_mcp_tools_list_without_key() -> Result<(), Box<dy
         )
         .await?;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["jsonrpc"], "2.0");
+    assert_eq!(value["id"], serde_json::Value::Null);
+    assert_eq!(value["error"]["code"], -32001);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| { message.contains("missing") || message.contains("invalid") })
+    );
 
     let response = app
         .oneshot(
@@ -4485,6 +4510,20 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         .as_str()
         .ok_or("execute 200 should reference a schema")?;
     assert!(schema_ref.ends_with("/ExecutionResult"), "got {schema_ref}");
+    let mcp_responses = value["paths"]["/mcp"]["post"]["responses"]
+        .as_object()
+        .ok_or("MCP POST should define responses")?;
+    assert!(
+        mcp_responses.contains_key("401"),
+        "MCP POST should document auth failures"
+    );
+    let mcp_401_ref = mcp_responses["401"]["content"]["application/json"]["schema"]["$ref"]
+        .as_str()
+        .ok_or("MCP 401 should reference a JSON schema")?;
+    assert!(
+        mcp_401_ref.ends_with("/JsonRpcErrorResponse"),
+        "MCP 401 should document the JSON-RPC error envelope, got {mcp_401_ref}"
+    );
 
     // cpu_time_ms is nullable in the schema (honest metrics), not a plain integer.
     let cpu = &schemas["Metrics"]["properties"]["cpu_time_ms"];

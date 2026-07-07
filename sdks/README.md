@@ -22,13 +22,13 @@ the JDK ships no JSON). None uses a code-gen runtime.
 
 The human-readable design contract is [`BRIEF.md`](./BRIEF.md). The canonical
 machine-readable API spec is [`openapi.json`](./openapi.json). Every SDK exposes
-the same methods:
+the same normalized methods, adapted to each language's naming convention:
 
 | Method | HTTP | Auth |
 | --- | --- | --- |
 | `health` | `GET /v1/health` | no |
 | `capabilities` | `GET /v1/capabilities` | yes |
-| `integration` / `getIntegrationContract` | `GET /v1/integration` | yes |
+| `integration` (OpenAPI operation `getIntegrationContract`) | `GET /v1/integration` | yes |
 | `browser_profiles` / `browserProfiles` | `GET /v1/browser/profiles` | yes |
 | `browser_admit` / `admitBrowserSession` | `POST /v1/browser/admit` | yes |
 | `browser_adapter_contract` / `browserAdapterContract` | `GET /v1/browser/adapter/contract` | yes |
@@ -36,8 +36,8 @@ the same methods:
 | `browser_adapter_register` / `registerBrowserAdapter` | `POST /v1/browser/adapter/register` | yes |
 | `browser_adapter_launch_plan` / `planBrowserAdapterLaunch` | `POST /v1/browser/adapter/launch/plan` | yes |
 | `browser_adapter_launch_claim` / `claimBrowserAdapterLaunch` | `POST /v1/browser/adapter/launch/claim` | yes |
-| `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
-| `browser_adapter_completion_validate` / `validateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes |
+| `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
+| `browser_adapter_completion_validate` / `validate_browser_adapter_completion` / `validateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes |
 | `execute` | `POST /v1/execute` | yes |
 | `create_job` | `POST /v1/jobs` | yes |
 | `get_job` | `GET /v1/jobs/{id}` | yes |
