@@ -3519,6 +3519,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/capabilities",
+        operation_id = "getCapabilities",
         tag = "v1",
         responses(
             (status = 200, description = "Lane availability and host limits", body = CapabilitiesResponse),
@@ -3530,6 +3531,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/profiles",
+        operation_id = "getBrowserProfiles",
         tag = "v1",
         responses(
             (status = 200, description = "Browser sandbox profile discovery contract", body = BrowserProfilesResponse),
@@ -3541,6 +3543,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/admit",
+        operation_id = "admitBrowserSession",
         tag = "v1",
         request_body = BrowserAdmissionRequest,
         responses(
@@ -3554,6 +3557,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/adapter/contract",
+        operation_id = "getBrowserAdapterContract",
         tag = "v1",
         responses(
             (status = 200, description = "Fail-closed browser adapter contract and conformance profile discovery", body = BrowserAdapterContractResponse),
@@ -3565,6 +3569,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/capability",
+        operation_id = "issueBrowserAdapterCapability",
         tag = "v1",
         request_body = BrowserAdapterCapabilityIssueRequest,
         responses(
@@ -3579,6 +3584,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/register",
+        operation_id = "registerBrowserAdapter",
         tag = "v1",
         request_body = BrowserAdapterRegistrationRequest,
         responses(
@@ -3592,6 +3598,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/plan",
+        operation_id = "planBrowserAdapterLaunch",
         tag = "v1",
         request_body = BrowserAdapterLaunchPlanRequest,
         responses(
@@ -3605,6 +3612,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/claim",
+        operation_id = "claimBrowserAdapterLaunch",
         tag = "v1",
         request_body = BrowserAdapterLaunchClaimRequest,
         responses(
@@ -3618,6 +3626,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/validate",
+        operation_id = "validateBrowserAdapter",
         tag = "v1",
         request_body = BrowserAdapterManifestRequest,
         responses(
@@ -3631,6 +3640,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/completion/validate",
+        operation_id = "validateBrowserAdapterCompletion",
         tag = "v1",
         request_body = BrowserAdapterCompletionReport,
         responses(
@@ -3657,6 +3667,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/jobs",
+        operation_id = "createJob",
         tag = "v1",
         request_body = ExecuteRequest,
         responses(
@@ -3672,6 +3683,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/jobs/{id}",
+        operation_id = "getJob",
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
@@ -3685,13 +3697,14 @@ mod openapi_paths {
     #[utoipa::path(
         delete,
         path = "/v1/jobs/{id}",
+        operation_id = "cancelJob",
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
             (status = 204, description = "Canceled job (or already canceled)"),
-            (status = 401, description = "Missing or invalid bearer token"),
-            (status = 404, description = "Unknown job"),
-            (status = 409, description = "Job already finished and cannot be canceled")
+            (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
+            (status = 404, description = "Unknown job", body = ErrorResponse),
+            (status = 409, description = "Job already finished and cannot be canceled", body = ErrorResponse)
         )
     )]
     pub fn cancel_job() {}
@@ -3699,6 +3712,7 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/mcp",
+        operation_id = "postMcp",
         tag = "mcp",
         responses(
             (status = 200, description = "JSON-RPC response"),

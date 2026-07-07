@@ -43,9 +43,12 @@ the same methods:
 | `cancel_job` | `DELETE /v1/jobs/{id}` | yes |
 | `openapi` | `GET /openapi.json` | no |
 
-The API key is sent only as the `x-beatbox-api-key` header, and never on the
-unauthenticated `health`/`openapi` routes, never in a URL, and never in an error
-message.
+Current SDKs send the API key only as the `x-beatbox-api-key` header, and never
+on the unauthenticated `health`/`openapi` routes, never in a URL, and never in
+an error message. The daemon also accepts `Authorization: Bearer <token>` on the
+same authenticated routes; future shared ecosystem clients should prefer Bearer
+and keep `x-beatbox-api-key` only as a compatibility alias until every SDK moves
+together.
 
 Browser admission requests are raw JSON today. Pass through
 `target_origins`, `credential_mode`, `artifact_mode`,

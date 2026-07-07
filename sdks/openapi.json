@@ -15,7 +15,7 @@
         "tags": [
           "mcp"
         ],
-        "operationId": "mcp_post",
+        "operationId": "postMcp",
         "responses": {
           "200": {
             "description": "JSON-RPC response"
@@ -34,7 +34,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_capability_issue",
+        "operationId": "issueBrowserAdapterCapability",
         "requestBody": {
           "content": {
             "application/json": {
@@ -94,7 +94,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_completion_validate",
+        "operationId": "validateBrowserAdapterCompletion",
         "requestBody": {
           "content": {
             "application/json": {
@@ -144,7 +144,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_contract_get",
+        "operationId": "getBrowserAdapterContract",
         "responses": {
           "200": {
             "description": "Fail-closed browser adapter contract and conformance profile discovery",
@@ -174,7 +174,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_launch_claim",
+        "operationId": "claimBrowserAdapterLaunch",
         "requestBody": {
           "content": {
             "application/json": {
@@ -224,7 +224,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_launch_plan",
+        "operationId": "planBrowserAdapterLaunch",
         "requestBody": {
           "content": {
             "application/json": {
@@ -274,7 +274,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_register",
+        "operationId": "registerBrowserAdapter",
         "requestBody": {
           "content": {
             "application/json": {
@@ -324,7 +324,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_adapter_validate",
+        "operationId": "validateBrowserAdapter",
         "requestBody": {
           "content": {
             "application/json": {
@@ -374,7 +374,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_admit",
+        "operationId": "admitBrowserSession",
         "requestBody": {
           "content": {
             "application/json": {
@@ -424,7 +424,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "browser_profiles",
+        "operationId": "getBrowserProfiles",
         "responses": {
           "200": {
             "description": "Browser sandbox profile discovery contract",
@@ -454,7 +454,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "capabilities",
+        "operationId": "getCapabilities",
         "responses": {
           "200": {
             "description": "Lane availability and host limits",
@@ -547,7 +547,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "create_job",
+        "operationId": "createJob",
         "requestBody": {
           "content": {
             "application/json": {
@@ -617,7 +617,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "get_job",
+        "operationId": "getJob",
         "parameters": [
           {
             "name": "id",
@@ -666,7 +666,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "cancel_job",
+        "operationId": "cancelJob",
         "parameters": [
           {
             "name": "id",
@@ -683,13 +683,34 @@
             "description": "Canceled job (or already canceled)"
           },
           "401": {
-            "description": "Missing or invalid bearer token"
+            "description": "Missing or invalid bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "404": {
-            "description": "Unknown job"
+            "description": "Unknown job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "409": {
-            "description": "Job already finished and cannot be canceled"
+            "description": "Job already finished and cannot be canceled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }

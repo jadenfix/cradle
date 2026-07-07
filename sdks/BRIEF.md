@@ -28,6 +28,12 @@ A client is constructed with:
   request except `health` and `openapi` (which are unauthenticated).
 - `timeout` (optional, default 65 seconds).
 
+The daemon also accepts `Authorization: Bearer <token>` through the same
+server-side verifier. The current seven SDKs keep `x-beatbox-api-key` for
+compatibility; future shared ecosystem client work should migrate all SDKs,
+CLI, MCP docs, and tests together to prefer Bearer while retaining the x-header
+only as a compatibility alias.
+
 ## Methods (identical across languages, names adapted to case convention)
 
 | Method | HTTP | Auth | Returns |
@@ -129,8 +135,10 @@ the current daemon's claimed launch envelope.
 
 On a non-2xx response, raise/return a typed `BeatboxApiError` carrying:
 `status` (HTTP code), `code` (from the `{error:{code,message}}` body), and
-`message`. On a transport failure, a typed `BeatboxTransportError`. Never leak the
-api key into error messages.
+`message`. Future shared-client error adapters should also preserve request id
+and structured details if the daemon adds them. On a transport failure, raise or
+return a typed `BeatboxTransportError`. Never leak the api key into error
+messages.
 
 ## Each SDK directory must contain
 
