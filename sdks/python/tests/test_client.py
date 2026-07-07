@@ -1,5 +1,8 @@
 import io
 import json
+import os
+import socket
+import threading
 import unittest
 import urllib.error
 from contextlib import contextmanager
@@ -31,11 +34,129 @@ def _patched_open(client, fake):
 
 class TestClientRequest(unittest.TestCase):
     def test_base_url_trailing_slash_trimmed(self):
-        c = Client("http://host:7300///")
-        self.assertEqual(c.base_url, "http://host:7300")
+        c = Client("https://host:7300///")
+        self.assertEqual(c.base_url, "https://host:7300")
+
+    def test_base_url_rejects_secret_unsafe_urls(self):
+        self.assertEqual(
+            Client("https://host:7300/api/").base_url,
+            "https://host:7300/api",
+        )
+        self.assertEqual(
+            Client("http://127.0.0.1:7300/").base_url,
+            "http://127.0.0.1:7300",
+        )
+        self.assertEqual(
+            Client("http://[::1]:7300/").base_url,
+            "http://[::1]:7300",
+        )
+        for base_url in (
+            "http://host:7300",
+            "http://localhost:7300",
+            "http://LOCALHOST:7300",
+            "http://localhost.evil.example:7300",
+            "http://127.1:7300",
+            "http://192.168.1.10:7300",
+            "http://169.254.169.254",
+            "https://user:pass@host:7300",
+            "https://user@host:7300",
+            "https://@host:7300",
+            "https://host:7300?api_key=hidden",
+            "https://host:7300/#fragment",
+            "https://host:badport",
+            "https://host:7300/api/../other",
+            "https://host:7300/api/./other",
+            "https://host:7300/api/%2e%2e/other",
+            "https://host:7300/api/%2e/other",
+            "https://host:7300/api%2fother",
+            "https://host:7300/api\\other",
+            "file:///tmp/beatbox.sock",
+            "/v1",
+            "",
+        ):
+            with self.subTest(base_url=base_url):
+                with self.assertRaises(ValueError):
+                    Client(base_url)
+
+    def test_base_url_path_prefix_is_preserved_on_auth_requests(self):
+        c = Client("https://host:7300/api/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            return _FakeResponse(200, b"{}")
+
+        with _patched_open(c, fake_open):
+            c.capabilities()
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "https://host:7300/api/v1/capabilities")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+
+    def test_loopback_http_api_key_bypasses_environment_proxy(self):
+        target = socket.socket()
+        target.bind(("127.0.0.1", 0))
+        target.listen(1)
+        target.settimeout(1.0)
+        target_addr = target.getsockname()
+
+        proxy = socket.socket()
+        proxy.bind(("127.0.0.1", 0))
+        proxy.listen(1)
+        proxy.settimeout(0.5)
+        proxy_addr = proxy.getsockname()
+
+        target_requests = []
+        proxy_requests = []
+
+        def serve_once(listener, requests, body=b"{}"):
+            try:
+                conn, _ = listener.accept()
+            except socket.timeout:
+                return
+            with conn:
+                requests.append(conn.recv(4096))
+                response = (
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"content-type: application/json\r\n"
+                    + f"content-length: {len(body)}\r\n".encode()
+                    + b"connection: close\r\n\r\n"
+                    + body
+                )
+                conn.sendall(response)
+
+        target_thread = threading.Thread(target=serve_once, args=(target, target_requests))
+        proxy_thread = threading.Thread(target=serve_once, args=(proxy, proxy_requests))
+        target_thread.start()
+        proxy_thread.start()
+        proxy_url = f"http://{proxy_addr[0]}:{proxy_addr[1]}"
+        try:
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "http_proxy": proxy_url,
+                    "HTTP_PROXY": proxy_url,
+                    "no_proxy": "",
+                    "NO_PROXY": "",
+                },
+            ):
+                c = Client(
+                    f"http://{target_addr[0]}:{target_addr[1]}",
+                    api_key="secret-key",
+                )
+                self.assertEqual(c.capabilities(), {})
+        finally:
+            target.close()
+            proxy.close()
+            target_thread.join(timeout=1.0)
+            proxy_thread.join(timeout=1.0)
+
+        self.assertEqual(len(target_requests), 1)
+        self.assertIn(b"x-beatbox-api-key: secret-key", target_requests[0].lower())
+        self.assertEqual(proxy_requests, [])
 
     def test_execute_sends_auth_and_content_type(self):
-        c = Client("http://host:7300", api_key="secret-key")
+        c = Client("https://host:7300", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -60,7 +181,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertEqual(req.get_header("Content-type"), "application/json")
 
     def test_health_is_unauthenticated(self):
-        c = Client("http://host:7300", api_key="secret-key")
+        c = Client("https://host:7300", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -73,7 +194,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertIsNone(captured["req"].get_header("X-beatbox-api-key"))
 
     def test_browser_admit_sends_auth_json_preflight(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -175,7 +296,7 @@ class TestClientRequest(unittest.TestCase):
             })
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/admit")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/admit")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -209,7 +330,7 @@ class TestClientRequest(unittest.TestCase):
         ))
 
     def test_browser_adapter_validate_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -295,7 +416,7 @@ class TestClientRequest(unittest.TestCase):
             validation = c.browser_adapter_validate(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/validate")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/validate")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -309,7 +430,7 @@ class TestClientRequest(unittest.TestCase):
         )
 
     def test_browser_adapter_completion_validate_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -358,7 +479,7 @@ class TestClientRequest(unittest.TestCase):
             validation = c.browser_adapter_completion_validate(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/completion/validate")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/completion/validate")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -368,7 +489,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertFalse(validation["verified_on_production_path"])
 
     def test_browser_adapter_contract_sends_auth_get(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -421,7 +542,7 @@ class TestClientRequest(unittest.TestCase):
             contract = c.browser_adapter_contract()
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/contract")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/contract")
         self.assertEqual(req.get_method(), "GET")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertIsNone(req.data)
@@ -434,7 +555,7 @@ class TestClientRequest(unittest.TestCase):
         )
 
     def test_browser_adapter_capability_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -461,7 +582,7 @@ class TestClientRequest(unittest.TestCase):
             issued = c.browser_adapter_capability(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/capability")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/capability")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -473,7 +594,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertEqual(issued["registration_endpoint"], "/v1/browser/adapter/register")
 
     def test_browser_adapter_register_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -552,7 +673,7 @@ class TestClientRequest(unittest.TestCase):
             registration = c.browser_adapter_register(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/register")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/register")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -563,7 +684,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertFalse(registration["manifest_validation"]["launchable"])
 
     def test_browser_adapter_launch_plan_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -596,7 +717,7 @@ class TestClientRequest(unittest.TestCase):
             plan = c.browser_adapter_launch_plan(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/launch/plan")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/launch/plan")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -609,7 +730,7 @@ class TestClientRequest(unittest.TestCase):
         )
 
     def test_browser_adapter_launch_claim_sends_auth_json(self):
-        c = Client("http://host:7300/", api_key="secret-key")
+        c = Client("https://host:7300/", api_key="secret-key")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -639,7 +760,7 @@ class TestClientRequest(unittest.TestCase):
             claim = c.browser_adapter_launch_claim(request)
 
         req = captured["req"]
-        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/launch/claim")
+        self.assertEqual(req.full_url, "https://host:7300/v1/browser/adapter/launch/claim")
         self.assertEqual(req.get_method(), "POST")
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
@@ -649,7 +770,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertFalse(claim["launchable"])
 
     def test_cancel_job_204_returns_none(self):
-        c = Client("http://host:7300")
+        c = Client("https://host:7300")
 
         def fake_open(req, timeout=None):
             return _FakeResponse(204, b"")
@@ -658,12 +779,12 @@ class TestClientRequest(unittest.TestCase):
             self.assertIsNone(c.cancel_job("550e8400-e29b-41d4-a716-446655440000"))
 
     def test_api_error_maps_code_and_message(self):
-        c = Client("http://host:7300", api_key="secret-key")
+        c = Client("https://host:7300", api_key="secret-key")
         body = json.dumps({"error": {"code": "bad_source", "message": "nope"}}).encode()
 
         def fake_open(req, timeout=None):
             raise urllib.error.HTTPError(
-                "http://host:7300/v1/execute", 422, "Unprocessable", {}, io.BytesIO(body)
+                "https://host:7300/v1/execute", 422, "Unprocessable", {}, io.BytesIO(body)
             )
 
         with _patched_open(c, fake_open):
@@ -678,7 +799,7 @@ class TestClientRequest(unittest.TestCase):
         self.assertNotIn("secret-key", str(err))
 
     def test_transport_error_on_urlerror(self):
-        c = Client("http://host:7300")
+        c = Client("https://host:7300")
 
         def fake_open(req, timeout=None):
             raise urllib.error.URLError("connection refused")
@@ -688,7 +809,7 @@ class TestClientRequest(unittest.TestCase):
                 c.health()
 
     def test_no_redirect_handler_installed(self):
-        c = Client("http://host:7300")
+        c = Client("https://host:7300")
         from beatbox.client import _NoRedirectHandler
 
         handlers = c._opener.handlers

@@ -53,7 +53,15 @@ BEATBOX_API_KEY=... python examples/add_one.py
 Pass `api_key` to the `Client`. When set, it is sent as the `x-beatbox-api-key`
 header on every request **except** `health()` and `openapi()`, which are
 unauthenticated. The key is never included in any error message. Redirects are
-never followed, so the key cannot leak cross-origin.
+never followed and environment proxies are disabled, so the key cannot leak
+cross-origin or through a proxy.
+
+The Python client validates `base_url` before it can build authenticated
+requests: HTTPS URLs are accepted, and plain HTTP is accepted only for
+loopback IP literal addresses such as `127.0.0.1` or `[::1]`. Credentials,
+query strings, fragments, relative URLs, non-HTTP schemes, and path prefixes
+with dot segments or encoded slashes are rejected so API keys are not sent to
+hidden, escaped, DNS-rebound, or public plaintext origins.
 
 ```python
 client = Client("http://127.0.0.1:7300", api_key="bbx-api-key-placeholder", timeout=65.0)

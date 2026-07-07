@@ -7,6 +7,7 @@ standard library. Works on Python 3.9+.
 from __future__ import annotations
 
 import json
+import ipaddress
 import socket
 import urllib.error
 import urllib.parse
@@ -45,12 +46,70 @@ def _encode_job_id(job_id: str) -> str:
     return urllib.parse.quote(job_id, safe="")
 
 
+def _validate_base_url(base_url: str) -> str:
+    if not isinstance(base_url, str):
+        raise ValueError("base_url must be a string")
+    trimmed = base_url.rstrip("/")
+    parsed = urllib.parse.urlsplit(trimmed)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("base_url must be an absolute HTTP(S) origin")
+    if "@" in parsed.netloc or parsed.username is not None or parsed.password is not None:
+        raise ValueError("base_url must not contain credentials")
+    if parsed.query:
+        raise ValueError("base_url must not contain a query")
+    if parsed.fragment:
+        raise ValueError("base_url must not contain a fragment")
+    _validate_base_path(parsed.path)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(f"base_url has an invalid port: {exc}") from None
+    if parsed.scheme == "https":
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc.lower(), parsed.path, "", "")
+        )
+    if parsed.scheme != "http":
+        raise ValueError("base_url must use http or https")
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError("base_url must include a host")
+    if not _is_loopback_ip_literal(hostname):
+        raise ValueError(
+            "http base_url is allowed only for loopback IP literal addresses"
+        )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc.lower(), parsed.path, "", "")
+    )
+
+
+def _is_loopback_ip_literal(hostname: str) -> bool:
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_base_path(path: str) -> None:
+    if "\\" in path:
+        raise ValueError("base_url path must not contain backslashes")
+    for segment in path.split("/"):
+        decoded = urllib.parse.unquote(segment)
+        if decoded in (".", ".."):
+            raise ValueError("base_url path must not contain dot segments")
+        if "/" in decoded or "\\" in decoded:
+            raise ValueError("base_url path must not contain encoded slashes")
+
+
 class Client:
     """A client for a single beatbox daemon.
 
     Args:
         base_url: Daemon base URL, e.g. ``http://127.0.0.1:7300``. Trailing
-            slashes are trimmed.
+            slashes are trimmed. HTTPS URLs are accepted; plain HTTP is
+            accepted only for loopback IP literal addresses. Userinfo, query
+            strings, fragments, relative URLs, non-HTTP schemes, and path
+            prefixes with dot segments or encoded slashes are rejected before
+            any API-key-bearing request can be built.
         api_key: Optional API key. When set it is sent as the
             ``x-beatbox-api-key`` header on every request except ``health`` and
             ``openapi``.
@@ -63,10 +122,13 @@ class Client:
         api_key: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _validate_base_url(base_url)
         self.api_key = api_key
         self.timeout = timeout
-        self._opener = urllib.request.build_opener(_NoRedirectHandler)
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _NoRedirectHandler,
+        )
 
     # -- public API ---------------------------------------------------------
 
