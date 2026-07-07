@@ -1097,6 +1097,26 @@ pub struct BrowserAdmissionResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub missing_controls: Vec<BrowserSandboxControl>,
+    /// True when the requested sensitive_activity_mode can be satisfied by the
+    /// requested browser sandbox level once that level is implemented.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode_compatible: bool,
+    /// Browser levels published as compatible with the requested
+    /// sensitive_activity_mode in /v1/browser/profiles.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode_compatible_levels: Vec<BrowserSandboxLevel>,
+    /// Controls the requested sensitive_activity_mode requires from the selected
+    /// browser profile before the mode can ever become runnable.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode_required_controls: Vec<BrowserSandboxControl>,
+    /// Required controls for sensitive_activity_mode that the requested browser
+    /// level does not provide.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode_missing_controls: Vec<BrowserSandboxControl>,
     #[serde(default)]
     #[schema(required = true)]
     pub level_satisfies_requested_controls: bool,
@@ -1792,6 +1812,19 @@ mod tests {
         );
         assert_eq!(
             response.missing_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert!(!response.sensitive_activity_mode_compatible);
+        assert_eq!(
+            response.sensitive_activity_mode_compatible_levels,
+            Vec::<BrowserSandboxLevel>::new()
+        );
+        assert_eq!(
+            response.sensitive_activity_mode_required_controls,
+            Vec::<BrowserSandboxControl>::new()
+        );
+        assert_eq!(
+            response.sensitive_activity_mode_missing_controls,
             Vec::<BrowserSandboxControl>::new()
         );
         assert_eq!(response.target_origins, Vec::<String>::new());

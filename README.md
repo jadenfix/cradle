@@ -91,6 +91,9 @@ full fail-closed browser contract.
 `standard`, `private`, `network_suppressed`, and `sealed`, including compatible
 browser levels, required controls, and the guard-plan effects a future Tempo
 adapter must enforce before any sensitive activity can be considered runnable.
+`POST /v1/browser/admit` echoes the requested suppression mode and reports
+whether that mode is compatible with the requested browser level, including the
+mode-required controls that the requested level is missing.
 
 ## Ecosystem
 
