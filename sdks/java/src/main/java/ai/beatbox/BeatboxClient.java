@@ -8,6 +8,7 @@ import ai.beatbox.model.ExecutionResult;
 import ai.beatbox.model.JobRecord;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -52,6 +53,7 @@ public final class BeatboxClient {
                 ? builder.httpClient
                 : HttpClient.newBuilder()
                         .followRedirects(HttpClient.Redirect.NEVER)
+                        .proxy(HttpClient.Builder.NO_PROXY)
                         .connectTimeout(builder.timeout)
                         .build();
     }
@@ -308,7 +310,7 @@ public final class BeatboxClient {
         private Builder() {
         }
 
-        /** Required. Trailing slashes are trimmed, e.g. {@code http://127.0.0.1:7300}. */
+        /** Required. Must be HTTPS, or loopback-literal HTTP for local development. */
         public Builder baseUrl(String baseUrl) {
             this.baseUrl = baseUrl;
             return this;
@@ -326,7 +328,7 @@ public final class BeatboxClient {
             return this;
         }
 
-        /** Supply a custom {@link HttpClient}. Redirects should stay disabled if you do. */
+        /** Supply a custom {@link HttpClient}. It must not follow redirects or use a proxy. */
         public Builder httpClient(HttpClient httpClient) {
             this.httpClient = httpClient;
             return this;
@@ -342,8 +344,96 @@ public final class BeatboxClient {
             if (baseUrl == null || baseUrl.isBlank()) {
                 throw new IllegalArgumentException("baseUrl is required");
             }
-            this.baseUrl = trimTrailingSlashes(baseUrl.trim());
+            this.baseUrl = normalizeBaseUrl(baseUrl);
+            if (httpClient != null && httpClient.followRedirects() != HttpClient.Redirect.NEVER) {
+                throw new IllegalArgumentException("httpClient must not follow redirects");
+            }
+            if (httpClient != null && httpClient.proxy().isPresent()) {
+                throw new IllegalArgumentException("httpClient must not use a proxy");
+            }
+            if (httpClient != null && URI.create(this.baseUrl).getScheme().equalsIgnoreCase("http")) {
+                throw new IllegalArgumentException("custom httpClient is not allowed with plaintext http baseUrl");
+            }
             return new BeatboxClient(this);
+        }
+
+        private static String normalizeBaseUrl(String value) {
+            if (!value.strip().equals(value)) {
+                throw new IllegalArgumentException("baseUrl must not contain leading or trailing whitespace");
+            }
+
+            URI uri;
+            try {
+                uri = URI.create(value);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("baseUrl must be an absolute URL", e);
+            }
+
+            String scheme = uri.getScheme();
+            if (scheme == null || uri.getHost() == null) {
+                throw new IllegalArgumentException("baseUrl must be an absolute URL");
+            }
+            if (!scheme.equalsIgnoreCase("https") && !scheme.equalsIgnoreCase("http")) {
+                throw new IllegalArgumentException("baseUrl must use http or https");
+            }
+            if (uri.getUserInfo() != null) {
+                throw new IllegalArgumentException("baseUrl must not include credentials");
+            }
+            if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                throw new IllegalArgumentException("baseUrl must not include query or fragment");
+            }
+            if (value.contains("\\")) {
+                throw new IllegalArgumentException("baseUrl path must not include backslashes");
+            }
+            if (scheme.equalsIgnoreCase("http")
+                    && !uri.getHost().equals("127.0.0.1")
+                    && !uri.getHost().equals("::1")
+                    && !uri.getHost().equals("[::1]")) {
+                throw new IllegalArgumentException(
+                        "baseUrl may use plaintext http only with loopback IP literals");
+            }
+            validateBasePath(uri.getRawPath());
+            return trimTrailingSlashes(uri.toASCIIString());
+        }
+
+        private static void validateBasePath(String rawPath) {
+            if (rawPath == null || rawPath.isEmpty()) {
+                return;
+            }
+            for (String segment : rawPath.split("/", -1)) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                String decoded = decodePathSegment(segment);
+                if (decoded.equals(".") || decoded.equals("..")) {
+                    throw new IllegalArgumentException("baseUrl path must not contain dot segments");
+                }
+                if (decoded.contains("/") || decoded.contains("\\")) {
+                    throw new IllegalArgumentException("baseUrl path segments must not encode separators");
+                }
+            }
+        }
+
+        private static String decodePathSegment(String segment) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream(segment.length());
+            for (int i = 0; i < segment.length(); i++) {
+                char ch = segment.charAt(i);
+                if (ch != '%') {
+                    out.write((byte) ch);
+                    continue;
+                }
+                if (i + 2 >= segment.length()) {
+                    throw new IllegalArgumentException("baseUrl path contains invalid percent encoding");
+                }
+                int hi = Character.digit(segment.charAt(i + 1), 16);
+                int lo = Character.digit(segment.charAt(i + 2), 16);
+                if (hi < 0 || lo < 0) {
+                    throw new IllegalArgumentException("baseUrl path contains invalid percent encoding");
+                }
+                out.write((hi << 4) + lo);
+                i += 2;
+            }
+            return new String(out.toByteArray(), StandardCharsets.UTF_8);
         }
 
         private static String trimTrailingSlashes(String value) {

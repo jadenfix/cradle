@@ -56,6 +56,13 @@ Build a client with the builder:
 | `apiKey`    | no       | none           | sent as `x-beatbox-api-key` on every request except `health()` and `openapi()` |
 | `timeout`   | no       | 65 seconds     | per-request timeout |
 
+`baseUrl` must be an absolute `https://` URL, or `http://127.0.0.1...` /
+`http://[::1]...` for local development. Credentials, query strings,
+fragments, and path prefixes with dot segments or encoded separators are
+rejected before any request is built. Custom `HttpClient` instances must also
+have redirects disabled, no proxy selector configured, and are accepted only
+with `https://` base URLs.
+
 Redirects are never followed, so the api-key header can't leak cross-origin.
 
 ## Methods
