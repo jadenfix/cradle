@@ -115,15 +115,17 @@ capabilities can be consumed only by launch-plan admission with the same mode.
 Issuance is not model-facing and does not make any adapter trusted or
 launchable.
 
-`POST /v1/browser/adapter/register` and MCP `register_browser_adapter` are the
-fail-closed registration preflight. They require a caller-supplied same-user
-capability plus actor, sensitivity, and manifest fields. Beatbox consumes a
-live matching issued capability once, never echoes it, and otherwise keeps one
-authoritative manifest validation payload. A successful capability match only
-reports `same_user_capability_bound: true`; `registered`, `launchable`,
+`POST /v1/browser/adapter/register` is the fail-closed capability-bound
+registration preflight. It requires a caller-supplied same-user capability plus
+actor, sensitivity, and manifest fields. Beatbox consumes a live matching issued
+capability once, never echoes it, and otherwise keeps one authoritative manifest
+validation payload. A successful capability match only reports
+`same_user_capability_bound: true`; `registered`, `launchable`,
 `trusted_for_sensitive_work`, and `endpoint_network_policy_bound` remain false
 until the production control plane can bind concrete endpoint network policy,
-storage, teardown proofs, and browser launch path.
+storage, teardown proofs, and browser launch path. MCP `register_browser_adapter`
+is manifest-only and never accepts bearer capability material, so model-facing
+callers can inspect adapter shape without carrying same-user secrets.
 
 `POST /v1/browser/adapter/validate` and MCP `validate_browser_adapter` validate
 a proposed adapter manifest against the published Tempo handoff contract. The
@@ -148,14 +150,16 @@ consumes a matching one-time capability, and emits a server-issued
 `BrowserAdapterLaunchRequest` plus completion report template that Tempo can
 carry into a future adapter launcher. Live launch-plan envelopes use current
 server `issued_at`/`expires_at` values, require request-id replay protection,
-and record capability-bound envelopes in a bounded in-memory replay ledger.
+and record capability-bound envelopes in a bounded in-memory replay ledger only
+when the manifest satisfies the published adapter field contract.
 The launch request carries `sensitive_activity_mode` and the derived
 `guard_plan.suppression` section, so Tempo-side adapters must preserve those
 fields for claim-time canonical comparison.
 `POST /v1/browser/adapter/launch/claim` is the REST-only Tempo-side claim
 preflight for that ledger: callers submit the full launch request, Beatbox
-compares it with the canonical stored envelope, and exactly one unexpired match
-can be claimed. Discovery and conformance templates keep deterministic
+requires every server-issued field, rejects unknown nested fields, compares it
+with the canonical stored envelope, and exactly one unexpired match can be
+claimed. Discovery and conformance templates keep deterministic
 placeholder lease values. Launch planning and claiming are not exposed through
 MCP because the flow includes bearer capability material and launch authority.
 The response is still rejected and non-launchable; capability binding and claim
@@ -169,9 +173,14 @@ against the same typed proof contract. The validator checks stable proof ids,
 teardown evidence booleans, and bounded list fields, then returns structured
 missing, unexpected, and failed proof feedback. It also remains fail-closed:
 `decision` is `rejected`, `verified_on_production_path` is false, and
-`trusted_for_sensitive_work` is false because the report is not yet bound to a
-server-issued launch request, concrete browser process, temporary profile,
-artifact store, or egress log.
+`trusted_for_sensitive_work` is false. REST completion validation also reports
+whether the request id is in the bounded launch ledger, whether that launch
+request was claimed, whether request id, adapter id, and contract version match
+the recorded envelope, and whether the report exactly matches the embedded
+completion template. MCP completion validation returns those binding flags as
+false and remains shape-only so model-facing tools cannot probe live launch
+state; the binding flags are still not production process, profile, artifact,
+or egress verification.
 
 The current catalog is intentionally non-runnable: `runnable_browser_sessions`
 is false, `default_level` is serialized as `null`, and no profile is marked

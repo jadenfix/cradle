@@ -78,7 +78,9 @@ consuming operation. SDKs also expose
 `POST /v1/browser/adapter/register` for the
 future registration preflight with actor, sensitivity, an issued same-user
 capability, and manifest in one request. Beatbox consumes a matching live
-capability at most once and never echoes it.
+capability at most once and never echoes it. MCP `register_browser_adapter` is
+manifest-only and intentionally does not accept that capability; do not mirror
+the REST registration secret into model-facing tools.
 All adapter registration/validation responses still return
 `endpoint_network_policy_bound: false` and `launchable: false` until a trusted
 adapter registration and launch path exists. Preserve the `conformance_profile`
@@ -91,19 +93,25 @@ Launch planning requests are also raw JSON and REST-only:
 admission intent, and manifest into a server-issued launch envelope and
 completion report template. The envelope includes current server lease
 timestamps and a replay-protection requirement. A capability-bound response also
-sets `replay_protection_bound` when this daemon recorded the envelope in its
-bounded replay ledger. `POST /v1/browser/adapter/launch/claim` accepts the full
-`launch_request` and can bind exactly one unmodified, unexpired claim before a
-future Tempo adapter invocation. SDKs must never expose launch planning or
+sets `adapter_contract_fields_complete` and `replay_protection_bound`; the
+daemon records only field-complete adapter manifests in its bounded replay
+ledger. `POST /v1/browser/adapter/launch/claim` accepts the full
+`launch_request`, rejects omitted server-issued fields and unknown nested
+fields, and can bind exactly one unmodified, unexpired claim before a future
+Tempo adapter invocation. SDKs must never expose launch planning or
 claiming as MCP/model-visible tooling, and callers must still treat both
 responses as non-launchable and untrusted until production endpoint binding,
 launch, and teardown checks exist.
 Completion reports are raw JSON too. Pass them through to
 `POST /v1/browser/adapter/completion/validate`; beatbox checks the submitted
 shape, proof ids, and teardown evidence booleans against the same proof
-contract, but still returns a rejected, untrusted response because the report is
-not bound to a production launch request, browser process, profile, artifact
-store, or egress log.
+contract. The response also reports whether the request id exists in the launch
+ledger, whether it was claimed, whether the envelope identity matches, and
+whether the report exactly matches the launch envelope's completion template.
+MCP completion validation returns those binding fields as false and remains
+shape-only. It still returns a rejected, untrusted response because no
+production browser process, profile, artifact store, or egress log has been
+verified.
 
 Language-specific method names are idiomatic: Rust and Python expose
 `browser_adapter_contract`, `browser_adapter_capability`,

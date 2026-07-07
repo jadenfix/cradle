@@ -393,6 +393,32 @@ pub enum BrowserAdapterCompletionValidationDecision {
 pub struct BrowserAdapterCompletionValidationResponse {
     pub decision: BrowserAdapterCompletionValidationDecision,
     pub report_shape_complete: bool,
+    /// True when the report request_id is still present in this daemon's
+    /// bounded launch replay ledger.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub server_issued_launch_request: bool,
+    /// True when the server-issued launch request was already claimed by an
+    /// adapter through the launch-claim preflight.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub launch_request_claimed: bool,
+    /// True when request_id, adapter_id, and contract_version match the
+    /// canonical launch envelope recorded by this daemon.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub launch_request_envelope_matched: bool,
+    /// True when the submitted report exactly matches the completion report
+    /// template embedded in the recorded launch envelope.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub completion_report_template_matched: bool,
+    /// True only for shape-complete reports that match a claimed server-issued
+    /// launch envelope template. This is still not production teardown
+    /// verification.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub completion_bound_to_claimed_launch: bool,
     pub verified_on_production_path: bool,
     pub trusted_for_sensitive_work: bool,
     pub request_id: String,
@@ -911,6 +937,12 @@ pub struct BrowserAdapterLaunchPlanResponse {
     pub launchable: bool,
     pub trusted_for_sensitive_work: bool,
     pub endpoint_network_policy_bound: bool,
+    /// True when the submitted adapter manifest satisfies the published field
+    /// contract before endpoint network-policy binding. This is not
+    /// launchability.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub adapter_contract_fields_complete: bool,
     pub same_user_capability_bound: bool,
     /// True when this daemon recorded the emitted launch request id in its
     /// bounded replay ledger. This is not launch authorization.

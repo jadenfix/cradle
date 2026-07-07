@@ -41,6 +41,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 pub use jobs::JobStore;
 use jobs::{CancelOutcome, JobStoreError};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -223,6 +224,14 @@ struct BrowserAdapterLaunchRequestRecord {
     claimed: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpBrowserAdapterRegistrationRequest {
+    actor: BrowserSessionActor,
+    sensitivity: BrowserSensitivity,
+    manifest: BrowserAdapterManifestRequest,
+}
+
 #[derive(Clone, Debug, Default)]
 struct BrowserAdapterLaunchClaimValidation {
     server_issued_launch_request: bool,
@@ -344,6 +353,7 @@ async fn browser_adapter_completion_validate(
         ApiError::bad_request("invalid_browser_adapter_completion_report", message)
     })?;
     Ok(Json(browser_adapter_completion_validation_response(
+        Some(&state),
         request,
     )))
 }
@@ -379,7 +389,12 @@ async fn browser_adapter_launch_claim(
     request: Request<Body>,
 ) -> Result<Json<BrowserAdapterLaunchClaimResponse>, ApiError> {
     state.authorize(&headers)?;
-    let request = parse_json_body(&state, request).await?;
+    let request_value = parse_json_body::<Value>(&state, request).await?;
+    validate_browser_adapter_launch_claim_wire(&request_value).map_err(|message| {
+        ApiError::bad_request("invalid_browser_adapter_launch_claim", message)
+    })?;
+    let request: BrowserAdapterLaunchClaimRequest = serde_json::from_value(request_value)
+        .map_err(|error| ApiError::bad_request("invalid_json", error.to_string()))?;
     validate_browser_adapter_launch_claim_request(&request).map_err(|message| {
         ApiError::bad_request("invalid_browser_adapter_launch_claim", message)
     })?;
@@ -1682,10 +1697,78 @@ fn browser_adapter_manifest_response(
     }
 }
 
+fn browser_adapter_manifest_contract_fields_complete(
+    request: &BrowserAdapterManifestRequest,
+) -> bool {
+    let adapter_contract = browser_adapter_contract();
+    let required_levels = browser_adapter_required_levels();
+    let required_controls = browser_adapter_required_controls(&required_levels);
+    request.contract_version == adapter_contract.version
+        && request.launch_endpoint.is_some()
+        && !request
+            .supported_levels
+            .contains(&BrowserSandboxLevel::InstrumentedExternal)
+        && required_levels
+            .iter()
+            .all(|level| request.supported_levels.contains(level))
+        && required_controls
+            .iter()
+            .all(|control| request.supported_controls.contains(control))
+        && adapter_contract
+            .required_guard_fields
+            .iter()
+            .all(|field| request.guard_fields.contains(field))
+        && adapter_contract
+            .required_completion_proofs
+            .iter()
+            .all(|proof| request.completion_proofs.contains(proof))
+}
+
+#[derive(Clone, Debug, Default)]
+struct BrowserAdapterCompletionLaunchBinding {
+    server_issued_launch_request: bool,
+    launch_request_claimed: bool,
+    launch_request_envelope_matched: bool,
+    completion_report_template_matched: bool,
+}
+
+fn browser_adapter_completion_launch_binding(
+    state: &AppState,
+    report: &BrowserAdapterCompletionReport,
+) -> BrowserAdapterCompletionLaunchBinding {
+    let now = Instant::now();
+    let mut launch_requests = match state.browser_adapter_launch_requests.lock() {
+        Ok(launch_requests) => launch_requests,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    launch_requests.retain(|_, record| record.expires_at > now);
+    let Some(record) = launch_requests.get(&report.request_id) else {
+        return BrowserAdapterCompletionLaunchBinding::default();
+    };
+    let launch_request_envelope_matched = record
+        .launch_request
+        .adapter_id
+        .as_deref()
+        .is_some_and(|adapter_id| adapter_id == report.adapter_id)
+        && record.launch_request.contract_version == report.contract_version;
+    let completion_report_template_matched =
+        record.launch_request.completion_report_template == *report;
+    BrowserAdapterCompletionLaunchBinding {
+        server_issued_launch_request: true,
+        launch_request_claimed: record.claimed,
+        launch_request_envelope_matched,
+        completion_report_template_matched,
+    }
+}
+
 fn browser_adapter_completion_validation_response(
+    state: Option<&AppState>,
     report: BrowserAdapterCompletionReport,
 ) -> BrowserAdapterCompletionValidationResponse {
     let adapter_contract = browser_adapter_contract();
+    let launch_binding = state
+        .map(|state| browser_adapter_completion_launch_binding(state, &report))
+        .unwrap_or_default();
     let required_proof_ids = adapter_contract
         .completion_proof_contract
         .iter()
@@ -1750,10 +1833,65 @@ fn browser_adapter_completion_validation_response(
                 .to_string(),
         );
     }
+    if state.is_none() {
+        reasons.push(
+            "MCP completion validation is shape-only and does not expose live launch-ledger state"
+                .to_string(),
+        );
+    } else if launch_binding.server_issued_launch_request {
+        if launch_binding.launch_request_envelope_matched {
+            reasons.push(
+                "completion report request_id, adapter_id, and contract_version match this daemon's recorded launch envelope"
+                    .to_string(),
+            );
+        } else {
+            reasons.push(
+                "completion report request_id exists in this daemon's launch ledger, but adapter_id or contract_version does not match the recorded envelope"
+                    .to_string(),
+            );
+        }
+        if launch_binding.completion_report_template_matched {
+            reasons.push(
+                "completion report exactly matches the template embedded in the recorded launch envelope"
+                    .to_string(),
+            );
+        } else {
+            reasons.push(
+                "completion report does not exactly match the template embedded in the recorded launch envelope"
+                    .to_string(),
+            );
+        }
+        if launch_binding.launch_request_claimed {
+            reasons.push(
+                "matching launch request was claimed through the REST launch-claim preflight"
+                    .to_string(),
+            );
+        } else {
+            reasons.push(
+                "matching launch request has not been claimed through the REST launch-claim preflight"
+                    .to_string(),
+            );
+        }
+    } else {
+        reasons.push(
+            "completion report request_id is not present in this daemon's bounded launch replay ledger"
+                .to_string(),
+        );
+    }
+    let completion_bound_to_claimed_launch = report_shape_complete
+        && launch_binding.server_issued_launch_request
+        && launch_binding.launch_request_claimed
+        && launch_binding.launch_request_envelope_matched
+        && launch_binding.completion_report_template_matched;
 
     BrowserAdapterCompletionValidationResponse {
         decision: BrowserAdapterCompletionValidationDecision::Rejected,
         report_shape_complete,
+        server_issued_launch_request: launch_binding.server_issued_launch_request,
+        launch_request_claimed: launch_binding.launch_request_claimed,
+        launch_request_envelope_matched: launch_binding.launch_request_envelope_matched,
+        completion_report_template_matched: launch_binding.completion_report_template_matched,
+        completion_bound_to_claimed_launch,
         verified_on_production_path: false,
         trusted_for_sensitive_work: false,
         request_id: report.request_id,
@@ -1766,7 +1904,7 @@ fn browser_adapter_completion_validation_response(
         completion_proof_contract: adapter_contract.completion_proof_contract.clone(),
         reasons,
         required_next_steps: vec![
-            "bind completion reports to a server-issued launch request and trusted registered adapter"
+            "bind completion reports to a claimed server-issued launch request and trusted registered adapter"
                 .to_string(),
             "verify process termination, profile deletion, artifact cleanup, and egress log handling on the production teardown path"
                 .to_string(),
@@ -1835,6 +1973,42 @@ fn browser_adapter_registration_response(
     }
 }
 
+fn browser_adapter_mcp_registration_response(
+    request: McpBrowserAdapterRegistrationRequest,
+) -> BrowserAdapterRegistrationResponse {
+    let actor = request.actor;
+    let sensitivity = request.sensitivity;
+    let manifest_validation = browser_adapter_manifest_response(request.manifest);
+    let adapter_id = manifest_validation.adapter_id.clone();
+    BrowserAdapterRegistrationResponse {
+        decision: BrowserAdapterRegistrationDecision::Rejected,
+        adapter_id,
+        actor,
+        sensitivity,
+        registered: false,
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        same_user_capability_bound: false,
+        manifest_validation,
+        reasons: vec![
+            "MCP register_browser_adapter is manifest-only because same-user capabilities are bearer material and must stay out of model-visible transcripts"
+                .to_string(),
+            "capability-bound adapter registration is available only through the authenticated REST control plane"
+                .to_string(),
+            "browser launch, teardown proof verification, and storage sealing are not implemented"
+                .to_string(),
+        ],
+        required_next_steps: vec![
+            "issue and submit a live same-user capability through the REST registration endpoint, not MCP"
+                .to_string(),
+            "bind adapter registration to the concrete endpoint used after DNS, proxy, redirects, and retries"
+                .to_string(),
+            "verify teardown and artifact proofs on the production browser completion path".to_string(),
+        ],
+    }
+}
+
 fn browser_adapter_launch_plan_response(
     state: &AppState,
     request: BrowserAdapterLaunchPlanRequest,
@@ -1851,6 +2025,8 @@ fn browser_adapter_launch_plan_response(
     let adapter_id = request.manifest.adapter_id.clone();
     let actor = request.admission.actor.clone();
     let sensitivity = request.admission.sensitivity.clone();
+    let adapter_contract_fields_complete =
+        browser_adapter_manifest_contract_fields_complete(&request.manifest);
     let admission = browser_admission_response(request.admission.clone());
     let manifest_validation = browser_adapter_manifest_response(request.manifest);
     let launch_request = browser_adapter_live_launch_request_template(
@@ -1860,8 +2036,9 @@ fn browser_adapter_launch_plan_response(
         &admission.guard_plan,
         browser_adapter_contract().required_completion_proofs,
     );
-    let replay_protection_bound =
-        same_user_capability_bound && browser_adapter_record_launch_request(state, &launch_request);
+    let replay_protection_bound = same_user_capability_bound
+        && adapter_contract_fields_complete
+        && browser_adapter_record_launch_request(state, &launch_request);
     let mut reasons = vec![
         "browser adapter launch planning is a fail-closed compatibility preflight; beatbox does not call adapter launch endpoints yet"
             .to_string(),
@@ -1880,7 +2057,7 @@ fn browser_adapter_launch_plan_response(
             );
         } else {
             reasons.push(
-                "launch request id could not be recorded in this daemon's replay ledger"
+                "launch request id was not recorded in this daemon's replay ledger because the adapter field contract was incomplete or the ledger was full"
                     .to_string(),
             );
         }
@@ -1915,6 +2092,7 @@ fn browser_adapter_launch_plan_response(
         launchable: false,
         trusted_for_sensitive_work: false,
         endpoint_network_policy_bound: false,
+        adapter_contract_fields_complete,
         same_user_capability_bound,
         replay_protection_bound,
         admission,
@@ -2652,6 +2830,187 @@ fn validate_browser_adapter_launch_plan_request(
     }
     validate_browser_admission_request(&request.admission)?;
     validate_browser_adapter_manifest_request(&request.manifest)
+}
+
+fn validate_browser_adapter_launch_claim_wire(value: &Value) -> Result<(), String> {
+    let object = exact_json_object(value, "browser adapter launch claim", &["launch_request"])?;
+    let launch_request = object
+        .get("launch_request")
+        .ok_or_else(|| "browser adapter launch claim must include launch_request".to_string())?;
+    validate_browser_adapter_launch_request_wire(launch_request)
+}
+
+fn validate_browser_adapter_launch_request_wire(value: &Value) -> Result<(), String> {
+    let object = exact_json_object(
+        value,
+        "browser adapter launch claim launch_request",
+        &[
+            "request_id",
+            "issued_at",
+            "expires_at",
+            "max_session_seconds",
+            "adapter_id",
+            "contract_version",
+            "requested_level",
+            "actor",
+            "sensitivity",
+            "sensitive_activity_mode",
+            "target_origins",
+            "credential_mode",
+            "artifact_mode",
+            "requested_controls",
+            "guard_plan",
+            "required_completion_proofs",
+            "completion_proof_contract",
+            "completion_report_template",
+            "same_user_capability_required",
+            "endpoint_network_policy_binding_required",
+            "replay_protection_required",
+            "notes",
+        ],
+    )?;
+    validate_browser_guard_plan_wire(object.get("guard_plan").ok_or_else(|| {
+        "browser adapter launch claim launch_request must include guard_plan".to_string()
+    })?)?;
+    validate_completion_proof_contract_wire(object.get("completion_proof_contract").ok_or_else(
+        || {
+            "browser adapter launch claim launch_request must include completion_proof_contract"
+                .to_string()
+        },
+    )?)?;
+    validate_completion_report_template_wire(
+        object.get("completion_report_template").ok_or_else(|| {
+            "browser adapter launch claim launch_request must include completion_report_template"
+                .to_string()
+        })?,
+    )?;
+    Ok(())
+}
+
+fn validate_browser_guard_plan_wire(value: &Value) -> Result<(), String> {
+    let object = exact_json_object(
+        value,
+        "browser adapter launch claim guard_plan",
+        &[
+            "network",
+            "credentials",
+            "storage",
+            "suppression",
+            "required_runtime_guards",
+        ],
+    )?;
+    exact_json_object(
+        object.get("network").ok_or_else(|| {
+            "browser adapter launch claim guard_plan must include network".to_string()
+        })?,
+        "browser adapter launch claim guard_plan.network",
+        &[
+            "allowed_origins",
+            "deny_private_networks",
+            "deny_localhost",
+            "deny_metadata_endpoints",
+            "require_dns_rebinding_protection",
+            "require_redirect_revalidation",
+            "require_proxy_enforcement",
+            "outbound_network_disabled_without_proxy",
+        ],
+    )?;
+    exact_json_object(
+        object.get("credentials").ok_or_else(|| {
+            "browser adapter launch claim guard_plan must include credentials".to_string()
+        })?,
+        "browser adapter launch claim guard_plan.credentials",
+        &[
+            "mode",
+            "ambient_credentials_allowed",
+            "user_mediation_required",
+            "scoped_secret_channel_required",
+        ],
+    )?;
+    exact_json_object(
+        object.get("storage").ok_or_else(|| {
+            "browser adapter launch claim guard_plan must include storage".to_string()
+        })?,
+        "browser adapter launch claim guard_plan.storage",
+        &[
+            "mode",
+            "plaintext_persistence_allowed",
+            "explicit_artifact_allowlist_required",
+            "encryption_required_for_persistence",
+            "teardown_proof_required",
+        ],
+    )?;
+    exact_json_object(
+        object.get("suppression").ok_or_else(|| {
+            "browser adapter launch claim guard_plan must include suppression".to_string()
+        })?,
+        "browser adapter launch claim guard_plan.suppression",
+        &[
+            "mode",
+            "suppress_ambient_browser_state",
+            "suppress_ambient_credentials",
+            "suppress_unapproved_network",
+            "suppress_persistent_artifacts",
+            "downgrade_requires_user_approval",
+            "required_operator_confirmations",
+        ],
+    )?;
+    Ok(())
+}
+
+fn validate_completion_proof_contract_wire(value: &Value) -> Result<(), String> {
+    let proofs = value.as_array().ok_or_else(|| {
+        "browser adapter launch claim completion_proof_contract must be an array".to_string()
+    })?;
+    for proof in proofs {
+        exact_json_object(
+            proof,
+            "browser adapter launch claim completion_proof_contract entry",
+            &["proof_id", "label", "evidence_field", "required_invariant"],
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_completion_report_template_wire(value: &Value) -> Result<(), String> {
+    exact_json_object(
+        value,
+        "browser adapter launch claim completion_report_template",
+        &[
+            "request_id",
+            "adapter_id",
+            "contract_version",
+            "process_terminated",
+            "temporary_profile_removed",
+            "plaintext_artifacts_removed",
+            "egress_log_sealed_or_discarded",
+            "sealed_artifact_handles",
+            "proof_ids",
+            "notes",
+        ],
+    )?;
+    Ok(())
+}
+
+fn exact_json_object<'a>(
+    value: &'a Value,
+    context: &str,
+    required_keys: &[&str],
+) -> Result<&'a serde_json::Map<String, Value>, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{context} must be an object"))?;
+    for key in object.keys() {
+        if !required_keys.contains(&key.as_str()) {
+            return Err(format!("{context} does not accept field `{key}`"));
+        }
+    }
+    for key in required_keys {
+        if !object.contains_key(*key) {
+            return Err(format!("{context} must include `{key}`"));
+        }
+    }
+    Ok(object)
 }
 
 fn validate_browser_adapter_launch_claim_request(
@@ -3660,20 +4019,14 @@ fn mcp_tools() -> Value {
         },
         {
             "name": "register_browser_adapter",
-            "description": "Submit a Tempo-style browser adapter registration preflight with a same-user capability and manifest. The current implementation validates shape and contract compatibility but never trusts, persists, or launches the adapter.",
+            "description": "Submit Tempo-style browser adapter manifest metadata through MCP without bearer capabilities. Capability-bound registration is REST-only because same-user capabilities must stay out of model-visible transcripts.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["actor", "sensitivity", "same_user_capability", "manifest"],
+                "required": ["actor", "sensitivity", "manifest"],
                 "properties": {
                     "actor": {"type": "string", "enum": ["agent", "human"]},
                     "sensitivity": {"type": "string", "enum": ["public", "sensitive"]},
-                    "same_user_capability": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 256,
-                        "description": "Opaque same-user capability supplied by the caller. Beatbox binds only a live one-time capability issued by the REST control plane, consumes it at most once, and never echoes it."
-                    },
                     "manifest": {
                         "type": "object",
                         "additionalProperties": false,
@@ -4048,7 +4401,7 @@ async fn mcp_tools_call(
         }
         "register_browser_adapter" => {
             let request = mcp_browser_adapter_registration_request(&arguments)?;
-            let registration = browser_adapter_registration_response(state, request);
+            let registration = browser_adapter_mcp_registration_response(request);
             let registration = serde_json::to_value(registration).map_err(|error| {
                 (
                     -32603,
@@ -4078,7 +4431,7 @@ async fn mcp_tools_call(
         }
         "validate_browser_adapter_completion" => {
             let request = mcp_browser_adapter_completion_report(&arguments)?;
-            let validation = browser_adapter_completion_validation_response(request);
+            let validation = browser_adapter_completion_validation_response(None, request);
             let validation = serde_json::to_value(validation).map_err(|error| {
                 (
                     -32603,
@@ -4243,20 +4596,21 @@ fn mcp_browser_adapter_completion_report(
 
 fn mcp_browser_adapter_registration_request(
     arguments: &Value,
-) -> Result<BrowserAdapterRegistrationRequest, (i64, String)> {
+) -> Result<McpBrowserAdapterRegistrationRequest, (i64, String)> {
     let arguments = mcp_tool_arguments(
         arguments,
         "register_browser_adapter",
-        &["actor", "sensitivity", "same_user_capability", "manifest"],
+        &["actor", "sensitivity", "manifest"],
     )?;
-    let request: BrowserAdapterRegistrationRequest =
+    let request: McpBrowserAdapterRegistrationRequest =
         serde_json::from_value(Value::Object(arguments.clone())).map_err(|error| {
             (
                 -32602,
                 format!("register_browser_adapter arguments are invalid: {error}"),
             )
         })?;
-    validate_browser_adapter_registration_request(&request).map_err(|message| (-32602, message))?;
+    validate_browser_adapter_manifest_request(&request.manifest)
+        .map_err(|message| (-32602, message))?;
     Ok(request)
 }
 

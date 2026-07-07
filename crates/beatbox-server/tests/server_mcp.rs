@@ -1625,6 +1625,11 @@ async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
         BrowserAdapterCompletionValidationDecision::Rejected
     );
     assert!(validation.report_shape_complete);
+    assert!(!validation.server_issued_launch_request);
+    assert!(!validation.launch_request_claimed);
+    assert!(!validation.launch_request_envelope_matched);
+    assert!(!validation.completion_report_template_matched);
+    assert!(!validation.completion_bound_to_claimed_launch);
     assert!(!validation.verified_on_production_path);
     assert!(!validation.trusted_for_sensitive_work);
     assert_eq!(
@@ -1648,6 +1653,9 @@ async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
             .iter()
             .any(|reason| reason.contains("not verified it on a real launch request"))
     );
+    assert!(validation.reasons.iter().any(|reason| {
+        reason.contains("not present in this daemon's bounded launch replay ledger")
+    }));
 
     let mut missing = complete_adapter_completion_report();
     missing["proof_ids"] = serde_json::json!(["browser_process_terminated"]);
@@ -2039,6 +2047,7 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert!(!plan.launchable);
     assert!(!plan.trusted_for_sensitive_work);
     assert!(!plan.endpoint_network_policy_bound);
+    assert!(plan.adapter_contract_fields_complete);
     assert!(plan.replay_protection_bound);
     assert_eq!(plan.adapter_id, "tempo-os-jail-v1");
     assert_eq!(plan.actor, BrowserSessionActor::Agent);
@@ -2105,6 +2114,30 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
         reason.contains("bounded replay ledger") && reason.contains("REST claim preflight")
     }));
 
+    let completion_report = plan.launch_request.completion_report_template.clone();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(serde_json::to_string(&completion_report)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let preclaim_completion: BrowserAdapterCompletionValidationResponse =
+        serde_json::from_slice(&body)?;
+    assert!(preclaim_completion.report_shape_complete);
+    assert!(preclaim_completion.server_issued_launch_request);
+    assert!(!preclaim_completion.launch_request_claimed);
+    assert!(preclaim_completion.launch_request_envelope_matched);
+    assert!(preclaim_completion.completion_report_template_matched);
+    assert!(!preclaim_completion.completion_bound_to_claimed_launch);
+    assert!(!preclaim_completion.verified_on_production_path);
+
     let claim_request = json!({ "launch_request": plan.launch_request });
     let mut mutated_claim = claim_request.clone();
     mutated_claim["launch_request"]["sensitive_activity_mode"] = json!("sealed");
@@ -2130,6 +2163,52 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert!(!mutated_claim.canonical_request_matched);
     assert!(!mutated_claim.launch_request_claim_bound);
     assert!(!mutated_claim.launch_request_replay_detected);
+
+    let mut unknown_claim = claim_request.clone();
+    unknown_claim["launch_request"]["guard_plan"]["network"]["extra"] = json!(true);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(unknown_claim.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_browser_adapter_launch_claim");
+    assert!(
+        error
+            .error
+            .message
+            .contains("guard_plan.network does not accept field `extra`")
+    );
+
+    let mut omitted_claim = claim_request.clone();
+    omitted_claim["launch_request"]
+        .as_object_mut()
+        .ok_or("claim launch_request should be an object")?
+        .remove("completion_report_template");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(omitted_claim.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_browser_adapter_launch_claim");
+    assert!(error.error.message.contains("completion_report_template"));
 
     let response = app
         .clone()
@@ -2163,6 +2242,57 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
         .oneshot(
             Request::builder()
                 .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(serde_json::to_string(&completion_report)?))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let claimed_completion: BrowserAdapterCompletionValidationResponse =
+        serde_json::from_slice(&body)?;
+    assert!(claimed_completion.server_issued_launch_request);
+    assert!(claimed_completion.launch_request_claimed);
+    assert!(claimed_completion.launch_request_envelope_matched);
+    assert!(claimed_completion.completion_report_template_matched);
+    assert!(claimed_completion.completion_bound_to_claimed_launch);
+    assert!(!claimed_completion.verified_on_production_path);
+    assert!(
+        claimed_completion
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("claimed through the REST launch-claim preflight"))
+    );
+
+    let mut mismatched_completion = serde_json::to_value(&completion_report)?;
+    mismatched_completion["adapter_id"] = json!("different-adapter");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/completion/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(mismatched_completion.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let mismatched_completion: BrowserAdapterCompletionValidationResponse =
+        serde_json::from_slice(&body)?;
+    assert!(mismatched_completion.server_issued_launch_request);
+    assert!(mismatched_completion.launch_request_claimed);
+    assert!(!mismatched_completion.launch_request_envelope_matched);
+    assert!(!mismatched_completion.completion_report_template_matched);
+    assert!(!mismatched_completion.completion_bound_to_claimed_launch);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
                 .uri("/v1/browser/adapter/launch/claim")
                 .header("content-type", "application/json")
                 .header("x-beatbox-api-key", "secret")
@@ -2182,8 +2312,8 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert!(!replayed_claim.launch_request_claim_bound);
     assert!(replayed_claim.launch_request_replay_detected);
 
-    let mut unknown_claim = claim_request.clone();
-    unknown_claim["launch_request"]["request_id"] = json!("bbx-browser-launch-plan-v1.unknown");
+    let mut unknown_claim_id = claim_request.clone();
+    unknown_claim_id["launch_request"]["request_id"] = json!("bbx-browser-launch-plan-v1.unknown");
     let response = app
         .clone()
         .oneshot(
@@ -2192,7 +2322,7 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
                 .uri("/v1/browser/adapter/launch/claim")
                 .header("content-type", "application/json")
                 .header("x-beatbox-api-key", "secret")
-                .body(Body::from(unknown_claim.to_string()))?,
+                .body(Body::from(unknown_claim_id.to_string()))?,
         )
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
@@ -2343,6 +2473,86 @@ async fn browser_adapter_launch_plan_binds_sensitive_activity_mode_capability()
     assert!(plan.same_user_capability_bound);
     assert!(plan.replay_protection_bound);
     assert!(!plan.launchable);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_replay_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let mut launch_plan = complete_adapter_launch_plan(&issued.same_user_capability);
+    launch_plan["manifest"]["guard_fields"] = json!([]);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(!plan.adapter_contract_fields_complete);
+    assert!(!plan.replay_protection_bound);
+    assert!(!plan.launchable);
+    assert!(
+        plan.manifest_validation
+            .missing_guard_fields
+            .iter()
+            .any(|field| field == "guard_plan.network.allowed_origins")
+    );
+    assert!(
+        plan.reasons
+            .iter()
+            .any(|reason| reason.contains("adapter field contract was incomplete"))
+    );
+
+    let claim_request = json!({ "launch_request": plan.launch_request });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(claim_request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let claim: BrowserAdapterLaunchClaimResponse = serde_json::from_slice(&body)?;
+    assert_eq!(claim.decision, BrowserAdapterLaunchClaimDecision::Rejected);
+    assert!(!claim.server_issued_launch_request);
+    assert!(!claim.launch_request_claim_bound);
+
     Ok(())
 }
 
@@ -3219,6 +3429,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                         .any(|field| field == "replay_protection_bound")
                     && required
                         .iter()
+                        .any(|field| field == "adapter_contract_fields_complete")
+                    && required
+                        .iter()
                         .any(|field| field == "completion_validation_endpoint")
                     && required.iter().any(|field| field == "admission")
                     && required.iter().any(|field| field == "manifest_validation")
@@ -3367,6 +3580,21 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                 .any(|field| field == "report_shape_complete")
                 && required
                     .iter()
+                    .any(|field| field == "server_issued_launch_request")
+                && required
+                    .iter()
+                    .any(|field| field == "launch_request_claimed")
+                && required
+                    .iter()
+                    .any(|field| field == "launch_request_envelope_matched")
+                && required
+                    .iter()
+                    .any(|field| field == "completion_report_template_matched")
+                && required
+                    .iter()
+                    .any(|field| field == "completion_bound_to_claimed_launch")
+                && required
+                    .iter()
                     .any(|field| field == "verified_on_production_path")
                 && required.iter().any(|field| field == "missing_proof_ids")
                 && required
@@ -3511,7 +3739,12 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("register_browser_adapter tool should be listed")?;
     assert_eq!(
         register_tool["inputSchema"]["required"],
-        serde_json::json!(["actor", "sensitivity", "same_user_capability", "manifest"])
+        serde_json::json!(["actor", "sensitivity", "manifest"])
+    );
+    assert!(
+        register_tool["inputSchema"]["properties"]
+            .as_object()
+            .is_some_and(|properties| !properties.contains_key("same_user_capability"))
     );
     assert_eq!(
         register_tool["inputSchema"]["properties"]["manifest"]["additionalProperties"],
@@ -4326,6 +4559,23 @@ async fn mcp_validate_browser_adapter_completion_returns_structured_rejection()
     );
     assert_eq!(result["structuredContent"]["report_shape_complete"], true);
     assert_eq!(
+        result["structuredContent"]["server_issued_launch_request"],
+        false
+    );
+    assert_eq!(result["structuredContent"]["launch_request_claimed"], false);
+    assert_eq!(
+        result["structuredContent"]["launch_request_envelope_matched"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["completion_report_template_matched"],
+        false
+    );
+    assert_eq!(
+        result["structuredContent"]["completion_bound_to_claimed_launch"],
+        false
+    );
+    assert_eq!(
         result["structuredContent"]["verified_on_production_path"],
         false
     );
@@ -4354,6 +4604,13 @@ async fn mcp_validate_browser_adapter_completion_returns_structured_rejection()
             .is_some_and(|reasons| reasons.iter().any(|reason| reason
                 .as_str()
                 .is_some_and(|reason| reason.contains("not verified"))))
+    );
+    assert!(
+        result["structuredContent"]["reasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|reason| reason
+                .as_str()
+                .is_some_and(|reason| reason.contains("shape-only"))))
     );
     Ok(())
 }
@@ -4495,13 +4752,18 @@ async fn mcp_get_browser_adapter_contract_rejects_unknown_arguments()
 async fn mcp_register_browser_adapter_returns_structured_rejection_without_capability_echo()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let mut registration = complete_adapter_registration();
+    registration
+        .as_object_mut()
+        .ok_or("registration should be an object")?
+        .remove("same_user_capability");
     let request = json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
         "params": {
             "name": "register_browser_adapter",
-            "arguments": complete_adapter_registration()
+            "arguments": registration
         }
     });
     let response = app
@@ -4549,9 +4811,18 @@ async fn mcp_register_browser_adapter_returns_structured_rejection_without_capab
     assert!(
         result["structuredContent"]["required_next_steps"]
             .as_array()
-            .is_some_and(|steps| steps.iter().any(|step| step
+            .is_some_and(|steps| steps
+                .iter()
+                .any(|step| step.as_str().is_some_and(|step| step
+                    .contains("REST registration endpoint")
+                    || step.contains("REST"))))
+    );
+    assert!(
+        result["structuredContent"]["reasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|reason| reason
                 .as_str()
-                .is_some_and(|step| step.contains("same-user capability"))))
+                .is_some_and(|reason| reason.contains("model-visible transcripts"))))
     );
     Ok(())
 }
