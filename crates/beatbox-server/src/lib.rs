@@ -25,11 +25,11 @@ use beatbox_core::{
     BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
     BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
     BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
-    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
-    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
-    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
-    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    BrowserAdapterRequestCompatibility, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
+    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
+    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
+    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
     BrowserSensitiveActivityMode, BrowserSensitiveActivityModeContract, BrowserSensitivity,
     BrowserSessionActor, BrowserStorageGuardPlan, BrowserSuppressionGuardPlan,
     CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
@@ -1643,6 +1643,7 @@ fn browser_adapter_launch_request_template_with_lease(
     lease: BrowserAdapterLaunchLease,
 ) -> BrowserAdapterLaunchRequest {
     let adapter_contract = BrowserAdapterContract::default();
+    let requested_controls = browser_admission_effective_controls(request);
     BrowserAdapterLaunchRequest {
         request_id: request_id.to_string(),
         issued_at: lease.issued_at,
@@ -1657,7 +1658,7 @@ fn browser_adapter_launch_request_template_with_lease(
         target_origins: request.target_origins.clone(),
         credential_mode: request.credential_mode.clone(),
         artifact_mode: request.artifact_mode.clone(),
-        requested_controls: request.required_controls.clone(),
+        requested_controls,
         guard_plan: guard_plan.clone(),
         required_completion_proofs,
         completion_proof_contract: adapter_contract.completion_proof_contract.clone(),
@@ -2077,6 +2078,114 @@ fn browser_adapter_manifest_contract_fields_complete(
             .all(|proof| request.completion_proofs.contains(proof))
 }
 
+fn browser_adapter_request_compatibility(
+    manifest: &BrowserAdapterManifestRequest,
+    admission_request: &BrowserAdmissionRequest,
+) -> BrowserAdapterRequestCompatibility {
+    let adapter_contract = browser_adapter_contract();
+    let required_controls = browser_admission_effective_controls(admission_request);
+    let missing_levels = if manifest
+        .supported_levels
+        .contains(&admission_request.requested_level)
+    {
+        Vec::new()
+    } else {
+        vec![admission_request.requested_level.clone()]
+    };
+    let missing_controls = required_controls
+        .iter()
+        .filter(|control| !manifest.supported_controls.contains(control))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_guard_fields = adapter_contract
+        .required_guard_fields
+        .iter()
+        .filter(|field| !manifest.guard_fields.contains(field))
+        .cloned()
+        .collect::<Vec<_>>();
+    let missing_completion_proofs = adapter_contract
+        .required_completion_proofs
+        .iter()
+        .filter(|proof| !manifest.completion_proofs.contains(proof))
+        .cloned()
+        .collect::<Vec<_>>();
+    let instrumented_external_declared = manifest
+        .supported_levels
+        .contains(&BrowserSandboxLevel::InstrumentedExternal);
+    let mut reasons = Vec::new();
+    if manifest.contract_version != adapter_contract.version {
+        reasons.push(format!(
+            "adapter contract_version `{}` does not match required `{}`",
+            manifest.contract_version, adapter_contract.version
+        ));
+    }
+    if manifest.launch_endpoint.is_none() {
+        reasons.push("adapter manifest does not provide a launch_endpoint".to_string());
+    }
+    if instrumented_external_declared {
+        reasons.push(
+            "instrumented_external is not accepted as a sandbox-capable adapter level".to_string(),
+        );
+    }
+    if !missing_levels.is_empty() {
+        reasons.push("adapter does not claim the requested browser sandbox level".to_string());
+    }
+    if !missing_controls.is_empty() {
+        reasons.push("adapter does not claim controls required by this admission".to_string());
+    }
+    if !missing_guard_fields.is_empty() {
+        reasons
+            .push("adapter does not bind guard_plan fields required by this admission".to_string());
+    }
+    if !missing_completion_proofs.is_empty() {
+        reasons.push(
+            "adapter does not report completion proofs required by this admission".to_string(),
+        );
+    }
+    let compatible = manifest.contract_version == adapter_contract.version
+        && manifest.launch_endpoint.is_some()
+        && !instrumented_external_declared
+        && missing_levels.is_empty()
+        && missing_controls.is_empty()
+        && missing_guard_fields.is_empty()
+        && missing_completion_proofs.is_empty();
+    if compatible {
+        reasons.push(
+            "adapter manifest satisfies this admission's requested level, controls, guard fields, and completion proofs; endpoint network policy and launch remain unimplemented"
+                .to_string(),
+        );
+    }
+
+    BrowserAdapterRequestCompatibility {
+        compatible,
+        missing_levels,
+        required_controls,
+        missing_controls,
+        missing_guard_fields,
+        missing_completion_proofs,
+        reasons,
+    }
+}
+
+fn browser_admission_effective_controls(
+    request: &BrowserAdmissionRequest,
+) -> Vec<BrowserSandboxControl> {
+    let mut controls = browser_profile_controls(&request.requested_level);
+    for control in &request.required_controls {
+        if !controls.contains(control) {
+            controls.push(control.clone());
+        }
+    }
+    let sensitive_activity_mode_contract =
+        browser_suppression_mode_contract_for(&request.sensitive_activity_mode);
+    for control in sensitive_activity_mode_contract.required_controls {
+        if !controls.contains(&control) {
+            controls.push(control);
+        }
+    }
+    controls
+}
+
 #[derive(Clone, Debug, Default)]
 struct BrowserAdapterCompletionLaunchBinding {
     server_issued_launch_request: bool,
@@ -2381,6 +2490,8 @@ fn browser_adapter_launch_plan_response(
     let adapter_contract_fields_complete =
         browser_adapter_manifest_contract_fields_complete(&request.manifest);
     let admission = browser_admission_response(request.admission.clone());
+    let request_adapter_compatibility =
+        browser_adapter_request_compatibility(&request.manifest, &request.admission);
     let manifest_validation = browser_adapter_manifest_response(request.manifest);
     let launch_request = browser_adapter_live_launch_request_template(
         &request_id,
@@ -2395,7 +2506,7 @@ fn browser_adapter_launch_plan_response(
             .is_empty()
         && admission.level_satisfies_requested_controls;
     let replay_protection_bound = same_user_capability_bound
-        && adapter_contract_fields_complete
+        && request_adapter_compatibility.compatible
         && admission_contract_complete
         && browser_adapter_record_launch_request(state, &launch_request);
     let mut reasons = vec![
@@ -2404,6 +2515,12 @@ fn browser_adapter_launch_plan_response(
         "browser launcher, endpoint request-builder binding, teardown verification, and storage sealing are not implemented"
             .to_string(),
     ];
+    if request_adapter_compatibility.compatible && !adapter_contract_fields_complete {
+        reasons.push(
+            "adapter manifest is compatible with this admission request but does not satisfy global all-level conformance"
+                .to_string(),
+        );
+    }
     if same_user_capability_bound {
         reasons.push(
             "same-user capability matched this launch plan preflight, but it is not registration, endpoint trust, or launch permission"
@@ -2416,7 +2533,7 @@ fn browser_adapter_launch_plan_response(
             );
         } else {
             reasons.push(
-                "launch request id was not recorded in this daemon's replay ledger because the adapter field contract was incomplete, admission profile/mode requirements were incomplete, or the ledger was full"
+                "launch request id was not recorded in this daemon's replay ledger because the request-scoped adapter contract was incomplete, admission profile/mode requirements were incomplete, or the ledger was full"
                     .to_string(),
             );
         }
@@ -2452,6 +2569,7 @@ fn browser_adapter_launch_plan_response(
         trusted_for_sensitive_work: false,
         endpoint_network_policy_bound: false,
         adapter_contract_fields_complete,
+        request_adapter_compatibility,
         same_user_capability_bound,
         replay_protection_bound,
         admission,
