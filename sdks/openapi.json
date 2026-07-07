@@ -24,9 +24,19 @@
             "description": "JSON-RPC notification accepted"
           },
           "403": {
-            "description": "Origin not allowed"
+            "description": "Origin not allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/v1/browser/adapter/capability": {
@@ -539,7 +549,10 @@
           "200": {
             "description": "Daemon health"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/v1/jobs": {
@@ -3355,8 +3368,20 @@
           }
         ]
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
     }
   },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "tags": [
     {
       "name": "v1",
