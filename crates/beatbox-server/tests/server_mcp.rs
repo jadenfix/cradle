@@ -1030,6 +1030,26 @@ async fn browser_profiles_are_authenticated_control_plane_metadata()
             .iter()
             .any(|confirmation| confirmation.contains("encrypted"))
     );
+    for mode in &profiles.suppression_modes {
+        for level in &mode.compatible_levels {
+            let Some(profile) = profiles
+                .profiles
+                .iter()
+                .find(|profile| &profile.level == level)
+            else {
+                panic!("suppression mode references an unpublished browser profile");
+            };
+            for required_control in &mode.required_controls {
+                assert!(
+                    profile.controls.contains(required_control),
+                    "suppression mode {:?} marks {:?} compatible without required control {:?}",
+                    mode.mode,
+                    level,
+                    required_control
+                );
+            }
+        }
+    }
     let Some(network_suppressed) = profiles
         .profiles
         .iter()
@@ -3606,11 +3626,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
     assert!(
         schemas["BrowserSensitiveActivityModeContract"]["required"]
             .as_array()
-            .is_some_and(
-                |required| required.iter().any(|field| field == "mode")
-                    && required.iter().any(|field| field == "guard_plan")
-                    && required.iter().any(|field| field == "runnable")
-            ),
+            .is_some_and(|required| required.iter().any(|field| field == "mode")
+                && required.iter().any(|field| field == "guard_plan")
+                && required.iter().any(|field| field == "runnable")),
         "suppression mode contract should include mode, guard plan, and runnable status"
     );
     assert!(

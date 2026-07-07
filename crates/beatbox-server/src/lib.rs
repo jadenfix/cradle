@@ -33,10 +33,10 @@ use beatbox_core::{
     BrowserSensitiveActivityMode, BrowserSensitiveActivityModeContract, BrowserSensitivity,
     BrowserSessionActor, BrowserStorageGuardPlan, BrowserSuppressionGuardPlan,
     CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
-    EcosystemConsumerContract, EcosystemEndpointContract,
-    EcosystemIntegrationContract, EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody,
-    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
-    Source, browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    EcosystemConsumerContract, EcosystemEndpointContract, EcosystemIntegrationContract,
+    EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody, ErrorResponse, ExecuteRequest,
+    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -1525,11 +1525,7 @@ fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContr
         browser_suppression_mode_contract(
             BrowserSensitiveActivityMode::Sealed,
             "Add explicit encrypted artifact sealing to network-suppressed private browsing.",
-            vec![
-                BrowserSandboxLevel::SealedState,
-                BrowserSandboxLevel::OsIsolated,
-                BrowserSandboxLevel::RemoteIsolated,
-            ],
+            vec![BrowserSandboxLevel::SealedState],
             vec![
                 BrowserSandboxControl::FreshProfile,
                 BrowserSandboxControl::NoAmbientCredentials,
@@ -1561,7 +1557,10 @@ fn browser_suppression_mode_contract(
         compatible_levels,
         required_controls,
         runnable: false,
-        required_next_steps: required_next_steps.into_iter().map(str::to_string).collect(),
+        required_next_steps: required_next_steps
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     }
 }
 
@@ -2955,7 +2954,10 @@ fn browser_suppression_guard_plan_for_mode(
         sensitive_activity_mode,
         BrowserSensitiveActivityMode::NetworkSuppressed | BrowserSensitiveActivityMode::Sealed
     );
-    let sealed = matches!(sensitive_activity_mode, BrowserSensitiveActivityMode::Sealed);
+    let sealed = matches!(
+        sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Sealed
+    );
     let mut required_operator_confirmations = Vec::new();
     if private_or_stronger {
         required_operator_confirmations.push(
@@ -3062,6 +3064,8 @@ fn browser_profile_controls(level: &BrowserSandboxLevel) -> Vec<BrowserSandboxCo
         BrowserSandboxLevel::SealedState => vec![
             BrowserSandboxControl::FreshProfile,
             BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
             BrowserSandboxControl::SealedArtifacts,
             BrowserSandboxControl::TeardownProof,
         ],
@@ -3077,6 +3081,7 @@ fn browser_profile_controls(level: &BrowserSandboxLevel) -> Vec<BrowserSandboxCo
             BrowserSandboxControl::FreshProfile,
             BrowserSandboxControl::NoAmbientCredentials,
             BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
             BrowserSandboxControl::RemoteWorkerIsolation,
             BrowserSandboxControl::TeardownProof,
         ],
