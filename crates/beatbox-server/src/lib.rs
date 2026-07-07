@@ -14,21 +14,22 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
-    BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationDecision,
-    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceCase,
-    BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
-    BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchRequest,
-    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
-    BrowserAdapterRegistrationDecision, BrowserAdapterRegistrationRequest,
-    BrowserAdapterRegistrationResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
-    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
-    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
-    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
-    BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse,
-    CapabilityLane, CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest,
-    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    AetherPaymentContextCapabilities, BrowserAdapterCapabilityIssueRequest,
+    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionReport,
+    BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
+    BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
+    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
+    BrowserAdapterHandoff, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
+    BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
+    BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
+    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
+    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
+    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
+    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
+    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
+    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
+    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, Lane, Policy, Source,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -52,6 +53,15 @@ pub const DEFAULT_MAX_CONCURRENT_SYNC: usize = 8;
 pub const DEFAULT_MAX_CONCURRENT_JOBS: usize = 4;
 pub const BROWSER_ADAPTER_CAPABILITY_TTL_SECONDS: u64 = 5 * 60;
 pub const MAX_BROWSER_ADAPTER_CAPABILITIES: usize = 128;
+pub const AETHER_PAYMENT_HEADER: &str = "x-payment";
+pub const AETHER_PAYMENT_HASH_HEADER: &str = "x-aether-payment-hash";
+pub const MAX_AETHER_PAYMENT_HEADER_BYTES: usize = 8192;
+const MCP_ACCESS_CONTROL_ALLOW_METHODS: &str = "POST, GET, OPTIONS";
+const MCP_ACCESS_CONTROL_ALLOW_HEADERS: &str = concat!(
+    "authorization, content-type, accept, mcp-protocol-version, mcp-session-id, ",
+    "x-payment, x-aether-payment-hash"
+);
+const MCP_ACCESS_CONTROL_EXPOSE_HEADERS: &str = "www-authenticate, x-aether-payment-hash";
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -238,7 +248,7 @@ pub fn router(config: ServerConfig) -> Router {
         .route("/v1/execute", post(execute))
         .route("/v1/jobs", post(create_job))
         .route("/v1/jobs/{id}", get(get_job).delete(cancel_job))
-        .route("/mcp", get(mcp_get).post(mcp_post))
+        .route("/mcp", get(mcp_get).post(mcp_post).options(mcp_options))
         .with_state(state)
 }
 
@@ -966,6 +976,14 @@ fn capabilities_json(config: &ServerConfig) -> CapabilitiesResponse {
         },
         engines: BTreeMap::from([("wasmtime".to_string(), "45".to_string())]),
         browser_sandbox: browser_profiles_response(),
+        aether_payment: aether_payment_capabilities(),
+    }
+}
+
+fn aether_payment_capabilities() -> AetherPaymentContextCapabilities {
+    AetherPaymentContextCapabilities {
+        max_payment_header_bytes: MAX_AETHER_PAYMENT_HEADER_BYTES,
+        ..AetherPaymentContextCapabilities::default()
     }
 }
 
@@ -2819,6 +2837,16 @@ async fn mcp_get() -> Response {
         .into_response()
 }
 
+async fn mcp_options(headers: HeaderMap) -> Response {
+    if !origin_allowed(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let cors_origin = mcp_cors_origin(&headers);
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    add_mcp_cors_headers(&mut response, cors_origin.as_deref(), true);
+    response
+}
+
 async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Response {
     let (parts, body) = request.into_parts();
     let headers = parts.headers;
@@ -2828,27 +2856,31 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
             json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": "origin not allowed"}}),
         );
     }
+    let cors_origin = mcp_cors_origin(&headers);
     if state.config.auth.is_required()
         && let Err(error) = state.authorize(&headers)
     {
-        return json_response(
+        return mcp_json_response(
             StatusCode::UNAUTHORIZED,
             json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32001, "message": error.body.message}}),
+            cors_origin.as_deref(),
         );
     }
     if let Err(error) = require_json_content_type(&headers) {
-        return json_response(
+        return mcp_json_response(
             StatusCode::BAD_REQUEST,
             json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": error.body.message}}),
+            cors_origin.as_deref(),
         );
     }
 
     let body = match to_bytes(body, state.config.max_request_bytes).await {
         Ok(body) => body,
         Err(error) => {
-            return json_response(
+            return mcp_json_response(
                 StatusCode::BAD_REQUEST,
                 json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": format!("body limit exceeded: {error}")}}),
+                cors_origin.as_deref(),
             );
         }
     };
@@ -2856,9 +2888,10 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
     let message: Value = match serde_json::from_slice(&body) {
         Ok(value) => value,
         Err(error) => {
-            return json_response(
+            return mcp_json_response(
                 StatusCode::BAD_REQUEST,
                 json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {error}")}}),
+                cors_origin.as_deref(),
             );
         }
     };
@@ -2872,9 +2905,10 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
     if matches!(method, "tools/list" | "tools/call")
         && let Err(error) = state.authorize(&headers)
     {
-        return json_response(
+        return mcp_json_response(
             StatusCode::UNAUTHORIZED,
             json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32001, "message": error.body.message}}),
+            cors_origin.as_deref(),
         );
     }
     let reply = match method {
@@ -2895,7 +2929,99 @@ async fn mcp_post(State(state): State<AppState>, request: Request<Body>) -> Resp
             json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
         }
     };
-    json_response(StatusCode::OK, body)
+    mcp_json_response(StatusCode::OK, body, cors_origin.as_deref())
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AetherPaymentContext {
+    payment_present: bool,
+    payment_hash: Option<String>,
+}
+
+impl AetherPaymentContext {
+    fn from_headers(headers: &HeaderMap) -> Result<Self, (i64, String)> {
+        let payment = optional_header_value(headers, AETHER_PAYMENT_HEADER)?;
+        let payment_hash = optional_header_value(headers, AETHER_PAYMENT_HASH_HEADER)?;
+        if let Some(payment) = &payment
+            && payment.len() > MAX_AETHER_PAYMENT_HEADER_BYTES
+        {
+            return Err((
+                -32602,
+                format!(
+                    "{AETHER_PAYMENT_HEADER} must be at most {MAX_AETHER_PAYMENT_HEADER_BYTES} bytes"
+                ),
+            ));
+        }
+        if let Some(payment_hash) = &payment_hash {
+            validate_aether_payment_hash(payment_hash)?;
+        }
+        if payment.is_some() != payment_hash.is_some() {
+            return Err((
+                -32602,
+                format!(
+                    "{AETHER_PAYMENT_HEADER} and {AETHER_PAYMENT_HASH_HEADER} must be supplied together"
+                ),
+            ));
+        }
+        Ok(Self {
+            payment_present: payment.is_some(),
+            payment_hash,
+        })
+    }
+
+    fn apply_to_tool_result(&self, result: &mut Value) {
+        if !self.payment_present {
+            return;
+        }
+        if let Some(object) = result.as_object_mut() {
+            object.insert(
+                "_meta".to_string(),
+                json!({
+                    "aether_payment": {
+                        "payment_header": AETHER_PAYMENT_HEADER,
+                        "payment_header_present": true,
+                        "payment_payload_echoed": false,
+                        "payment_hash_header": AETHER_PAYMENT_HASH_HEADER,
+                        "payment_hash": self.payment_hash,
+                    }
+                }),
+            );
+        }
+    }
+}
+
+fn optional_header_value(
+    headers: &HeaderMap,
+    name: &'static str,
+) -> Result<Option<String>, (i64, String)> {
+    let count = headers.get_all(name).iter().count();
+    if count > 1 {
+        return Err((-32602, format!("{name} must be supplied at most once")));
+    }
+    let Some(value) = headers.get(name) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| (-32602, format!("{name} must be visible ASCII")))?;
+    if value.is_empty() {
+        return Err((-32602, format!("{name} must not be empty")));
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn validate_aether_payment_hash(hash: &str) -> Result<(), (i64, String)> {
+    let digest = hash.strip_prefix("0x").ok_or((
+        -32602,
+        format!("{AETHER_PAYMENT_HASH_HEADER} must be a 0x-prefixed 32-byte hex digest"),
+    ))?;
+    if digest.len() != 64 || !digest.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        return Err((
+            -32602,
+            format!("{AETHER_PAYMENT_HASH_HEADER} must be a 0x-prefixed 32-byte hex digest"),
+        ));
+    }
+    Ok(())
 }
 
 fn mcp_tools() -> Value {
@@ -3285,12 +3411,13 @@ async fn mcp_tools_call(
     state
         .authorize(headers)
         .map_err(|error| (-32001, error.body.message))?;
+    let payment_context = AetherPaymentContext::from_headers(headers)?;
     let name = params["name"]
         .as_str()
         .ok_or((-32602, "tools/call requires params.name".to_string()))?;
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match name {
+    let mut result = match name {
         "get_capabilities" => {
             mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
             let capabilities = capabilities_json(&state.config);
@@ -3412,7 +3539,9 @@ async fn mcp_tools_call(
             tool_result(result)
         }
         other => Err((-32602, format!("unknown tool: {other}"))),
-    }
+    }?;
+    payment_context.apply_to_tool_result(&mut result);
+    Ok(result)
 }
 
 fn mcp_browser_admission_request(
@@ -3893,4 +4022,39 @@ fn json_response(status: StatusCode, body: Value) -> Response {
         Body::from(body.to_string()),
     )
         .into_response()
+}
+
+fn mcp_json_response(status: StatusCode, body: Value, cors_origin: Option<&str>) -> Response {
+    let mut response = json_response(status, body);
+    add_mcp_cors_headers(&mut response, cors_origin, false);
+    response
+}
+
+fn mcp_cors_origin(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .map(ToString::to_string)
+}
+
+fn add_mcp_cors_headers(response: &mut Response, cors_origin: Option<&str>, preflight: bool) {
+    let headers = response.headers_mut();
+    headers.insert(
+        "access-control-expose-headers",
+        HeaderValue::from_static(MCP_ACCESS_CONTROL_EXPOSE_HEADERS),
+    );
+    if preflight {
+        headers.insert(
+            "access-control-allow-methods",
+            HeaderValue::from_static(MCP_ACCESS_CONTROL_ALLOW_METHODS),
+        );
+        headers.insert(
+            "access-control-allow-headers",
+            HeaderValue::from_static(MCP_ACCESS_CONTROL_ALLOW_HEADERS),
+        );
+    }
+    if let Some(origin) = cors_origin.and_then(|origin| HeaderValue::from_str(origin).ok()) {
+        headers.insert("access-control-allow-origin", origin);
+        headers.insert("vary", HeaderValue::from_static("origin"));
+    }
 }
