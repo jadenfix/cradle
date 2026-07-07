@@ -167,6 +167,9 @@ pub struct BrowserProfilesResponse {
     #[schema(required = true)]
     pub default_level: Option<BrowserSandboxLevel>,
     pub integration: BrowserIntegrationContract,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub suppression_modes: Vec<BrowserSensitiveActivityModeContract>,
     pub profiles: Vec<BrowserSandboxProfile>,
 }
 
@@ -210,6 +213,17 @@ pub enum BrowserSensitiveActivityMode {
     Private,
     NetworkSuppressed,
     Sealed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserSensitiveActivityModeContract {
+    pub mode: BrowserSensitiveActivityMode,
+    pub summary: String,
+    pub compatible_levels: Vec<BrowserSandboxLevel>,
+    pub required_controls: Vec<BrowserSandboxControl>,
+    pub guard_plan: BrowserSuppressionGuardPlan,
+    pub runnable: bool,
+    pub required_next_steps: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1721,6 +1735,10 @@ mod tests {
         assert_eq!(
             response.integration.adapter.status,
             BrowserSandboxAvailability::Unavailable
+        );
+        assert_eq!(
+            response.suppression_modes,
+            Vec::<BrowserSensitiveActivityModeContract>::new()
         );
         assert_eq!(response.integration.adapter.launch_endpoint, None);
         assert!(

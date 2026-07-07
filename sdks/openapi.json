@@ -2347,6 +2347,7 @@
           "runnable_browser_sessions",
           "default_level",
           "integration",
+          "suppression_modes",
           "profiles"
         ],
         "properties": {
@@ -2371,6 +2372,12 @@
           },
           "runnable_browser_sessions": {
             "type": "boolean"
+          },
+          "suppression_modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSensitiveActivityModeContract"
+            }
           },
           "version": {
             "type": "string"
@@ -2496,6 +2503,50 @@
           "network_suppressed",
           "sealed"
         ]
+      },
+      "BrowserSensitiveActivityModeContract": {
+        "type": "object",
+        "required": [
+          "mode",
+          "summary",
+          "compatible_levels",
+          "required_controls",
+          "guard_plan",
+          "runnable",
+          "required_next_steps"
+        ],
+        "properties": {
+          "compatible_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxLevel"
+            }
+          },
+          "guard_plan": {
+            "$ref": "#/components/schemas/BrowserSuppressionGuardPlan"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BrowserSensitiveActivityMode"
+          },
+          "required_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "required_next_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "runnable": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
       },
       "BrowserSensitivity": {
         "type": "string",

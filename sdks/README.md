@@ -55,7 +55,10 @@ Browser admission requests are raw JSON today. Pass through
 `target_origins`, `credential_mode`, `artifact_mode`,
 `sensitive_activity_mode`, and `required_controls` exactly as described by
 `openapi.json`; beatbox validates unsafe target origins before returning the
-fail-closed admission decision. Admission responses also carry `guard_plan` and
+fail-closed admission decision. Profile discovery responses publish
+`suppression_modes` for the supported sensitive-activity postures, with each
+mode's compatible levels, required controls, guard-plan effects, runnable flag,
+and required next steps. Admission responses also carry `guard_plan` and
 `adapter_handoff` blocks; SDKs that return raw JSON must preserve both,
 including `guard_plan.suppression`, `adapter_handoff.launch_request_template`,
 `adapter_handoff.completion_proof_contract`, and the launch template's
