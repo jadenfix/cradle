@@ -4,9 +4,9 @@ use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
     BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionValidationDecision,
     BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceExpectation,
-    BrowserAdapterContractResponse, BrowserAdapterManifestResponse,
-    BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
-    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BrowserAdapterContractResponse, BrowserAdapterLaunchPlanResponse,
+    BrowserAdapterManifestResponse, BrowserAdapterRegistrationResponse, BrowserAdmissionDecision,
+    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
     BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
     ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
@@ -95,6 +95,24 @@ fn complete_adapter_registration() -> serde_json::Value {
         "actor": "agent",
         "sensitivity": "sensitive",
         "same_user_capability": "test-capability-fixture",
+        "manifest": complete_adapter_manifest()
+    })
+}
+
+fn complete_adapter_launch_plan(same_user_capability: &str) -> serde_json::Value {
+    json!({
+        "same_user_capability": same_user_capability,
+        "admission": {
+            "requested_level": "os_isolated",
+            "actor": "agent",
+            "sensitivity": "sensitive",
+            "target_origins": ["https://bank.example"],
+            "credential_mode": "no_credentials",
+            "artifact_mode": "discard",
+            "required_controls": ["egress_policy", "teardown_proof"],
+            "allow_downgrade": false,
+            "task_label": "sensitive browser launch plan"
+        },
         "manifest": complete_adapter_manifest()
     })
 }
@@ -1790,6 +1808,9 @@ async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_b
     assert_eq!(issued.sensitivity, BrowserSensitivity::Sensitive);
     assert_eq!(issued.adapter_id.as_deref(), Some("tempo-os-jail-v1"));
     assert_eq!(issued.registration_endpoint, "/v1/browser/adapter/register");
+    assert!(issued.notes.iter().any(|note| {
+        note.contains("registration or launch-plan preflight") && note.contains("first matching")
+    }));
     Ok(())
 }
 
@@ -1857,6 +1878,137 @@ async fn browser_adapter_capability_binds_registration_once_without_trusting_ada
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let replay: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
     assert!(!replay.same_user_capability_bound);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_launch_plan_binds_capability_without_launching()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unauthenticated = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = unauthenticated
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .body(Body::from("{not json"))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let launch_plan = complete_adapter_launch_plan(&issued.same_user_capability);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let raw = String::from_utf8(body.to_vec())?;
+    assert!(!raw.contains(&issued.same_user_capability));
+    assert!(!raw.contains("bbx-browser-adapter-cap-v1."));
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_str(&raw)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(!plan.launchable);
+    assert!(!plan.trusted_for_sensitive_work);
+    assert!(!plan.endpoint_network_policy_bound);
+    assert_eq!(plan.adapter_id, "tempo-os-jail-v1");
+    assert_eq!(plan.actor, BrowserSessionActor::Agent);
+    assert_eq!(plan.sensitivity, BrowserSensitivity::Sensitive);
+    assert!(plan.request_id.starts_with("bbx-browser-launch-plan-v1."));
+    assert_eq!(plan.launch_request.request_id, plan.request_id);
+    assert_eq!(
+        plan.launch_request.adapter_id.as_deref(),
+        Some("tempo-os-jail-v1")
+    );
+    assert_eq!(
+        plan.launch_request.target_origins,
+        vec!["https://bank.example".to_string()]
+    );
+    assert_eq!(
+        plan.launch_request.completion_report_template.request_id,
+        plan.request_id
+    );
+    assert_eq!(
+        plan.launch_request.completion_report_template.adapter_id,
+        "tempo-os-jail-v1"
+    );
+    assert_eq!(
+        plan.completion_validation_endpoint,
+        "/v1/browser/adapter/completion/validate"
+    );
+    assert_eq!(plan.admission.decision, BrowserAdmissionDecision::Rejected);
+    assert!(!plan.admission.runnable_browser_sessions);
+    assert!(!plan.manifest_validation.launchable);
+    assert!(
+        plan.reasons
+            .iter()
+            .any(|reason| reason.contains("not registration"))
+    );
+
+    let replay = complete_adapter_launch_plan(&issued.same_user_capability);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(replay.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let replay: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(!replay.same_user_capability_bound);
+    assert!(!replay.launchable);
+
+    let mut unknown = complete_adapter_launch_plan("not-issued");
+    unknown["extra"] = json!("nope");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(unknown.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let error: ErrorResponse = serde_json::from_slice(&body)?;
+    assert_eq!(error.error.code, "invalid_json");
     Ok(())
 }
 
@@ -2580,6 +2732,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                 && paths.contains_key("/v1/browser/adapter/contract")
                 && paths.contains_key("/v1/browser/adapter/capability")
                 && paths.contains_key("/v1/browser/adapter/register")
+                && paths.contains_key("/v1/browser/adapter/launch/plan")
                 && paths.contains_key("/v1/browser/adapter/validate")
                 && paths.contains_key("/v1/browser/adapter/completion/validate"))
     );
@@ -2612,6 +2765,9 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdapterConformanceExpectation",
         "BrowserAdapterConformanceProfile",
         "BrowserAdapterLaunchRequest",
+        "BrowserAdapterLaunchPlanDecision",
+        "BrowserAdapterLaunchPlanRequest",
+        "BrowserAdapterLaunchPlanResponse",
         "BrowserAdapterManifestRequest",
         "BrowserAdapterManifestResponse",
         "BrowserAdapterRegistrationDecision",
@@ -2691,6 +2847,10 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         schemas["BrowserAdapterRegistrationRequest"]["properties"]["same_user_capability"]["maxLength"],
         256
     );
+    assert_eq!(
+        schemas["BrowserAdapterLaunchPlanRequest"]["properties"]["same_user_capability"]["maxLength"],
+        256
+    );
     assert!(
         schemas["BrowserAdapterRegistrationResponse"]["required"]
             .as_array()
@@ -2702,6 +2862,22 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required.iter().any(|field| field == "manifest_validation")
             ),
         "adapter registration response should require fail-closed registration metadata"
+    );
+    assert!(
+        schemas["BrowserAdapterLaunchPlanResponse"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "launch_request")
+                    && required
+                        .iter()
+                        .any(|field| field == "same_user_capability_bound")
+                    && required
+                        .iter()
+                        .any(|field| field == "completion_validation_endpoint")
+                    && required.iter().any(|field| field == "admission")
+                    && required.iter().any(|field| field == "manifest_validation")
+            ),
+        "adapter launch plan response should require the fail-closed launch envelope"
     );
     assert!(
         schemas["BrowserAdapterManifestResponse"]["required"]
@@ -2913,6 +3089,8 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
             .to_string()
             .contains("issue_browser_adapter_capability")
     );
+    assert!(!tools.to_string().contains("browser_adapter_launch_plan"));
+    assert!(!tools.to_string().contains("plan_browser_adapter_launch"));
     assert!(!tools.to_string().contains("browser_adapter_capability"));
     let contract_tool = tools
         .as_array()

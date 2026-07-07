@@ -33,6 +33,7 @@ the same methods:
 | `browser_adapter_contract` / `browserAdapterContract` | `GET /v1/browser/adapter/contract` | yes |
 | `browser_adapter_capability` / `issueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes |
 | `browser_adapter_register` / `registerBrowserAdapter` | `POST /v1/browser/adapter/register` | yes |
+| `browser_adapter_launch_plan` / `planBrowserAdapterLaunch` | `POST /v1/browser/adapter/launch/plan` | yes |
 | `validate_browser_adapter` / `validateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes |
 | `browser_adapter_completion_validate` / `validateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes |
 | `execute` | `POST /v1/execute` | yes |
@@ -64,7 +65,10 @@ contract and conformance profile without submitting a manifest, and
 `POST /v1/browser/adapter/capability` for the REST-only same-user capability
 issuer. The issuer requires configured daemon auth, stores only a digest, and
 returns short-lived one-time bearer material that must not be exposed to MCP or
-model transcripts. SDKs also expose `POST /v1/browser/adapter/register` for the
+model transcripts. A capability can be consumed by either a matching
+registration preflight or a matching launch-plan preflight, so clients should
+issue a fresh token for each consuming operation. SDKs also expose
+`POST /v1/browser/adapter/register` for the
 future registration preflight with actor, sensitivity, an issued same-user
 capability, and manifest in one request. Beatbox consumes a matching live
 capability at most once and never echoes it.
@@ -75,6 +79,12 @@ field in raw JSON responses; it contains the canonical field-complete manifest,
 `field_complete_launch_request`, typed completion-proof requirements,
 completion-report fixtures, expected missing-gap reports, and protocol-specific
 REST/MCP negative cases Tempo adapters should run.
+Launch planning requests are also raw JSON and REST-only:
+`POST /v1/browser/adapter/launch/plan` combines a same-user capability,
+admission intent, and manifest into a server-issued launch envelope and
+completion report template. SDKs must never expose this as MCP/model-visible
+tooling, and callers must still treat the response as non-launchable and
+untrusted until production endpoint binding, launch, and teardown checks exist.
 Completion reports are raw JSON too. Pass them through to
 `POST /v1/browser/adapter/completion/validate`; beatbox checks the submitted
 shape, proof ids, and teardown evidence booleans against the same proof
@@ -84,16 +94,16 @@ store, or egress log.
 
 Language-specific method names are idiomatic: Rust and Python expose
 `browser_adapter_contract`, `browser_adapter_capability`,
-`browser_adapter_register`, `browser_adapter_validate`, and
-`browser_adapter_completion_validate`; Ruby exposes
+`browser_adapter_register`, `browser_adapter_launch_plan`,
+`browser_adapter_validate`, and `browser_adapter_completion_validate`; Ruby exposes
 `browser_adapter_contract`, `browser_adapter_capability`,
-`browser_adapter_register`, `validate_browser_adapter`, and
-`validate_browser_adapter_completion`; TypeScript, Java, PHP, and C# expose
+`browser_adapter_register`, `browser_adapter_launch_plan`,
+`validate_browser_adapter`, and `validate_browser_adapter_completion`; TypeScript, Java, PHP, and C# expose
 `browserAdapterContract`, `issueBrowserAdapterCapability`,
-`registerBrowserAdapter`, `validateBrowserAdapter`, and
+`registerBrowserAdapter`, `planBrowserAdapterLaunch`, `validateBrowserAdapter`, and
 `validateBrowserAdapterCompletion`; and Go exposes
 `BrowserAdapterContract`, `IssueBrowserAdapterCapability`,
-`RegisterBrowserAdapter`, `ValidateBrowserAdapter`, and
+`RegisterBrowserAdapter`, `PlanBrowserAdapterLaunch`, `ValidateBrowserAdapter`, and
 `ValidateBrowserAdapterCompletion`.
 
 ## How the fleet stays correct (the rollout pipeline)

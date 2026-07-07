@@ -140,6 +140,14 @@ func (c *Client) RegisterBrowserAdapter(ctx context.Context, req any) (json.RawM
 	return out, err
 }
 
+// PlanBrowserAdapterLaunch prepares a fail-closed browser adapter launch
+// envelope without trusting or launching it (POST /v1/browser/adapter/launch/plan).
+func (c *Client) PlanBrowserAdapterLaunch(ctx context.Context, req any) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodPost, c.baseURL+"/v1/browser/adapter/launch/plan", true, req, &out)
+	return out, err
+}
+
 // ValidateBrowserAdapter validates a proposed browser adapter manifest without
 // trusting or launching it (POST /v1/browser/adapter/validate).
 func (c *Client) ValidateBrowserAdapter(ctx context.Context, req any) (json.RawMessage, error) {

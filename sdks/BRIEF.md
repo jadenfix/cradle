@@ -39,6 +39,7 @@ A client is constructed with:
 | `browser_adapter_contract` / `browserAdapterContract` / `BrowserAdapterContract` | `GET /v1/browser/adapter/contract` | yes | raw JSON |
 | `browser_adapter_capability` / `issueBrowserAdapterCapability` / `IssueBrowserAdapterCapability` | `POST /v1/browser/adapter/capability` | yes | raw JSON |
 | `browser_adapter_register` / `registerBrowserAdapter` / `RegisterBrowserAdapter` | `POST /v1/browser/adapter/register` | yes | raw JSON |
+| `browser_adapter_launch_plan` / `planBrowserAdapterLaunch` / `PlanBrowserAdapterLaunch` | `POST /v1/browser/adapter/launch/plan` | yes | raw JSON |
 | `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` / `ValidateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes | raw JSON |
 | `browser_adapter_completion_validate` / `validate_browser_adapter_completion` / `validateBrowserAdapterCompletion` / `ValidateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
@@ -90,6 +91,8 @@ is acceptable until each language adds typed convenience models),
 `BrowserAdapterRegistrationResponse`, `BrowserAdapterRegistrationDecision`,
 `BrowserAdapterManifestResponse` (including `conformance_profile`),
 `BrowserAdapterConformanceProfile`, `BrowserAdapterLaunchRequest`,
+`BrowserAdapterLaunchPlanRequest`, `BrowserAdapterLaunchPlanResponse`,
+`BrowserAdapterLaunchPlanDecision`,
 `BrowserAdapterCompletionProofRequirement`, `BrowserAdapterCompletionReport`,
 `BrowserAdapterConformanceCase`, `BrowserAdapterConformanceExpectation`,
 `BrowserAdapterValidationDecision`,
