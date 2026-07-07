@@ -50,6 +50,14 @@ function encodeJobId(string $id): string
     return (string) $m->invoke(null, $id);
 }
 
+/** Read the private normalized base URL for construction assertions. */
+function clientBaseUrl(Client $client): string
+{
+    $prop = new ReflectionProperty(Client::class, 'baseUrl');
+    $prop->setAccessible(true);
+    return (string) $prop->getValue($client);
+}
+
 /** Assert that a callable throws the given exception class. */
 function assertThrows(string $class, callable $fn, string $label): void
 {
@@ -61,6 +69,60 @@ function assertThrows(string $class, callable $fn, string $label): void
         assert($threw, "$label: expected $class, got " . get_class($e));
     }
     assert($threw, "$label: expected $class to be thrown");
+}
+
+/** Run a callback with temporary environment overrides. */
+function withEnv(array $overrides, callable $fn): void
+{
+    $oldValues = [];
+    foreach ($overrides as $key => $_value) {
+        $oldValues[$key] = getenv((string) $key);
+    }
+
+    try {
+        foreach ($overrides as $key => $value) {
+            if ($value === null) {
+                putenv((string) $key);
+                unset($_ENV[(string) $key], $_SERVER[(string) $key]);
+            } else {
+                putenv((string) $key . '=' . (string) $value);
+                $_ENV[(string) $key] = (string) $value;
+                $_SERVER[(string) $key] = (string) $value;
+            }
+        }
+        $fn();
+    } finally {
+        foreach ($oldValues as $key => $value) {
+            if ($value === false) {
+                putenv((string) $key);
+                unset($_ENV[(string) $key], $_SERVER[(string) $key]);
+            } else {
+                putenv((string) $key . '=' . (string) $value);
+                $_ENV[(string) $key] = (string) $value;
+                $_SERVER[(string) $key] = (string) $value;
+            }
+        }
+    }
+}
+
+/** Reserve and release a local port, returning the now-unused port number. */
+function unusedLocalPort(): int
+{
+    $server = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+    if ($server === false) {
+        throw new RuntimeException("failed to reserve local port: $errstr", $errno);
+    }
+    $name = stream_socket_get_name($server, false);
+    fclose($server);
+    if (!is_string($name)) {
+        throw new RuntimeException('failed to read reserved local port');
+    }
+
+    $pos = strrpos($name, ':');
+    if ($pos === false) {
+        throw new RuntimeException("unexpected local socket name: $name");
+    }
+    return (int) substr($name, $pos + 1);
 }
 
 $tests = [];
@@ -255,9 +317,124 @@ $tests['job: JobRecord round-trips including nested request and result'] = stati
 
 $tests['client: trims trailing slashes from base url'] = static function (): void {
     $client = new Client('http://127.0.0.1:7300///');
-    $prop = new ReflectionProperty(Client::class, 'baseUrl');
-    $prop->setAccessible(true);
-    assert($prop->getValue($client) === 'http://127.0.0.1:7300', 'trailing slashes trimmed');
+    assert(clientBaseUrl($client) === 'http://127.0.0.1:7300', 'trailing slashes trimmed');
+};
+
+$tests['client: accepts secure and exact loopback base urls'] = static function (): void {
+    $cases = [
+        'https://host:7300/api/' => 'https://host:7300/api',
+        'https://daemon.example/root%7E' => 'https://daemon.example/root%7E',
+        'http://127.0.0.1:7300/' => 'http://127.0.0.1:7300',
+        'http://[::1]:7300/' => 'http://[::1]:7300',
+    ];
+
+    foreach ($cases as $baseUrl => $expected) {
+        assert(clientBaseUrl(new Client($baseUrl)) === $expected, "$baseUrl normalized");
+    }
+};
+
+$tests['client: rejects base urls that could leak api keys'] = static function (): void {
+    $rejected = [
+        ' http://127.0.0.1:7300',
+        'http://127.0.0.1:7300 ',
+        "https://api.example.com\t.evil.test:7300",
+        "https://api.example.com\n.evil.test:7300",
+        "http://127.0.0.1\t:7300",
+        "http://127.0.0.1\r:7300",
+        'http://host:7300',
+        'http://localhost:7300',
+        'http://LOCALHOST:7300',
+        'http://localhost.evil.example:7300',
+        'http://127.1:7300',
+        'http://127.000.000.001:7300',
+        'http://0177.0.0.1:7300',
+        'http://2130706433:7300',
+        'http://127.0.0.1.:7300',
+        'http://192.168.1.10:7300',
+        'http://169.254.169.254',
+        'http://[0:0:0:0:0:0:0:1]:7300',
+        'http://[::1]extra:7300',
+        'http://[::1].evil.test:7300',
+        'http://[::1%25lo]:7300',
+        'https://user:pass@host:7300',
+        'https://user@host:7300',
+        'https://@host:7300',
+        'https://host%zz',
+        'https://host%',
+        'https://host%41:7300',
+        'https://host name:7300',
+        'https://host:7300 ',
+        'https://host:7300?api_key=hidden',
+        'https://host:7300?',
+        'https://host:7300/#fragment',
+        'https://host:7300#',
+        'https://host:7300/?',
+        'https://host:7300/#',
+        'http://127.0.0.1:7300/?',
+        'https://host:badport',
+        'https://host:',
+        'https://:7300',
+        'https://[]:7300',
+        'https://host\\evil',
+        'https://host:7300/api/../other',
+        'https://host:7300/api/./other',
+        'https://host:7300/api/%2e%2e/other',
+        'https://host:7300/api/%2e/other',
+        'https://host:7300/api%2fother',
+        'https://host:7300/api%5Cother',
+        'https://host:7300/api/%',
+        'https://host:7300/api/%zz',
+        'https://host:7300/api\\other',
+        'file:///tmp/beatbox.sock',
+        '/v1',
+        '',
+    ];
+
+    foreach ($rejected as $baseUrl) {
+        assertThrows(
+            \InvalidArgumentException::class,
+            static fn () => new Client($baseUrl),
+            "baseUrl '$baseUrl'"
+        );
+    }
+};
+
+$tests['client: bypasses environment proxy for api-key-bearing requests'] = static function (): void {
+    $proxy = stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+    if ($proxy === false) {
+        throw new RuntimeException("failed to start proxy listener: $errstr", $errno);
+    }
+
+    try {
+        stream_set_blocking($proxy, false);
+        $proxyName = stream_socket_get_name($proxy, false);
+        assert(is_string($proxyName), 'proxy listener has a local address');
+        $targetPort = unusedLocalPort();
+
+        withEnv([
+            'http_proxy' => 'http://' . $proxyName,
+            'HTTP_PROXY' => 'http://' . $proxyName,
+            'all_proxy' => 'http://' . $proxyName,
+            'ALL_PROXY' => 'http://' . $proxyName,
+            'no_proxy' => null,
+            'NO_PROXY' => null,
+        ], static function () use ($proxy, $targetPort): void {
+            $client = new Client("http://127.0.0.1:$targetPort", 'secret-key', 0.2);
+            assertThrows(
+                \Beatbox\TransportError::class,
+                static fn () => $client->capabilities(),
+                'capabilities without daemon'
+            );
+
+            $read = [$proxy];
+            $write = null;
+            $except = null;
+            $ready = stream_select($read, $write, $except, 0, 200000);
+            assert($ready === 0, 'environment proxy must not receive the api-key-bearing request');
+        });
+    } finally {
+        fclose($proxy);
+    }
 };
 
 // ---- Runner ---------------------------------------------------------------

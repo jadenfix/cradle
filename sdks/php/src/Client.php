@@ -26,13 +26,13 @@ final class Client
     private float $timeout;
 
     /**
-     * @param string      $baseUrl e.g. "http://127.0.0.1:7300"; trailing slashes are trimmed
+     * @param string      $baseUrl e.g. "http://127.0.0.1:7300"; HTTPS, or HTTP only for exact loopback literals
      * @param string|null $apiKey  sent as the `x-beatbox-api-key` header on authenticated calls
      * @param float       $timeout total request timeout in seconds
      */
     public function __construct(string $baseUrl, ?string $apiKey = null, float $timeout = 65.0)
     {
-        $this->baseUrl = rtrim($baseUrl, '/');
+        $this->baseUrl = self::validateBaseUrl($baseUrl);
         $this->apiKey = $apiKey;
         $this->timeout = $timeout;
     }
@@ -212,6 +212,168 @@ final class Client
     }
 
     /**
+     * Validate daemon base URLs before API-key-bearing requests can be built.
+     *
+     * HTTPS is accepted for production. Plain HTTP is accepted only for the
+     * exact loopback literals used by local daemons, which avoids parser
+     * aliases like localhost, short IPv4 forms, DNS names, and IPv6 zone IDs.
+     */
+    private static function validateBaseUrl(string $baseUrl): string
+    {
+        if ($baseUrl === '') {
+            throw new \InvalidArgumentException('baseUrl is required');
+        }
+        if (preg_match('/[\x00-\x20\x7f]/', $baseUrl) === 1) {
+            throw new \InvalidArgumentException('baseUrl must not contain whitespace or control characters');
+        }
+        if (str_contains($baseUrl, '\\')) {
+            throw new \InvalidArgumentException('baseUrl must not contain backslashes');
+        }
+        if (str_contains($baseUrl, '?')) {
+            throw new \InvalidArgumentException('baseUrl must not contain a query string');
+        }
+        if (str_contains($baseUrl, '#')) {
+            throw new \InvalidArgumentException('baseUrl must not contain a fragment');
+        }
+
+        $parts = parse_url($baseUrl);
+        if (!is_array($parts)) {
+            throw new \InvalidArgumentException('invalid baseUrl');
+        }
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            throw new \InvalidArgumentException('baseUrl must use http or https');
+        }
+
+        $authority = self::rawAuthority($baseUrl);
+        if ($authority === '') {
+            throw new \InvalidArgumentException('baseUrl must include a host');
+        }
+        if (isset($parts['user']) || isset($parts['pass']) || str_contains($authority, '@')) {
+            throw new \InvalidArgumentException('baseUrl must not include credentials');
+        }
+
+        $rawHost = self::rawHostFromAuthority($authority);
+        if ($rawHost === '' || !isset($parts['host']) || (string) $parts['host'] === '') {
+            throw new \InvalidArgumentException('baseUrl must include a host');
+        }
+        if ($scheme === 'http' && $rawHost !== '127.0.0.1' && strtolower($rawHost) !== '[::1]') {
+            throw new \InvalidArgumentException('http baseUrl is allowed only for 127.0.0.1 or [::1]');
+        }
+
+        self::validateBasePath(self::rawPath($baseUrl));
+
+        return rtrim($baseUrl, '/');
+    }
+
+    private static function rawAuthority(string $baseUrl): string
+    {
+        $schemeEnd = strpos($baseUrl, '://');
+        if ($schemeEnd === false) {
+            throw new \InvalidArgumentException('baseUrl must be an absolute URL');
+        }
+
+        $authorityStart = $schemeEnd + 3;
+        $pathStart = strpos($baseUrl, '/', $authorityStart);
+        return $pathStart === false
+            ? substr($baseUrl, $authorityStart)
+            : substr($baseUrl, $authorityStart, $pathStart - $authorityStart);
+    }
+
+    private static function rawHostFromAuthority(string $authority): string
+    {
+        if ($authority === '') {
+            return '';
+        }
+        if (str_contains($authority, '@')) {
+            throw new \InvalidArgumentException('baseUrl must not include credentials');
+        }
+        if (str_contains($authority, '%')) {
+            throw new \InvalidArgumentException('invalid baseUrl');
+        }
+
+        if ($authority[0] === '[') {
+            $bracketEnd = strpos($authority, ']');
+            if ($bracketEnd === false) {
+                throw new \InvalidArgumentException('invalid baseUrl');
+            }
+            $rawHost = substr($authority, 0, $bracketEnd + 1);
+            $port = substr($authority, $bracketEnd + 1);
+            if ($port !== '') {
+                if ($port[0] !== ':' || substr($port, 1) === '' || preg_match('/\A:[0-9]+\z/', $port) !== 1) {
+                    throw new \InvalidArgumentException('invalid baseUrl');
+                }
+            }
+
+            $inside = substr($rawHost, 1, -1);
+            if ($inside === '' || str_contains($inside, '%') || filter_var($inside, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) === false) {
+                throw new \InvalidArgumentException('invalid baseUrl');
+            }
+            return strtolower($rawHost);
+        }
+
+        if (str_contains($authority, '[') || str_contains($authority, ']')) {
+            throw new \InvalidArgumentException('invalid baseUrl');
+        }
+
+        $colon = strpos($authority, ':');
+        if ($colon === false) {
+            return strtolower($authority);
+        }
+
+        if (strpos($authority, ':', $colon + 1) !== false) {
+            throw new \InvalidArgumentException('invalid baseUrl');
+        }
+        $port = substr($authority, $colon + 1);
+        if ($port === '' || preg_match('/\A[0-9]+\z/', $port) !== 1) {
+            throw new \InvalidArgumentException('invalid baseUrl');
+        }
+
+        return strtolower(substr($authority, 0, $colon));
+    }
+
+    private static function rawPath(string $baseUrl): string
+    {
+        $schemeEnd = strpos($baseUrl, '://');
+        if ($schemeEnd === false) {
+            return '';
+        }
+
+        $pathStart = strpos($baseUrl, '/', $schemeEnd + 3);
+        return $pathStart === false ? '' : substr($baseUrl, $pathStart);
+    }
+
+    private static function validateBasePath(string $rawPath): void
+    {
+        if ($rawPath === '') {
+            return;
+        }
+
+        foreach (explode('/', $rawPath) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                if ($segment === '.') {
+                    throw new \InvalidArgumentException('baseUrl path must not contain dot segments');
+                }
+                continue;
+            }
+            if ($segment === '..') {
+                throw new \InvalidArgumentException('baseUrl path must not contain dot segments');
+            }
+            if (preg_match('/%(?![0-9A-Fa-f]{2})/', $segment) === 1) {
+                throw new \InvalidArgumentException('baseUrl path contains invalid percent encoding');
+            }
+
+            $decoded = rawurldecode($segment);
+            if ($decoded === '.' || $decoded === '..') {
+                throw new \InvalidArgumentException('baseUrl path must not contain encoded dot segments');
+            }
+            if (str_contains($decoded, '/') || str_contains($decoded, '\\')) {
+                throw new \InvalidArgumentException('baseUrl path segments must not encode separators');
+            }
+        }
+    }
+
+    /**
      * @param array<string,mixed>|null $body
      * @return array<string,mixed>
      */
@@ -262,6 +424,7 @@ final class Client
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROXY => '',
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_TIMEOUT_MS => $timeoutMs,
             CURLOPT_CONNECTTIMEOUT_MS => $timeoutMs,

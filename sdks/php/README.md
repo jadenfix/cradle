@@ -74,15 +74,25 @@ $req = new ExecuteRequest(
 
 ```php
 new Beatbox\Client(
-    string $baseUrl,          // e.g. "http://127.0.0.1:7300" (trailing slashes trimmed)
+    string $baseUrl,          // e.g. "http://127.0.0.1:7300" (HTTPS, or HTTP loopback)
     ?string $apiKey = null,   // sent as x-beatbox-api-key on authenticated calls
     float $timeout = 65.0,    // seconds
 );
 ```
 
 When `apiKey` is set it is sent on every request **except** `health()` and
-`openapi()`, which are unauthenticated. Redirects are never followed, so the
-key can't leak cross-origin.
+`openapi()`, which are unauthenticated.
+
+`baseUrl` is validated when the client is constructed. Production clients
+should use `https://`. Plain `http://` is accepted only for the exact local
+development loopback literals `127.0.0.1` and `[::1]`. URLs with credentials,
+query strings, fragments, relative paths, non-HTTP schemes, raw whitespace,
+backslashes, malformed bracketed IPv6 hosts, path dot segments, encoded path
+separators, or malformed percent escapes are rejected before requests are
+built. Trailing slashes are trimmed.
+
+Redirects and environment proxies are disabled, so the key can't leak
+cross-origin or through proxy configuration inherited from the process.
 
 ## Methods
 
