@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestJobURLEncoding(t *testing.T) {
 	c := New("http://127.0.0.1:7300/")
 
@@ -45,6 +51,135 @@ func TestJobURLEncoding(t *testing.T) {
 				t.Fatalf("jobURL(%q) = %q, want %q", tt.id, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJobURLEscapesIDWithEscapedBasePrefix(t *testing.T) {
+	c := New("https://daemon.example/proxy/a%20b")
+	got, err := c.jobURL("../execute")
+	if err != nil {
+		t.Fatalf("jobURL: %v", err)
+	}
+	want := "https://daemon.example/proxy/a%20b/v1/jobs/..%2Fexecute"
+	if got != want {
+		t.Fatalf("jobURL = %q, want %q", got, want)
+	}
+}
+
+func TestClientBaseURLValidationAllowsSecureAndLoopbackLiteral(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "https origin", raw: "https://daemon.example", want: "https://daemon.example"},
+		{name: "https prefix", raw: "https://daemon.example/proxy/beatbox/", want: "https://daemon.example/proxy/beatbox"},
+		{name: "ipv4 loopback http", raw: "http://127.0.0.1:7300", want: "http://127.0.0.1:7300"},
+		{name: "ipv6 loopback http", raw: "http://[::1]:7300", want: "http://[::1]:7300"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := New(tt.raw)
+			if c.baseURLErr != nil {
+				t.Fatalf("New(%q) rejected base URL: %v", tt.raw, c.baseURLErr)
+			}
+			if c.baseURL != tt.want {
+				t.Fatalf("baseURL = %q, want %q", c.baseURL, tt.want)
+			}
+		})
+	}
+}
+
+func TestClientBaseURLValidationRejectsUnsafeOrigins(t *testing.T) {
+	for _, raw := range []string{
+		" http://127.0.0.1:7300",
+		"http://127.0.0.1:7300 ",
+		"http://localhost:7300",
+		"http://127.1:7300",
+		"http://10.0.0.1:7300",
+		"http://192.168.1.10:7300",
+		"http://example.com",
+		"ftp://127.0.0.1:7300",
+		"https://user@example.com",
+		"https://user:pass@example.com",
+		"https://example.com?api=v1",
+		"https://example.com#fragment",
+		"/relative",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			c := New(raw)
+			if c.baseURLErr == nil {
+				t.Fatalf("New(%q) accepted unsafe base URL", raw)
+			}
+		})
+	}
+}
+
+func TestClientBaseURLValidationRejectsRetargetingPathPrefixes(t *testing.T) {
+	for _, raw := range []string{
+		"https://example.com/base/../admin",
+		"https://example.com/base/%2e%2e/admin",
+		"https://example.com/base/%2E/admin",
+		"https://example.com/base/%2Fadmin",
+		"https://example.com/base/%5Cadmin",
+		"https://example.com/base\\admin",
+		"https://example.com/base/%",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			c := New(raw)
+			if c.baseURLErr == nil {
+				t.Fatalf("New(%q) accepted retargeting path prefix", raw)
+			}
+		})
+	}
+}
+
+func TestInvalidBaseURLPreventsRequestAndKeyLeak(t *testing.T) {
+	var calls int
+	c := New("http://example.com", WithAPIKey("secret-key"), WithHTTPClient(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			return nil, errors.New("transport should not run")
+		}),
+	}))
+
+	_, err := c.Capabilities(context.Background())
+	if err == nil {
+		t.Fatal("Capabilities succeeded with invalid base URL")
+	}
+	if calls != 0 {
+		t.Fatalf("transport calls = %d, want 0", calls)
+	}
+	if strings.Contains(err.Error(), "secret-key") {
+		t.Fatalf("error leaked api key: %v", err)
+	}
+}
+
+func TestClientPreservesValidatedPathPrefix(t *testing.T) {
+	var gotURL, gotKey string
+	c := New("https://daemon.example/proxy/beatbox/", WithAPIKey("secret-key"), WithHTTPClient(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotURL = req.URL.String()
+			gotKey = req.Header.Get(apiKeyHeader)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"lanes":[]}`)),
+				Request:    req,
+			}, nil
+		}),
+	}))
+
+	_, err := c.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if gotURL != "https://daemon.example/proxy/beatbox/v1/capabilities" {
+		t.Fatalf("url = %q", gotURL)
+	}
+	if gotKey != "secret-key" {
+		t.Fatalf("api key = %q", gotKey)
 	}
 }
 
@@ -806,5 +941,38 @@ func TestNoRedirectFollow(t *testing.T) {
 	}
 	if apiErr.Status != http.StatusFound {
 		t.Errorf("status = %d, want 302", apiErr.Status)
+	}
+}
+
+func TestCustomHTTPClientRedirectPolicyIsOverridden(t *testing.T) {
+	var targetSawKey bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetSawKey = r.Header.Get(apiKeyHeader) != ""
+		io.WriteString(w, `{"ok":true}`)
+	}))
+	defer target.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/collect", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	allowRedirects := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return nil
+		},
+		Timeout: 2 * time.Second,
+	}
+	c := New(origin.URL, WithAPIKey("k"), WithHTTPClient(allowRedirects))
+	_, err := c.Capabilities(context.Background())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError from unfollowed redirect, got %v", err)
+	}
+	if apiErr.Status != http.StatusFound {
+		t.Errorf("status = %d, want 302", apiErr.Status)
+	}
+	if targetSawKey {
+		t.Fatal("redirect target received api key")
 	}
 }

@@ -20,6 +20,7 @@ const apiKeyHeader = "x-beatbox-api-key"
 // Client is a beatbox daemon HTTP client. It is safe for concurrent use.
 type Client struct {
 	baseURL    string
+	baseURLErr error
 	apiKey     string
 	httpClient *http.Client
 }
@@ -50,14 +51,14 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithHTTPClient supplies a custom *http.Client. A no-follow redirect policy is
-// installed on it if it does not already define one, so the API key cannot leak
-// across a redirect.
+// installed on it, so the API key cannot leak across a redirect.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(o *options) { o.httpClient = hc }
 }
 
 // New constructs a Client for the daemon at baseURL (e.g.
-// "http://127.0.0.1:7300"). Trailing slashes are trimmed.
+// "http://127.0.0.1:7300"). Trailing slashes are trimmed. Invalid base URLs
+// are rejected by every request method before an HTTP request is built.
 func New(baseURL string, opts ...Option) *Client {
 	o := options{timeout: DefaultTimeout}
 	for _, opt := range opts {
@@ -72,17 +73,70 @@ func New(baseURL string, opts ...Option) *Client {
 	}
 	// Never follow redirects: returning ErrUseLastResponse hands the redirect
 	// response back to us as-is, so the API key is never re-sent to a new host.
-	if hc.CheckRedirect == nil {
-		hc.CheckRedirect = func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 
+	normalizedBaseURL, baseURLErr := normalizeBaseURL(baseURL)
 	return &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    normalizedBaseURL,
+		baseURLErr: baseURLErr,
 		apiKey:     o.apiKey,
 		httpClient: hc,
 	}
+}
+
+func normalizeBaseURL(raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("beatbox: base url is required")
+	}
+	if strings.TrimSpace(raw) != raw {
+		return "", fmt.Errorf("beatbox: invalid base url: must not contain leading or trailing whitespace")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return "", fmt.Errorf("beatbox: invalid base url: must be an absolute URL")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", fmt.Errorf("beatbox: invalid base url: must use http or https")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("beatbox: invalid base url: must not include credentials")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("beatbox: invalid base url: must not include query or fragment")
+	}
+	if strings.Contains(raw, "\\") {
+		return "", fmt.Errorf("beatbox: invalid base url: path must not include backslashes")
+	}
+	if u.Scheme == "http" && u.Hostname() != "127.0.0.1" && u.Hostname() != "::1" {
+		return "", fmt.Errorf("beatbox: invalid base url: plaintext http is allowed only with loopback IP literals")
+	}
+	if err := validateBaseURLPath(u); err != nil {
+		return "", err
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = strings.TrimRight(u.RawPath, "/")
+	return u.String(), nil
+}
+
+func validateBaseURLPath(u *url.URL) error {
+	for _, segment := range strings.Split(u.EscapedPath(), "/") {
+		if segment == "" {
+			continue
+		}
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			return fmt.Errorf("beatbox: invalid base url: path contains invalid percent encoding")
+		}
+		if decoded == "." || decoded == ".." {
+			return fmt.Errorf("beatbox: invalid base url: path must not contain dot segments")
+		}
+		if strings.Contains(decoded, "/") || strings.Contains(decoded, "\\") {
+			return fmt.Errorf("beatbox: invalid base url: path segments must not encode separators")
+		}
+	}
+	return nil
 }
 
 // Health returns the daemon health payload (GET /v1/health, unauthenticated).
@@ -227,22 +281,30 @@ func (c *Client) jobURL(id string) (string, error) {
 	if id == "" || id == "." || id == ".." {
 		return "", fmt.Errorf("beatbox: invalid job id %q", id)
 	}
+	if c.baseURLErr != nil {
+		return "", c.baseURLErr
+	}
 	u, err := url.Parse(c.baseURL)
 	if err != nil {
 		return "", fmt.Errorf("beatbox: invalid base url: %w", err)
 	}
-	base := strings.TrimRight(u.Path, "/")
+	basePath := strings.TrimRight(u.Path, "/")
+	baseRawPath := strings.TrimRight(u.EscapedPath(), "/")
 	// Set both the decoded Path and the escaped RawPath so String() emits the
 	// escaped form: id becomes exactly one segment (any '/' or '?' in it is
 	// percent-encoded), which prevents path traversal or query injection.
-	u.Path = base + "/v1/jobs/" + id
-	u.RawPath = base + "/v1/jobs/" + url.PathEscape(id)
+	u.Path = basePath + "/v1/jobs/" + id
+	u.RawPath = baseRawPath + "/v1/jobs/" + url.PathEscape(id)
 	return u.String(), nil
 }
 
 // do performs a request, marshaling body as JSON (when non-nil) and decoding a
 // successful response into out (a *json.RawMessage receives the raw bytes).
 func (c *Client) do(ctx context.Context, method, rawURL string, auth bool, body, out any) error {
+	if c.baseURLErr != nil {
+		return c.baseURLErr
+	}
+
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)

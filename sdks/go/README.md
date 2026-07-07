@@ -67,6 +67,11 @@ BEATBOX_API_KEY=... go run ./examples/addone
 Construct a `Client` with `New(baseURL, opts...)`. Trailing slashes in the base
 URL are trimmed.
 
+`baseURL` must be an absolute `https://` URL, or `http://127.0.0.1...` /
+`http://[::1]...` for local development. Credentials, query strings,
+fragments, and path prefixes with dot segments or encoded separators are
+rejected before any request is built.
+
 | Option | Purpose |
 | --- | --- |
 | `WithAPIKey(key)` | Sent as the `x-beatbox-api-key` header on every request except `Health` and `OpenAPI`. |
