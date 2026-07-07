@@ -1,5 +1,6 @@
 pub use beatbox_core::*;
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use reqwest::{StatusCode, Url};
@@ -15,12 +16,18 @@ pub struct Client {
 }
 
 impl Client {
-    /// Construct a client, returning an error if the underlying HTTP client
-    /// cannot be built. Prefer this over [`new`](Self::new) in library code that
-    /// must not panic.
+    /// Construct a client, returning an error if the base URL is not safe for
+    /// secret-bearing requests or if the underlying HTTP client cannot be
+    /// built. Prefer this over [`new`](Self::new) in library code that must not
+    /// panic.
+    ///
+    /// HTTPS base URLs are accepted. Plain HTTP is accepted only for
+    /// `localhost` or loopback addresses so local development does not train
+    /// production callers to send `x-beatbox-api-key` over public plaintext
+    /// origins. Credentials, query strings, and fragments are rejected.
     pub fn try_new(base_url: impl Into<String>) -> Result<Self, ClientError> {
         Ok(Self {
-            base_url: trim_base_url(base_url.into()),
+            base_url: validate_base_url(base_url.into())?,
             api_key: None,
             http: http_client_builder()
                 .timeout(DEFAULT_HTTP_TIMEOUT)
@@ -30,13 +37,13 @@ impl Client {
 
     /// Construct a client with the default configuration.
     ///
-    /// Panics only if the HTTP client cannot be built, which does not happen
-    /// with the pinned rustls/bundled-roots configuration. Use
-    /// [`try_new`](Self::try_new) for a non-panicking constructor.
+    /// Panics if the base URL is invalid, rejected by the client URL policy, or
+    /// if the HTTP client cannot be built. Use [`try_new`](Self::try_new) for a
+    /// non-panicking constructor.
     pub fn new(base_url: impl Into<String>) -> Self {
         match Self::try_new(base_url) {
             Ok(client) => client,
-            Err(error) => panic!("default beatbox HTTP client must construct: {error}"),
+            Err(error) => panic!("beatbox client must construct: {error}"),
         }
     }
 
@@ -308,6 +315,68 @@ fn trim_base_url(mut value: String) -> String {
     value
 }
 
+fn validate_base_url(value: String) -> Result<String, ClientError> {
+    let value = trim_base_url(value);
+    let url = Url::parse(&value).map_err(|error| ClientError::InvalidUrl(error.to_string()))?;
+    if url.cannot_be_a_base() {
+        return Err(ClientError::InvalidUrl(
+            "base URL must be an absolute HTTP(S) origin".to_string(),
+        ));
+    }
+    if url.username() != "" || url.password().is_some() || base_url_authority_contains_at(&value) {
+        return Err(ClientError::InvalidUrl(
+            "base URL must not contain credentials".to_string(),
+        ));
+    }
+    if url.query().is_some() {
+        return Err(ClientError::InvalidUrl(
+            "base URL must not contain a query".to_string(),
+        ));
+    }
+    if url.fragment().is_some() {
+        return Err(ClientError::InvalidUrl(
+            "base URL must not contain a fragment".to_string(),
+        ));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| ClientError::InvalidUrl("base URL must include a host".to_string()))?;
+    match url.scheme() {
+        "https" => {}
+        "http" if is_loopback_base_url_host(host) => {}
+        "http" => {
+            return Err(ClientError::InvalidUrl(
+                "http base URL is allowed only for localhost or loopback addresses".to_string(),
+            ));
+        }
+        _ => {
+            return Err(ClientError::InvalidUrl(
+                "base URL must use http or https".to_string(),
+            ));
+        }
+    }
+    Ok(trim_base_url(url.to_string()))
+}
+
+fn is_loopback_base_url_host(host: &str) -> bool {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn base_url_authority_contains_at(value: &str) -> bool {
+    let Some((_, rest)) = value.split_once("://") else {
+        return false;
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].contains('@')
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -322,6 +391,79 @@ mod tests {
     fn try_new_builds_without_panicking() -> Result<(), Box<dyn std::error::Error>> {
         let client = Client::try_new("http://localhost:7300")?;
         assert_eq!(client.base_url, "http://localhost:7300");
+        Ok(())
+    }
+
+    #[test]
+    fn try_new_rejects_secret_unsafe_base_urls() -> Result<(), Box<dyn std::error::Error>> {
+        let https = Client::try_new("https://beatbox.example/api/")?;
+        assert_eq!(https.base_url, "https://beatbox.example/api");
+
+        let ipv4_loopback = Client::try_new("http://127.0.0.1:7300/")?;
+        assert_eq!(ipv4_loopback.base_url, "http://127.0.0.1:7300");
+
+        let ipv6_loopback = Client::try_new("http://[::1]:7300/")?;
+        assert_eq!(ipv6_loopback.base_url, "http://[::1]:7300");
+
+        let uppercase_localhost = Client::try_new("http://LOCALHOST:7300/")?;
+        assert_eq!(uppercase_localhost.base_url, "http://localhost:7300");
+
+        let shorthand_loopback = Client::try_new("http://127.1:7300/")?;
+        assert_eq!(shorthand_loopback.base_url, "http://127.0.0.1:7300");
+
+        for base_url in [
+            "http://beatbox.example:7300",
+            "https://user:pass@beatbox.example",
+            "https://user@beatbox.example",
+            "https://@beatbox.example",
+            "https://beatbox.example?api_key=hidden",
+            "https://beatbox.example/#fragment",
+            "file:///tmp/beatbox.sock",
+            "/v1",
+        ] {
+            assert!(
+                matches!(Client::try_new(base_url), Err(ClientError::InvalidUrl(_))),
+                "expected {base_url:?} to be rejected"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn base_url_path_prefix_is_preserved_on_secret_bearing_requests()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+            let mut buffer = [0_u8; 4096];
+            let bytes = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..bytes]).to_string();
+            request_tx
+                .send(request)
+                .map_err(|_| std::io::Error::other("request receiver dropped"))?;
+            let body = "{}";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+
+        let client = Client::new(format!("http://{addr}/api/")).with_api_key("secret");
+        let _capabilities = client.capabilities().await?;
+
+        match server.join() {
+            Ok(result) => result?,
+            Err(_) => return Err("capabilities prefix test server panicked".into()),
+        }
+        let request = request_rx.recv_timeout(Duration::from_secs(1))?;
+        assert!(request.starts_with("GET /api/v1/capabilities "));
+        assert!(request.contains("x-beatbox-api-key: secret"));
         Ok(())
     }
 
