@@ -107,9 +107,14 @@ Launch planning requests are also raw JSON and REST-only:
 admission intent, and manifest into a server-issued launch envelope and
 completion report template. The envelope includes current server lease
 timestamps and a replay-protection requirement. A capability-bound response also
-sets `adapter_contract_fields_complete` and `replay_protection_bound`; the
-daemon records only field-complete adapter manifests with compatible,
-control-complete admission mode/profile requests in its bounded replay ledger.
+sets global `adapter_contract_fields_complete`, request-scoped
+`request_adapter_compatibility`, and `replay_protection_bound`; the daemon
+records only manifests that satisfy the requested admission level, effective
+controls, guard fields, completion proofs, and admission mode/profile
+requirements in its bounded replay ledger. A manifest can be globally
+incomplete for all-level conformance while still request-compatible for one
+Tempo sandbox level. The emitted launch request's `requested_controls` are the
+effective controls for that admission, not only the caller-supplied controls.
 `POST /v1/browser/adapter/launch/claim` accepts the full
 `launch_request`, rejects omitted server-issued fields and unknown nested
 fields, and can bind exactly one unmodified, unexpired claim before a future

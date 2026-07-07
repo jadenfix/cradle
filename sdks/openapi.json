@@ -1553,6 +1553,7 @@
           "trusted_for_sensitive_work",
           "endpoint_network_policy_bound",
           "adapter_contract_fields_complete",
+          "request_adapter_compatibility",
           "same_user_capability_bound",
           "replay_protection_bound",
           "admission",
@@ -1603,6 +1604,10 @@
           "replay_protection_bound": {
             "type": "boolean",
             "description": "True when this daemon recorded the emitted launch request id in its\nbounded replay ledger. This is not launch authorization."
+          },
+          "request_adapter_compatibility": {
+            "$ref": "#/components/schemas/BrowserAdapterRequestCompatibility",
+            "description": "Request-scoped adapter compatibility for this admission. This can be\ntrue even when global adapter conformance is false because the manifest\ndoes not claim every planned browser level."
           },
           "request_id": {
             "type": "string"
@@ -1721,7 +1726,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BrowserSandboxControl"
-            }
+            },
+            "description": "Effective controls the future adapter must satisfy for this admission:\nrequested profile controls, caller-required controls, and\nsensitive_activity_mode controls."
           },
           "requested_level": {
             "$ref": "#/components/schemas/BrowserSandboxLevel"
@@ -1993,6 +1999,60 @@
           },
           "trusted_for_sensitive_work": {
             "type": "boolean"
+          }
+        }
+      },
+      "BrowserAdapterRequestCompatibility": {
+        "type": "object",
+        "required": [
+          "compatible",
+          "missing_levels",
+          "required_controls",
+          "missing_controls",
+          "missing_guard_fields",
+          "missing_completion_proofs",
+          "reasons"
+        ],
+        "properties": {
+          "compatible": {
+            "type": "boolean",
+            "description": "True when the submitted adapter manifest satisfies the requested\nadmission level, required controls, guard fields, and completion proofs.\nThis is request-scoped compatibility, not global conformance or\nlaunchability."
+          },
+          "missing_completion_proofs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "missing_guard_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxLevel"
+            }
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
           }
         }
       },

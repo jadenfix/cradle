@@ -152,11 +152,15 @@ consumes a matching one-time capability, and emits a server-issued
 `BrowserAdapterLaunchRequest` plus completion report template that Tempo can
 carry into a future adapter launcher. Live launch-plan envelopes use current
 server `issued_at`/`expires_at` values, require request-id replay protection,
-and record capability-bound envelopes in a bounded in-memory replay ledger only
-when the manifest satisfies the published adapter field contract.
-The launch request carries `sensitive_activity_mode` and the derived
-`guard_plan.suppression` section, so Tempo-side adapters must preserve those
-fields for claim-time canonical comparison.
+and record capability-bound envelopes in a bounded in-memory replay ledger when
+the manifest satisfies the requested admission level, effective controls, guard
+fields, completion proofs, and admission mode/profile requirements. Global
+all-level adapter conformance remains visible separately as
+`adapter_contract_fields_complete`; a Tempo adapter may be request-compatible
+for one sandbox level without claiming every planned level. The launch request
+carries `sensitive_activity_mode`, effective `requested_controls`, and the
+derived `guard_plan.suppression` section, so Tempo-side adapters must preserve
+those fields for claim-time canonical comparison.
 `POST /v1/browser/adapter/launch/claim` is the REST-only Tempo-side claim
 preflight for that ledger: callers submit the full launch request, Beatbox
 requires every server-issued field, rejects unknown nested fields, compares it

@@ -600,6 +600,9 @@ pub struct BrowserAdapterLaunchRequest {
     pub target_origins: Vec<String>,
     pub credential_mode: BrowserCredentialMode,
     pub artifact_mode: BrowserArtifactMode,
+    /// Effective controls the future adapter must satisfy for this admission:
+    /// requested profile controls, caller-required controls, and
+    /// sensitive_activity_mode controls.
     pub requested_controls: Vec<BrowserSandboxControl>,
     pub guard_plan: BrowserAdmissionGuardPlan,
     pub required_completion_proofs: Vec<String>,
@@ -972,6 +975,12 @@ pub struct BrowserAdapterLaunchPlanResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub adapter_contract_fields_complete: bool,
+    /// Request-scoped adapter compatibility for this admission. This can be
+    /// true even when global adapter conformance is false because the manifest
+    /// does not claim every planned browser level.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub request_adapter_compatibility: BrowserAdapterRequestCompatibility,
     pub same_user_capability_bound: bool,
     /// True when this daemon recorded the emitted launch request id in its
     /// bounded replay ledger. This is not launch authorization.
@@ -1036,6 +1045,35 @@ pub struct BrowserAdapterManifestResponse {
     pub required_next_steps: Vec<String>,
     pub adapter_contract: BrowserAdapterContract,
     pub conformance_profile: BrowserAdapterConformanceProfile,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterRequestCompatibility {
+    /// True when the submitted adapter manifest satisfies the requested
+    /// admission level, required controls, guard fields, and completion proofs.
+    /// This is request-scoped compatibility, not global conformance or
+    /// launchability.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub compatible: bool,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub missing_levels: Vec<BrowserSandboxLevel>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub required_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub missing_controls: Vec<BrowserSandboxControl>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub missing_guard_fields: Vec<String>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub missing_completion_proofs: Vec<String>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

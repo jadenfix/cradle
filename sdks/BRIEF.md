@@ -100,8 +100,8 @@ browser admission `guard_plan` with `suppression` and
 is acceptable until each language adds typed convenience models; preserve
 `issued_at`, `expires_at`, `max_session_seconds`, `sensitive_activity_mode`, and
 `replay_protection_required` on every launch request envelope, plus
-`adapter_contract_fields_complete` and `replay_protection_bound` on launch-plan
-responses),
+`adapter_contract_fields_complete`, `request_adapter_compatibility`, and
+`replay_protection_bound` on launch-plan responses),
 including admission `intent_warnings` that distinguish syntax-validated
 hostname target origins from literal local/private IP rejection until the
 network `guard_plan` is enforced after DNS, proxying, redirects, retries, and

@@ -102,6 +102,20 @@ fn complete_adapter_completion_report() -> serde_json::Value {
     })
 }
 
+fn os_isolated_adapter_manifest() -> serde_json::Value {
+    let mut manifest = complete_adapter_manifest();
+    manifest["supported_levels"] = json!(["os_isolated"]);
+    manifest["supported_controls"] = json!([
+        "fresh_profile",
+        "no_ambient_credentials",
+        "egress_policy",
+        "local_network_block",
+        "os_process_isolation",
+        "teardown_proof"
+    ]);
+    manifest
+}
+
 fn complete_adapter_registration() -> serde_json::Value {
     json!({
         "actor": "agent",
@@ -2165,6 +2179,24 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert!(!plan.trusted_for_sensitive_work);
     assert!(!plan.endpoint_network_policy_bound);
     assert!(plan.adapter_contract_fields_complete);
+    assert!(plan.request_adapter_compatibility.compatible);
+    assert!(plan.request_adapter_compatibility.missing_levels.is_empty());
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_controls
+            .is_empty()
+    );
+    assert_eq!(
+        plan.request_adapter_compatibility.required_controls,
+        vec![
+            BrowserSandboxControl::FreshProfile,
+            BrowserSandboxControl::NoAmbientCredentials,
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::LocalNetworkBlock,
+            BrowserSandboxControl::OsProcessIsolation,
+            BrowserSandboxControl::TeardownProof,
+        ]
+    );
     assert!(plan.replay_protection_bound);
     assert_eq!(plan.adapter_id, "tempo-os-jail-v1");
     assert_eq!(plan.actor, BrowserSessionActor::Agent);
@@ -2215,6 +2247,10 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert_eq!(
         plan.launch_request.sensitive_activity_mode,
         BrowserSensitiveActivityMode::NetworkSuppressed
+    );
+    assert_eq!(
+        plan.launch_request.requested_controls,
+        plan.request_adapter_compatibility.required_controls
     );
     assert!(
         plan.launch_request
@@ -2506,6 +2542,188 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
 }
 
 #[tokio::test]
+async fn browser_adapter_launch_plan_binds_request_scoped_adapter_manifest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let mut launch_plan = complete_adapter_launch_plan(&issued.same_user_capability);
+    launch_plan["manifest"] = os_isolated_adapter_manifest();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(!plan.adapter_contract_fields_complete);
+    assert!(plan.request_adapter_compatibility.compatible);
+    assert!(plan.request_adapter_compatibility.missing_levels.is_empty());
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_controls
+            .is_empty()
+    );
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_guard_fields
+            .is_empty()
+    );
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_completion_proofs
+            .is_empty()
+    );
+    assert!(
+        plan.manifest_validation
+            .missing_levels
+            .contains(&BrowserSandboxLevel::RemoteIsolated)
+    );
+    assert!(
+        plan.manifest_validation
+            .missing_controls
+            .contains(&BrowserSandboxControl::RemoteWorkerIsolation)
+    );
+    assert!(plan.replay_protection_bound);
+    assert!(!plan.launchable);
+    assert_eq!(
+        plan.launch_request.requested_controls,
+        plan.request_adapter_compatibility.required_controls
+    );
+    assert!(
+        plan.reasons
+            .iter()
+            .any(|reason| reason.contains("compatible with this admission request"))
+    );
+
+    let claim_request = json!({ "launch_request": plan.launch_request });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(claim_request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let claim: BrowserAdapterLaunchClaimResponse = serde_json::from_slice(&body)?;
+    assert_eq!(claim.decision, BrowserAdapterLaunchClaimDecision::Claimed);
+    assert!(claim.server_issued_launch_request);
+    assert!(claim.launch_request_claim_bound);
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_adapter_launch_plan_rejects_manifest_for_different_requested_level()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+    let mut launch_plan = complete_adapter_launch_plan(&issued.same_user_capability);
+    launch_plan["admission"]["requested_level"] = json!("remote_isolated");
+    launch_plan["manifest"] = os_isolated_adapter_manifest();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(!plan.request_adapter_compatibility.compatible);
+    assert_eq!(
+        plan.request_adapter_compatibility.missing_levels,
+        vec![BrowserSandboxLevel::RemoteIsolated]
+    );
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_controls
+            .contains(&BrowserSandboxControl::RemoteWorkerIsolation)
+    );
+    assert!(!plan.replay_protection_bound);
+    assert!(!plan.launchable);
+
+    let claim_request = json!({ "launch_request": plan.launch_request });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/claim")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(claim_request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let claim: BrowserAdapterLaunchClaimResponse = serde_json::from_slice(&body)?;
+    assert_eq!(claim.decision, BrowserAdapterLaunchClaimDecision::Rejected);
+    assert!(!claim.server_issued_launch_request);
+    assert!(!claim.launch_request_claim_bound);
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_launch_plan_does_not_bind_incompatible_sensitive_mode()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -2745,6 +2963,13 @@ async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_rep
     let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
     assert!(plan.same_user_capability_bound);
     assert!(!plan.adapter_contract_fields_complete);
+    assert!(!plan.request_adapter_compatibility.compatible);
+    assert!(
+        plan.request_adapter_compatibility
+            .missing_guard_fields
+            .iter()
+            .any(|field| field == "guard_plan.network.allowed_origins")
+    );
     assert!(!plan.replay_protection_bound);
     assert!(!plan.launchable);
     assert!(
@@ -2756,7 +2981,7 @@ async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_rep
     assert!(
         plan.reasons
             .iter()
-            .any(|reason| reason.contains("adapter field contract was incomplete"))
+            .any(|reason| reason.contains("request-scoped adapter contract was incomplete"))
     );
 
     let claim_request = json!({ "launch_request": plan.launch_request });
@@ -3788,11 +4013,29 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                         .any(|field| field == "adapter_contract_fields_complete")
                     && required
                         .iter()
+                        .any(|field| field == "request_adapter_compatibility")
+                    && required
+                        .iter()
                         .any(|field| field == "completion_validation_endpoint")
                     && required.iter().any(|field| field == "admission")
                     && required.iter().any(|field| field == "manifest_validation")
             ),
         "adapter launch plan response should require the fail-closed launch envelope"
+    );
+    assert!(
+        schemas["BrowserAdapterRequestCompatibility"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "compatible")
+                    && required.iter().any(|field| field == "required_controls")
+                    && required.iter().any(|field| field == "missing_levels")
+                    && required.iter().any(|field| field == "missing_controls")
+                    && required.iter().any(|field| field == "missing_guard_fields")
+                    && required
+                        .iter()
+                        .any(|field| field == "missing_completion_proofs")
+            ),
+        "request-scoped adapter compatibility should expose complete gap metadata"
     );
     assert!(
         schemas["BrowserProfilesResponse"]["required"]
