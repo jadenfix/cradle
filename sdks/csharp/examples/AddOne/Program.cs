@@ -5,16 +5,16 @@ using Beatbox;
 // Runs a wasm_wat "add one" program against a local beatbox daemon and asserts
 // the returned value is 42. Requires a running daemon:
 //
-//   BEATBOX_BASE_URL   (default http://127.0.0.1:7300)
-//   BEATBOX_API_KEY    (optional)
+//   CRADLE_BASE_URL   (default http://127.0.0.1:7300)
+//   CRADLE_TOKEN      (optional)
 
 const string Wat =
     "(module (func (export \"run\") (param i64) (result i64) local.get 0 i64.const 1 i64.add))";
 
-var baseUrl = Environment.GetEnvironmentVariable("BEATBOX_BASE_URL") ?? "http://127.0.0.1:7300";
-var apiKey = Environment.GetEnvironmentVariable("BEATBOX_API_KEY");
+var baseUrl = Environment.GetEnvironmentVariable("CRADLE_BASE_URL") ?? "http://127.0.0.1:7300";
+var token = Environment.GetEnvironmentVariable("CRADLE_TOKEN");
 
-using var client = new BeatboxClient(baseUrl, apiKey);
+using var client = new BeatboxClient(baseUrl, token: token);
 
 try
 {

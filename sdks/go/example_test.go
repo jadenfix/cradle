@@ -29,7 +29,7 @@ func ExampleClient_Execute() {
 	}))
 	defer srv.Close()
 
-	client := beatbox.New(srv.URL, beatbox.WithAPIKey("BEATBOX_API_KEY"))
+	client := beatbox.New(srv.URL, beatbox.WithToken("CRADLE_TOKEN"))
 
 	res, err := client.Execute(context.Background(), beatbox.WasmWatRequest(
 		`(module (func (export "run") (param i64) (result i64)

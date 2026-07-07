@@ -16,11 +16,13 @@ import (
 const DefaultTimeout = 65 * time.Second
 
 const apiKeyHeader = "x-beatbox-api-key"
+const authorizationHeader = "Authorization"
 
 // Client is a beatbox daemon HTTP client. It is safe for concurrent use.
 type Client struct {
 	baseURL    string
 	baseURLErr error
+	token      string
 	apiKey     string
 	httpClient *http.Client
 }
@@ -29,14 +31,22 @@ type Client struct {
 type Option func(*options)
 
 type options struct {
+	token      string
 	apiKey     string
 	timeout    time.Duration
 	timeoutSet bool
 	httpClient *http.Client
 }
 
-// WithAPIKey sets the API key sent as the x-beatbox-api-key header on every
-// request except Health and OpenAPI.
+// WithToken sets the Bearer token sent as Authorization: Bearer <token> on
+// every request except Health and OpenAPI. It is the canonical auth option for
+// shared ecosystem clients.
+func WithToken(token string) Option {
+	return func(o *options) { o.token = token }
+}
+
+// WithAPIKey sets the legacy API-key compatibility header on every request
+// except Health and OpenAPI. WithToken takes precedence when both are set.
 func WithAPIKey(key string) Option {
 	return func(o *options) { o.apiKey = key }
 }
@@ -51,7 +61,7 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithHTTPClient supplies a custom *http.Client. A no-follow redirect policy is
-// installed on it, so the API key cannot leak across a redirect.
+// installed on it, so auth headers cannot leak across a redirect.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(o *options) { o.httpClient = hc }
 }
@@ -72,7 +82,7 @@ func New(baseURL string, opts ...Option) *Client {
 		hc.Timeout = o.timeout
 	}
 	// Never follow redirects: returning ErrUseLastResponse hands the redirect
-	// response back to us as-is, so the API key is never re-sent to a new host.
+	// response back to us as-is, so auth is never re-sent to a new host.
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -81,6 +91,7 @@ func New(baseURL string, opts ...Option) *Client {
 	return &Client{
 		baseURL:    normalizedBaseURL,
 		baseURLErr: baseURLErr,
+		token:      o.token,
 		apiKey:     o.apiKey,
 		httpClient: hc,
 	}
@@ -329,13 +340,15 @@ func (c *Client) do(ctx context.Context, method, rawURL string, auth bool, body,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if auth && c.apiKey != "" {
+	if auth && c.token != "" {
+		req.Header.Set(authorizationHeader, "Bearer "+c.token)
+	} else if auth && c.apiKey != "" {
 		req.Header.Set(apiKeyHeader, c.apiKey)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// The API key is only ever sent as a header, never in the URL, so the
+		// Auth is only ever sent as a header, never in the URL, so the
 		// wrapped transport error cannot contain it.
 		return fmt.Errorf("beatbox: request failed: %w", err)
 	}

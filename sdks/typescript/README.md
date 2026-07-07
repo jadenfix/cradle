@@ -26,7 +26,7 @@ import { BeatboxClient, ExecuteRequest } from "beatbox";
 
 const client = new BeatboxClient({
   baseUrl: "http://127.0.0.1:7300",
-  apiKey: process.env.BEATBOX_API_KEY, // optional
+  token: process.env.CRADLE_TOKEN, // optional
 });
 
 const result = await client.execute(
@@ -45,7 +45,7 @@ console.log(result.value === 42); // true
 ```ts
 new BeatboxClient({
   baseUrl: "http://127.0.0.1:7300", // required; trailing slashes are trimmed
-  apiKey: "sk-...",                  // optional
+  token: "cradle-token",             // optional; Authorization: Bearer <token>
   timeoutMs: 65000,                  // optional; default 65s (AbortController)
 });
 ```
@@ -55,10 +55,12 @@ new BeatboxClient({
 fragments, and path prefixes with dot segments or encoded separators are
 rejected before any request can be built.
 
-When `apiKey` is set it is sent as the header `x-beatbox-api-key` on every
+When `token` is set it is sent as `Authorization: Bearer <token>` on every
 request **except** `health()` and `openapi()`, which are unauthenticated.
-Redirects are never followed, so the key can't leak cross-origin. The API key
-is never included in any error message or thrown object.
+Redirects are never followed, so the token can't leak cross-origin. The token is
+never included in any error message or thrown object. `apiKey` remains as a
+legacy compatibility alias and sends `x-beatbox-api-key` only when `token` is
+not set.
 
 ## Methods
 
@@ -144,7 +146,7 @@ try {
 
 `BeatboxApiError` carries the HTTP `status`, the machine-readable `code` from
 the `{ error: { code, message } }` body, and the human `message`. Both error
-types extend `BeatboxError`. Neither ever contains the API key.
+types extend `BeatboxError`. Neither ever contains auth material.
 
 ## Example
 

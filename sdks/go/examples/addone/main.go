@@ -3,8 +3,8 @@
 //
 // Usage:
 //
-//	BEATBOX_API_KEY=... go run ./examples/addone            # http://127.0.0.1:7300
-//	BEATBOX_BASE_URL=http://host:7300 go run ./examples/addone
+//	CRADLE_TOKEN=... go run ./examples/addone            # http://127.0.0.1:7300
+//	CRADLE_BASE_URL=http://host:7300 go run ./examples/addone
 package main
 
 import (
@@ -27,13 +27,13 @@ const addOneWAT = `(module
     i64.add))`
 
 func main() {
-	baseURL := os.Getenv("BEATBOX_BASE_URL")
+	baseURL := os.Getenv("CRADLE_BASE_URL")
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:7300"
 	}
 
 	client := beatbox.New(baseURL,
-		beatbox.WithAPIKey(os.Getenv("BEATBOX_API_KEY")),
+		beatbox.WithToken(os.Getenv("CRADLE_TOKEN")),
 		beatbox.WithTimeout(30*time.Second),
 	)
 

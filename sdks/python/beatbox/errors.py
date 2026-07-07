@@ -1,6 +1,6 @@
 """Typed errors raised by the beatbox SDK.
 
-Neither error ever embeds the API key, so it is safe to log or surface them.
+Neither error ever embeds auth material, so it is safe to log or surface them.
 """
 
 from __future__ import annotations

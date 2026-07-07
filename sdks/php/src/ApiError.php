@@ -8,7 +8,7 @@ namespace Beatbox;
  * Raised when the beatbox API returns a non-2xx response.
  *
  * Carries the HTTP status and the machine-readable error code from the
- * {@code {"error": {"code", "message"}}} body. The API key is never
+ * {@code {"error": {"code", "message"}}} body. Auth material is never
  * included in the message.
  *
  * Note: PHP's {@see \Throwable::getCode()} is `final`, so it cannot return

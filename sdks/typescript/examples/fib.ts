@@ -1,11 +1,11 @@
 /**
  * Runs fib(10) on the wasm lane and asserts the result.
  *
- *   BEATBOX_API_KEY=... node dist/examples/fib.js
+ *   CRADLE_TOKEN=... node dist/examples/fib.js
  *   # or: npm run example
  *
  * Requires a running beatbox daemon (default http://127.0.0.1:7300; override
- * with BEATBOX_BASE_URL).
+ * with CRADLE_BASE_URL).
  */
 
 import assert from "node:assert/strict";
@@ -22,8 +22,8 @@ const FIB_WAT =
 
 async function main(): Promise<void> {
   const client = new BeatboxClient({
-    baseUrl: process.env.BEATBOX_BASE_URL ?? "http://127.0.0.1:7300",
-    apiKey: process.env.BEATBOX_API_KEY,
+    baseUrl: process.env.CRADLE_BASE_URL ?? "http://127.0.0.1:7300",
+    token: process.env.CRADLE_TOKEN,
   });
 
   const result = await client.execute(

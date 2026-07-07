@@ -28,7 +28,7 @@ from beatbox import Client, ExecuteRequest
 
 client = Client(
     base_url="http://127.0.0.1:7300",
-    api_key=os.environ.get("BEATBOX_API_KEY"),
+    token=os.environ.get("CRADLE_TOKEN"),
 )
 
 result = client.execute(ExecuteRequest.wasm_wat(
@@ -45,27 +45,29 @@ assert result.value == 42
 A runnable version lives in [`examples/add_one.py`](./examples/add_one.py):
 
 ```bash
-BEATBOX_API_KEY=... python examples/add_one.py
+CRADLE_TOKEN=... python examples/add_one.py
 ```
 
 ## Authentication
 
-Pass `api_key` to the `Client`. When set, it is sent as the `x-beatbox-api-key`
-header on every request **except** `health()` and `openapi()`, which are
-unauthenticated. The key is never included in any error message. Redirects are
-never followed and environment proxies are disabled, so the key cannot leak
-cross-origin or through a proxy.
+Pass `token` to the `Client`. When set, it is sent as
+`Authorization: Bearer <token>` on every request **except** `health()` and
+`openapi()`, which are unauthenticated. The token is never included in any error
+message. Redirects are never followed and environment proxies are disabled, so
+the token cannot leak cross-origin or through a proxy. `api_key` remains as a
+legacy compatibility alias and sends `x-beatbox-api-key` only when `token` is
+not set.
 
 The Python client validates `base_url` before it can build authenticated
 requests: HTTPS URLs are accepted, and plain HTTP is accepted only for
 the exact local-development loopback literals `127.0.0.1` or `[::1]`.
 Credentials, query/fragment delimiters, relative URLs, non-HTTP schemes, raw
 whitespace or backslashes, malformed bracketed IPv6 authorities, and path
-prefixes with dot segments or encoded slashes are rejected so API keys are not
+prefixes with dot segments or encoded slashes are rejected so tokens are not
 sent to hidden, escaped, DNS-rebound, or public plaintext origins.
 
 ```python
-client = Client("http://127.0.0.1:7300", api_key="bbx-api-key-placeholder", timeout=65.0)
+client = Client("http://127.0.0.1:7300", token="cradle-token-placeholder", timeout_ms=65000)
 ```
 
 ## API

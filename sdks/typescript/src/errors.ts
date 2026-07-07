@@ -1,7 +1,7 @@
 /**
  * Typed errors for the beatbox SDK.
  *
- * Neither error type ever carries the API key: only the HTTP status, the
+ * Neither error type ever carries auth material: only the HTTP status, the
  * server-supplied `{ code, message }`, or the underlying transport cause is
  * exposed.
  */

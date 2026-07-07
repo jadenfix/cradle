@@ -76,7 +76,7 @@ boundaries, not by linking to internal crates.
   schema change.
 
 Authenticated routes accept `Authorization: Bearer <token>`. The daemon also
-keeps `x-beatbox-api-key` as a compatibility header for current SDKs. Tokens
+keeps `x-beatbox-api-key` as a compatibility header. Tokens
 must never be placed in URLs or echoed in errors, logs, or MCP content.
 
 Browser automation is intentionally non-runnable. Callers can inspect

@@ -8,13 +8,14 @@ module Beatbox
   # HTTP client for the beatbox sandbox REST API.
   #
   #   client = Beatbox::Client.new(base_url: "http://127.0.0.1:7300",
-  #                                api_key: ENV["BEATBOX_API_KEY"])
+  #                                token: ENV["CRADLE_TOKEN"])
   #   result = client.execute(Beatbox::ExecuteRequest.wasm_wat(wat, input: { "n" => 41 }))
   #   result.value # => 42
   #
   # Zero third-party dependencies: net/http + json from the standard library.
   class Client
     DEFAULT_TIMEOUT = 65
+    AUTHORIZATION_HEADER = "Authorization"
     API_KEY_HEADER = "x-beatbox-api-key"
 
     # @return [String] the normalized base url (trailing slashes trimmed)
@@ -23,12 +24,15 @@ module Beatbox
     attr_reader :timeout
 
     # @param base_url [String] required, e.g. "http://127.0.0.1:7300"
-    # @param api_key [String, nil] sent as x-beatbox-api-key on authed routes
+    # @param token [String, nil] sent as Authorization: Bearer <token>
+    # @param api_key [String, nil] legacy x-beatbox-api-key compatibility alias
     # @param timeout [Numeric] open/read/write timeout in seconds (default 65)
-    def initialize(base_url:, api_key: nil, timeout: DEFAULT_TIMEOUT)
+    # @param timeout_ms [Numeric, nil] preferred shared config timeout in ms
+    def initialize(base_url:, token: nil, api_key: nil, timeout: DEFAULT_TIMEOUT, timeout_ms: nil)
       @base_url = self.class.validate_base_url(base_url)
+      @token = token
       @api_key = api_key
-      @timeout = timeout
+      @timeout = timeout_ms ? timeout_ms / 1000.0 : timeout
     end
 
     # GET /v1/health (unauthenticated). Returns raw JSON as a Hash.
@@ -158,7 +162,11 @@ module Beatbox
       klass = request_class(method)
       req = klass.new(uri.request_uri)
       req["accept"] = "application/json"
-      req[API_KEY_HEADER] = @api_key if auth && @api_key && !@api_key.empty?
+      if auth && @token && !@token.empty?
+        req[AUTHORIZATION_HEADER] = "Bearer #{@token}"
+      elsif auth && @api_key && !@api_key.empty?
+        req[API_KEY_HEADER] = @api_key
+      end
 
       if body
         req["content-type"] = "application/json"
@@ -179,7 +187,7 @@ module Beatbox
     end
 
     # We call Net::HTTP#request directly, which does NOT follow redirects, so a
-    # 3xx is surfaced as an ApiError rather than replaying the api-key header to
+    # 3xx is surfaced as an ApiError rather than replaying auth headers to
     # another origin.
     def handle_response(response)
       code = response.code.to_i

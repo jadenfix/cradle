@@ -44,12 +44,11 @@ the same methods:
 | `cancel_job` | `DELETE /v1/jobs/{id}` | yes |
 | `openapi` | `GET /openapi.json` | no |
 
-Current SDKs send the API key only as the `x-beatbox-api-key` header, and never
-on the unauthenticated `health`/`openapi` routes, never in a URL, and never in
-an error message. The daemon also accepts `Authorization: Bearer <token>` on the
-same authenticated routes; future shared ecosystem clients should prefer Bearer
-and keep `x-beatbox-api-key` only as a compatibility alias until every SDK moves
-together.
+Current SDKs prefer `token` and send it as `Authorization: Bearer <token>`.
+They never send auth on the unauthenticated `health`/`openapi` routes, never put
+auth in a URL, and never include it in an error message. `api_key`/`apiKey` and
+`x-beatbox-api-key` remain compatibility aliases only when a Bearer token is not
+set.
 
 Browser admission requests are raw JSON today. Pass through
 `target_origins`, `credential_mode`, `artifact_mode`,
@@ -167,7 +166,7 @@ gated release.
 ```python
 from beatbox import Client, ExecuteRequest
 
-client = Client(base_url="http://127.0.0.1:7300", api_key="…")
+client = Client(base_url="http://127.0.0.1:7300", token="…", timeout_ms=65000)
 result = client.execute(ExecuteRequest.wasm_wat(
     '(module (func (export "run") (param i64) (result i64) '
     'local.get 0 i64.const 1 i64.add))',

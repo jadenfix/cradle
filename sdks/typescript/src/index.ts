@@ -7,7 +7,7 @@
  *
  * const client = new BeatboxClient({
  *   baseUrl: "http://127.0.0.1:7300",
- *   apiKey: process.env.BEATBOX_API_KEY,
+ *   token: process.env.CRADLE_TOKEN,
  * });
  *
  * const result = await client.execute(
@@ -23,6 +23,7 @@
 export {
   BeatboxClient,
   encodeJobId,
+  AUTHORIZATION_HEADER,
   API_KEY_HEADER,
   DEFAULT_TIMEOUT_MS,
 } from "./client.js";

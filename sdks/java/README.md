@@ -31,7 +31,7 @@ import java.util.Map;
 
 BeatboxClient client = BeatboxClient.builder()
         .baseUrl("http://127.0.0.1:7300")
-        .apiKey(System.getenv("BEATBOX_API_KEY")) // optional
+        .token(System.getenv("CRADLE_TOKEN")) // optional
         .build();
 
 String wat = "(module (func (export \"run\") (param i64) (result i64) "
@@ -53,7 +53,8 @@ Build a client with the builder:
 | Option      | Required | Default        | Notes |
 | ----------- | -------- | -------------- | ----- |
 | `baseUrl`   | yes      | —              | e.g. `http://127.0.0.1:7300`; trailing slashes trimmed |
-| `apiKey`    | no       | none           | sent as `x-beatbox-api-key` on every request except `health()` and `openapi()` |
+| `token`     | no       | none           | sent as `Authorization: Bearer <token>` on every request except `health()` and `openapi()` |
+| `apiKey`    | no       | none           | legacy compatibility alias sent as `x-beatbox-api-key` only when `token` is not set |
 | `timeout`   | no       | 65 seconds     | per-request timeout |
 
 `baseUrl` must be an absolute `https://` URL, or `http://127.0.0.1...` /
@@ -63,7 +64,7 @@ rejected before any request is built. Custom `HttpClient` instances must also
 have redirects disabled, no proxy selector configured, and are accepted only
 with `https://` base URLs.
 
-Redirects are never followed, so the api-key header can't leak cross-origin.
+Redirects are never followed, so the token header can't leak cross-origin.
 
 ## Methods
 
@@ -116,8 +117,10 @@ Partial `Policy`/`Limits` fields you leave unset are omitted and merged onto the
 
 ## Auth
 
-Set `apiKey` on the builder. It is sent as `x-beatbox-api-key` on all authenticated endpoints
-(everything except `health()` and `openapi()`). The key is never included in exception messages.
+Set `token` on the builder. It is sent as `Authorization: Bearer <token>` on
+all authenticated endpoints (everything except `health()` and `openapi()`).
+The token is never included in exception messages. `apiKey` remains a legacy
+compatibility alias and is used only when `token` is not set.
 
 ## Error handling
 
@@ -140,7 +143,7 @@ try {
 See [`AddOneExample`](src/main/java/ai/beatbox/examples/AddOneExample.java). With a daemon running:
 
 ```bash
-BEATBOX_API_KEY=... mvn -q exec:java -Dexec.mainClass=ai.beatbox.examples.AddOneExample
+CRADLE_TOKEN=... mvn -q exec:java -Dexec.mainClass=ai.beatbox.examples.AddOneExample
 ```
 
 ## Build & test

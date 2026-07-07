@@ -103,7 +103,7 @@ class TestClientRequest(unittest.TestCase):
                     Client(base_url)
 
     def test_base_url_path_prefix_is_preserved_on_auth_requests(self):
-        c = Client("https://host:7300/api/", api_key="secret-key")
+        c = Client("https://host:7300/api/", token="secret-token")
         captured = {}
 
         def fake_open(req, timeout=None):
@@ -115,7 +115,23 @@ class TestClientRequest(unittest.TestCase):
 
         req = captured["req"]
         self.assertEqual(req.full_url, "https://host:7300/api/v1/capabilities")
+        self.assertEqual(req.get_header("Authorization"), "Bearer secret-token")
+        self.assertIsNone(req.get_header("X-beatbox-api-key"))
+
+    def test_legacy_api_key_alias_still_sends_compatibility_header(self):
+        c = Client("https://host:7300/api/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            return _FakeResponse(200, b"{}")
+
+        with _patched_open(c, fake_open):
+            c.capabilities()
+
+        req = captured["req"]
         self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertIsNone(req.get_header("Authorization"))
 
     def test_loopback_http_api_key_bypasses_environment_proxy(self):
         target = socket.socket()

@@ -22,7 +22,7 @@ const string Wat =
 
 using var client = new BeatboxClient(
     baseUrl: "http://127.0.0.1:7300",
-    apiKey: Environment.GetEnvironmentVariable("BEATBOX_API_KEY"));
+    token: Environment.GetEnvironmentVariable("CRADLE_TOKEN"));
 
 var result = await client.ExecuteAsync(
     ExecuteRequest.WasmWat(Wat, input: new { n = 41 }));
@@ -38,15 +38,16 @@ any JSON shape the program returns.
 ```csharp
 var client = new BeatboxClient(
     baseUrl: "http://127.0.0.1:7300", // required; HTTPS, or HTTP only for loopback literals
-    apiKey:  "sk-...",                 // optional
+    token: "cradle-token",             // optional; Authorization: Bearer <token>
     timeout: TimeSpan.FromSeconds(30)  // optional; default 65s
 );
 ```
 
-When `apiKey` is set it is sent as the `x-beatbox-api-key` header on every request
-except `HealthAsync` and `OpenApiAsync` (which are unauthenticated). The client
-never follows redirects, so the key can't leak cross-origin, and it never appears
-in an exception message.
+When `token` is set it is sent as `Authorization: Bearer <token>` on every
+request except `HealthAsync` and `OpenApiAsync` (which are unauthenticated). The
+client never follows redirects, so the token can't leak cross-origin, and it
+never appears in an exception message. `apiKey` remains a legacy compatibility
+alias and is used only when `token` is not set.
 
 `baseUrl` is validated when the client is constructed. Production clients should
 use HTTPS. Plain HTTP is accepted only for exact loopback IP literals
@@ -113,7 +114,7 @@ omitted from the request.
 
 Non-2xx responses raise `BeatboxApiException`; transport failures (connection,
 DNS, timeout, malformed body) raise `BeatboxTransportException`. Both derive from
-`BeatboxException` and never contain the API key.
+`BeatboxException` and never contain auth material.
 
 ```csharp
 try

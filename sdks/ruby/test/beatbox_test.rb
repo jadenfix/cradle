@@ -274,12 +274,28 @@ class BaseUrlPolicyTest < Minitest::Test
       body: body
     )
 
-    client = Beatbox::Client.new(base_url: "http://127.0.0.1:#{server.port}/root%7E", api_key: "test-key")
+    client = Beatbox::Client.new(base_url: "http://127.0.0.1:#{server.port}/root%7E", token: "test-token")
     job = client.get_job("a/b")
 
     assert_equal "a/b", job.job_id
     assert_includes server.request, "GET /root%7E/v1/jobs/a%2Fb HTTP/1.1"
+    assert server.request.lines.any? { |line| line.chomp.casecmp("Authorization: Bearer test-token").zero? }
+  ensure
+    server&.close
+  end
+
+  def test_api_key_is_legacy_compatibility_auth_alias
+    server = OneShotHttpServer.new(
+      status: 200,
+      headers: { "Content-Type" => "application/json" },
+      body: "{}"
+    )
+
+    client = Beatbox::Client.new(base_url: "http://127.0.0.1:#{server.port}", api_key: "test-key")
+    client.capabilities
+
     assert server.request.lines.any? { |line| line.chomp.casecmp("X-Beatbox-Api-Key: test-key").zero? }
+    refute server.request.lines.any? { |line| line.downcase.start_with?("authorization:") }
   ensure
     server&.close
   end

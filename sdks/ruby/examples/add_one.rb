@@ -3,16 +3,16 @@
 # Runs a tiny wasm_wat "add one" module against a live beatbox daemon and
 # asserts the returned value is 42.
 #
-#   BEATBOX_API_KEY=... ruby -Ilib examples/add_one.rb
+#   CRADLE_TOKEN=... ruby -Ilib examples/add_one.rb
 #
-# Set BEATBOX_BASE_URL to override the default local daemon address.
+# Set CRADLE_BASE_URL to override the default local daemon address.
 
 require "beatbox"
 
-base_url = ENV.fetch("BEATBOX_BASE_URL", "http://127.0.0.1:7300")
-api_key = ENV["BEATBOX_API_KEY"]
+base_url = ENV.fetch("CRADLE_BASE_URL", "http://127.0.0.1:7300")
+token = ENV["CRADLE_TOKEN"]
 
-client = Beatbox::Client.new(base_url: base_url, api_key: api_key)
+client = Beatbox::Client.new(base_url: base_url, token: token)
 
 wat = <<~WAT
   (module
