@@ -12,7 +12,10 @@ import type {
   JobRecord,
 } from "./models.js";
 
-/** The HTTP header used to carry the API key. */
+/** The HTTP header used to carry the canonical Bearer token. */
+export const AUTHORIZATION_HEADER = "Authorization";
+
+/** The legacy HTTP header used to carry an API-key compatibility alias. */
 export const API_KEY_HEADER = "x-beatbox-api-key";
 
 /** Default request timeout: 65 seconds. */
@@ -22,7 +25,9 @@ export const DEFAULT_TIMEOUT_MS = 65_000;
 export interface BeatboxClientConfig {
   /** Base URL of the daemon, e.g. `http://127.0.0.1:7300`. */
   baseUrl: string;
-  /** Optional API key; sent as `x-beatbox-api-key` on authenticated routes. */
+  /** Optional Bearer token; sent as `Authorization: Bearer <token>`. */
+  token?: string;
+  /** Legacy API-key alias; used only when `token` is not set. */
   apiKey?: string;
   /** Request timeout in milliseconds (default 65000). */
   timeoutMs?: number;
@@ -142,6 +147,7 @@ interface RequestOptions {
 
 export class BeatboxClient {
   private readonly baseUrl: string;
+  private readonly token?: string;
   private readonly apiKey?: string;
   private readonly timeoutMs: number;
 
@@ -150,6 +156,7 @@ export class BeatboxClient {
       throw new TypeError("BeatboxClient requires a non-empty baseUrl");
     }
     this.baseUrl = normalizeBaseUrl(config.baseUrl);
+    this.token = config.token;
     this.apiKey = config.apiKey;
     this.timeoutMs =
       config.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : config.timeoutMs;
@@ -327,7 +334,9 @@ export class BeatboxClient {
   private async request<T>(opts: RequestOptions): Promise<T> {
     const url = this.baseUrl + opts.path;
     const headers: Record<string, string> = {};
-    if (opts.auth && this.apiKey !== undefined) {
+    if (opts.auth && this.token !== undefined) {
+      headers[AUTHORIZATION_HEADER] = `Bearer ${this.token}`;
+    } else if (opts.auth && this.apiKey !== undefined) {
       headers[API_KEY_HEADER] = this.apiKey;
     }
     let payload: string | undefined;
@@ -346,7 +355,7 @@ export class BeatboxClient {
         headers,
         body: payload,
         // Never follow redirects: a 3xx to another origin must not replay the
-        // api-key header. `manual` surfaces the redirect as an opaque response.
+        // auth header. `manual` surfaces the redirect as an opaque response.
         redirect: "manual",
         signal: controller.signal,
       });

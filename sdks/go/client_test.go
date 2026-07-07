@@ -157,10 +157,11 @@ func TestInvalidBaseURLPreventsRequestAndKeyLeak(t *testing.T) {
 }
 
 func TestClientPreservesValidatedPathPrefix(t *testing.T) {
-	var gotURL, gotKey string
-	c := New("https://daemon.example/proxy/beatbox/", WithAPIKey("secret-key"), WithHTTPClient(&http.Client{
+	var gotURL, gotAuth, gotKey string
+	c := New("https://daemon.example/proxy/beatbox/", WithToken("secret-token"), WithHTTPClient(&http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			gotURL = req.URL.String()
+			gotAuth = req.Header.Get(authorizationHeader)
 			gotKey = req.Header.Get(apiKeyHeader)
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -178,8 +179,38 @@ func TestClientPreservesValidatedPathPrefix(t *testing.T) {
 	if gotURL != "https://daemon.example/proxy/beatbox/v1/capabilities" {
 		t.Fatalf("url = %q", gotURL)
 	}
+	if gotAuth != "Bearer secret-token" {
+		t.Fatalf("authorization = %q", gotAuth)
+	}
+	if gotKey != "" {
+		t.Fatalf("api key compatibility header = %q, want empty", gotKey)
+	}
+}
+
+func TestClientWithAPIKeyKeepsCompatibilityHeader(t *testing.T) {
+	var gotAuth, gotKey string
+	c := New("https://daemon.example/", WithAPIKey("secret-key"), WithHTTPClient(&http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotAuth = req.Header.Get(authorizationHeader)
+			gotKey = req.Header.Get(apiKeyHeader)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"lanes":[]}`)),
+				Request:    req,
+			}, nil
+		}),
+	}))
+
+	_, err := c.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("authorization = %q, want empty", gotAuth)
+	}
 	if gotKey != "secret-key" {
-		t.Fatalf("api key = %q", gotKey)
+		t.Fatalf("api key compatibility header = %q", gotKey)
 	}
 }
 

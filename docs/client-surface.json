@@ -1,0 +1,66 @@
+{
+  "surface_version": "2026-07-07",
+  "service": "cradle",
+  "contract": {
+    "type": "openapi",
+    "path": "sdks/openapi.json",
+    "drift_check": "cargo test -p beatbox-server --test openapi_drift"
+  },
+  "auth": {
+    "scheme": "bearer",
+    "header": "Authorization",
+    "value_format": "Bearer <token>",
+    "token_field": "token",
+    "env_token": "CRADLE_TOKEN",
+    "compat_headers": ["x-beatbox-api-key"],
+    "compat_env": ["CRADLE_API_KEY"],
+    "precedence": ["flag", "token_file", "env"]
+  },
+  "sdk": {
+    "config_fields": ["base_url", "token", "timeout_ms"],
+    "error_type": "ApiError",
+    "operation_names": "contract"
+  },
+  "cli": {
+    "global_flags": [
+      "--base-url",
+      "--token",
+      "--token-file",
+      "--timeout-ms",
+      "--output",
+      "--json"
+    ],
+    "env": ["CRADLE_BASE_URL", "CRADLE_TOKEN", "CRADLE_TIMEOUT_MS"],
+    "output_modes": ["json", "text"],
+    "operation_names": "contract"
+  },
+  "errors": {
+    "fields": ["status", "code", "message", "request_id", "details"]
+  },
+  "mcp": {
+    "path": "crates/beatbox-server/fixtures/mcp-tools.catalog.json",
+    "drift_check": "cargo test -p beatbox-server --test mcp_catalog_drift",
+    "tool_names": "catalog",
+    "auth": "shared",
+    "errors": "transport_native"
+  },
+  "operations": [
+    "postMcp",
+    "issueBrowserAdapterCapability",
+    "validateBrowserAdapterCompletion",
+    "getBrowserAdapterContract",
+    "claimBrowserAdapterLaunch",
+    "planBrowserAdapterLaunch",
+    "registerBrowserAdapter",
+    "validateBrowserAdapter",
+    "admitBrowserSession",
+    "getBrowserProfiles",
+    "getCapabilities",
+    "execute",
+    "health",
+    "getIntegrationContract",
+    "createJob",
+    "getJob",
+    "cancelJob"
+  ]
+}

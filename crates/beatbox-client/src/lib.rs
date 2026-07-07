@@ -11,6 +11,7 @@ pub const DEFAULT_HTTP_TIMEOUT: Duration = Duration::from_secs(65);
 #[derive(Clone)]
 pub struct Client {
     base_url: String,
+    token: Option<String>,
     api_key: Option<String>,
     http: reqwest::Client,
 }
@@ -23,11 +24,12 @@ impl Client {
     ///
     /// HTTPS base URLs are accepted. Plain HTTP is accepted only for
     /// `localhost` or loopback addresses so local development does not train
-    /// production callers to send `x-beatbox-api-key` over public plaintext
+    /// production callers to send Bearer tokens over public plaintext
     /// origins. Credentials, query strings, and fragments are rejected.
     pub fn try_new(base_url: impl Into<String>) -> Result<Self, ClientError> {
         Ok(Self {
             base_url: validate_base_url(base_url.into())?,
+            token: None,
             api_key: None,
             http: http_client_builder()
                 .timeout(DEFAULT_HTTP_TIMEOUT)
@@ -47,6 +49,14 @@ impl Client {
         }
     }
 
+    /// Set the canonical Bearer token used for authenticated routes.
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
+    /// Set the legacy API-key compatibility alias used only when no Bearer
+    /// token is configured.
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
@@ -247,6 +257,9 @@ impl Client {
     }
 
     fn authorize(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(token) = &self.token {
+            return request.header("authorization", format!("Bearer {token}"));
+        }
         match &self.api_key {
             Some(api_key) => request.header("x-beatbox-api-key", api_key),
             None => request,
@@ -460,7 +473,7 @@ mod tests {
             Ok(())
         });
 
-        let client = Client::new(format!("http://{addr}/api/")).with_api_key("secret");
+        let client = Client::new(format!("http://{addr}/api/")).with_token("secret");
         let _capabilities = client.capabilities().await?;
 
         match server.join() {
@@ -469,7 +482,8 @@ mod tests {
         }
         let request = request_rx.recv_timeout(Duration::from_secs(1))?;
         assert!(request.starts_with("GET /api/v1/capabilities "));
-        assert!(request.contains("x-beatbox-api-key: secret"));
+        assert!(request.contains("authorization: Bearer secret"));
+        assert!(!request.contains("x-beatbox-api-key"));
         Ok(())
     }
 

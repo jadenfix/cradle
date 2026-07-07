@@ -2,7 +2,7 @@
 
 Usage::
 
-    BEATBOX_API_KEY=... python examples/add_one.py [base_url]
+    CRADLE_TOKEN=... python examples/add_one.py [base_url]
 
 Defaults to base_url http://127.0.0.1:7300. Requires a running beatbox daemon.
 """
@@ -25,7 +25,7 @@ ADD_ONE_WAT = (
 
 def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7300"
-    client = Client(base_url, api_key=os.environ.get("BEATBOX_API_KEY"))
+    client = Client(base_url, token=os.environ.get("CRADLE_TOKEN"))
 
     try:
         result = client.execute(

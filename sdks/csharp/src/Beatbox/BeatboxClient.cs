@@ -12,16 +12,18 @@ namespace Beatbox;
 ///
 /// <para>
 /// The client owns its <see cref="HttpClient"/>; construct one per base URL and
-/// reuse it. It never follows redirects (so the API key header cannot leak
-/// cross-origin) and never embeds the API key in an exception message.
+/// reuse it. It never follows redirects (so the token header cannot leak
+/// cross-origin) and never embeds the token in an exception message.
 /// </para>
 /// </summary>
 public sealed class BeatboxClient : IDisposable
 {
+    private const string AuthorizationHeader = "Authorization";
     private const string ApiKeyHeader = "x-beatbox-api-key";
 
     private readonly HttpClient _http;
     private readonly string _baseUrl;
+    private readonly string? _token;
     private readonly string? _apiKey;
 
     /// <summary>
@@ -32,13 +34,17 @@ public sealed class BeatboxClient : IDisposable
     /// required except for exact loopback IP literals. Trailing slashes are trimmed.
     /// </param>
     /// <param name="apiKey">
-    /// Optional API key. When set, it is sent as the <c>x-beatbox-api-key</c> header
-    /// on every request except <c>health</c> and <c>openapi</c>.
+    /// Legacy API-key compatibility alias. Used only when <paramref name="token"/> is not set.
     /// </param>
     /// <param name="timeout">Optional request timeout. Defaults to 65 seconds.</param>
-    public BeatboxClient(string baseUrl, string? apiKey = null, TimeSpan? timeout = null)
+    /// <param name="token">
+    /// Optional Bearer token. When set, it is sent as <c>Authorization: Bearer &lt;token&gt;</c>
+    /// on every request except <c>health</c> and <c>openapi</c>.
+    /// </param>
+    public BeatboxClient(string baseUrl, string? apiKey = null, TimeSpan? timeout = null, string? token = null)
     {
         _baseUrl = ValidateBaseUrl(baseUrl);
+        _token = token;
         _apiKey = apiKey;
 
         var handler = CreateHttpHandler();
@@ -306,7 +312,11 @@ public sealed class BeatboxClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, BuildRequestUri(_baseUrl, path));
-        if (auth && _apiKey is not null)
+        if (auth && _token is not null)
+        {
+            request.Headers.TryAddWithoutValidation(AuthorizationHeader, $"Bearer {_token}");
+        }
+        else if (auth && _apiKey is not null)
         {
             request.Headers.TryAddWithoutValidation(ApiKeyHeader, _apiKey);
         }

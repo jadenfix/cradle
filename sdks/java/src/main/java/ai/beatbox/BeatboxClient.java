@@ -25,20 +25,22 @@ import java.util.Objects;
  * <pre>{@code
  * BeatboxClient client = BeatboxClient.builder()
  *     .baseUrl("http://127.0.0.1:7300")
- *     .apiKey(System.getenv("BEATBOX_API_KEY"))
+ *     .token(System.getenv("CRADLE_TOKEN"))
  *     .build();
  * ExecutionResult r = client.execute(ExecuteRequest.wasmWat(wat, Map.of("n", 41)));
  * }</pre>
  *
- * <p>Instances are thread-safe and may be shared. Redirects are never followed so the api-key
+ * <p>Instances are thread-safe and may be shared. Redirects are never followed so the token
  * header cannot leak cross-origin.
  */
 public final class BeatboxClient {
 
+    private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String API_KEY_HEADER = "x-beatbox-api-key";
     private static final String JSON_CONTENT_TYPE = "application/json";
 
     private final String baseUrl;
+    private final String token;
     private final String apiKey;
     private final Duration timeout;
     private final HttpClient httpClient;
@@ -46,6 +48,7 @@ public final class BeatboxClient {
 
     private BeatboxClient(Builder builder) {
         this.baseUrl = builder.baseUrl;
+        this.token = builder.token;
         this.apiKey = builder.apiKey;
         this.timeout = builder.timeout;
         this.mapper = builder.mapper != null ? builder.mapper : Json.newMapper();
@@ -224,7 +227,9 @@ public final class BeatboxClient {
         } else {
             builder.method(method, HttpRequest.BodyPublishers.noBody());
         }
-        if (auth && apiKey != null && !apiKey.isEmpty()) {
+        if (auth && token != null && !token.isEmpty()) {
+            builder.header(AUTHORIZATION_HEADER, "Bearer " + token);
+        } else if (auth && apiKey != null && !apiKey.isEmpty()) {
             builder.header(API_KEY_HEADER, apiKey);
         }
         try {
@@ -307,6 +312,7 @@ public final class BeatboxClient {
     /** Builder for {@link BeatboxClient}. {@code baseUrl} is required; the rest have defaults. */
     public static final class Builder {
         private String baseUrl;
+        private String token;
         private String apiKey;
         private Duration timeout = Duration.ofSeconds(65);
         private HttpClient httpClient;
@@ -321,7 +327,13 @@ public final class BeatboxClient {
             return this;
         }
 
-        /** Optional api key sent as {@code x-beatbox-api-key} on all requests but health/openapi. */
+        /** Optional Bearer token sent as {@code Authorization: Bearer <token>} on authenticated requests. */
+        public Builder token(String token) {
+            this.token = token;
+            return this;
+        }
+
+        /** Legacy API-key compatibility alias used only when {@code token} is not set. */
         public Builder apiKey(String apiKey) {
             this.apiKey = apiKey;
             return this;

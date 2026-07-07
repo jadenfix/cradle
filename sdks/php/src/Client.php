@@ -10,29 +10,32 @@ namespace Beatbox;
  * Zero third-party dependencies: uses the bundled curl and json extensions.
  *
  * ```php
- * $client = new Beatbox\Client('http://127.0.0.1:7300', getenv('BEATBOX_API_KEY') ?: null);
+ * $client = new Beatbox\Client('http://127.0.0.1:7300', token: getenv('CRADLE_TOKEN') ?: null);
  * $result = $client->execute(Beatbox\ExecuteRequest::wasmWat($wat, input: ['n' => 41]));
  * echo $result->value; // 42
  * ```
  *
  * On a non-2xx response, methods throw {@see ApiError}. On a transport-level
  * failure (connection/timeout/malformed body) they throw {@see TransportError}.
- * The API key is never included in any exception message.
+ * The token is never included in any exception message.
  */
 final class Client
 {
     private string $baseUrl;
+    private ?string $token;
     private ?string $apiKey;
     private float $timeout;
 
     /**
      * @param string      $baseUrl e.g. "http://127.0.0.1:7300"; HTTPS, or HTTP only for exact loopback literals
-     * @param string|null $apiKey  sent as the `x-beatbox-api-key` header on authenticated calls
+     * @param string|null $apiKey  legacy `x-beatbox-api-key` alias, used only when token is not set
      * @param float       $timeout total request timeout in seconds
+     * @param string|null $token   sent as `Authorization: Bearer <token>` on authenticated calls
      */
-    public function __construct(string $baseUrl, ?string $apiKey = null, float $timeout = 65.0)
+    public function __construct(string $baseUrl, ?string $apiKey = null, float $timeout = 65.0, ?string $token = null)
     {
         $this->baseUrl = self::validateBaseUrl($baseUrl);
+        $this->token = $token;
         $this->apiKey = $apiKey;
         $this->timeout = $timeout;
     }
@@ -222,7 +225,7 @@ final class Client
     }
 
     /**
-     * Validate daemon base URLs before API-key-bearing requests can be built.
+     * Validate daemon base URLs before token-bearing requests can be built.
      *
      * HTTPS is accepted for production. Plain HTTP is accepted only for the
      * exact loopback literals used by local daemons, which avoids parser
@@ -424,7 +427,9 @@ final class Client
             }
             $headers[] = 'Content-Type: application/json';
         }
-        if ($auth && $this->apiKey !== null && $this->apiKey !== '') {
+        if ($auth && $this->token !== null && $this->token !== '') {
+            $headers[] = 'Authorization: Bearer ' . $this->token;
+        } elseif ($auth && $this->apiKey !== null && $this->apiKey !== '') {
             $headers[] = 'x-beatbox-api-key: ' . $this->apiKey;
         }
 
@@ -448,7 +453,7 @@ final class Client
             $message = curl_error($ch);
             $errno = curl_errno($ch);
             curl_close($ch);
-            // Message derives only from curl's own diagnostics — no api key.
+            // Message derives only from curl's own diagnostics — no token.
             throw new TransportError(sprintf('request to %s failed: %s', $path, $message), $errno);
         }
 

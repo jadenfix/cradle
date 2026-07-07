@@ -133,7 +133,7 @@ test("BeatboxClient preserves validated path prefixes on authenticated requests"
   try {
     const client = new BeatboxClient({
       baseUrl: "https://daemon.example/proxy/beatbox/",
-      apiKey: "secret-key",
+      token: "secret-token",
     });
 
     await client.capabilities();
@@ -141,6 +141,32 @@ test("BeatboxClient preserves validated path prefixes on authenticated requests"
     assert.equal(capturedUrl, "https://daemon.example/proxy/beatbox/v1/capabilities");
     assert.equal(capturedInit?.method, "GET");
     assert.equal(capturedInit?.redirect, "manual");
+    assert.deepEqual(capturedInit?.headers, {
+      Authorization: "Bearer secret-token",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("BeatboxClient keeps apiKey as compatibility auth alias", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    capturedInit = init;
+    return new Response(JSON.stringify({ lanes: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "https://daemon.example",
+      apiKey: "secret-key",
+    });
+
+    await client.capabilities();
+
     assert.deepEqual(capturedInit?.headers, {
       "x-beatbox-api-key": "secret-key",
     });

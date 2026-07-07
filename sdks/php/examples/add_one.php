@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Runs an add-one wasm module and asserts the returned value is 42.
  *
  * Usage:
- *   BEATBOX_API_KEY=... php examples/add_one.php [base_url]
+ *   CRADLE_TOKEN=... php examples/add_one.php [base_url]
  *
  * Requires a running beatbox daemon (default http://127.0.0.1:7300).
  */
@@ -19,9 +19,9 @@ use Beatbox\ExecuteRequest;
 use Beatbox\TransportError;
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:7300';
-$apiKey = getenv('BEATBOX_API_KEY') ?: null;
+$token = getenv('CRADLE_TOKEN') ?: null;
 
-$client = new Client($baseUrl, $apiKey);
+$client = new Client($baseUrl, token: $token);
 
 // A wasm module exporting `run(i64) -> i64` that adds 1 to its argument.
 $wat = '(module (func (export "run") (param i64) (result i64) '

@@ -36,7 +36,7 @@ require 'vendor/autoload.php';
 use Beatbox\Client;
 use Beatbox\ExecuteRequest;
 
-$client = new Client('http://127.0.0.1:7300', getenv('BEATBOX_API_KEY') ?: null);
+$client = new Client('http://127.0.0.1:7300', token: getenv('CRADLE_TOKEN') ?: null);
 
 $wat = '(module (func (export "run") (param i64) (result i64) '
      . 'local.get 0 i64.const 1 i64.add))';
@@ -75,13 +75,16 @@ $req = new ExecuteRequest(
 ```php
 new Beatbox\Client(
     string $baseUrl,          // e.g. "http://127.0.0.1:7300" (HTTPS, or HTTP loopback)
-    ?string $apiKey = null,   // sent as x-beatbox-api-key on authenticated calls
+    ?string $apiKey = null,   // legacy x-beatbox-api-key alias
     float $timeout = 65.0,    // seconds
+    ?string $token = null,    // Authorization: Bearer <token>
 );
 ```
 
-When `apiKey` is set it is sent on every request **except** `health()` and
-`openapi()`, which are unauthenticated.
+When `token` is set it is sent as `Authorization: Bearer <token>` on every
+request **except** `health()` and `openapi()`, which are unauthenticated.
+`apiKey` remains as a legacy compatibility alias and is used only when `token`
+is not set.
 
 `baseUrl` is validated when the client is constructed. Production clients
 should use `https://`. Plain `http://` is accepted only for the exact local
@@ -91,7 +94,7 @@ backslashes, malformed bracketed IPv6 hosts, path dot segments, encoded path
 separators, or malformed percent escapes are rejected before requests are
 built. Trailing slashes are trimmed.
 
-Redirects and environment proxies are disabled, so the key can't leak
+Redirects and environment proxies are disabled, so the token can't leak
 cross-origin or through proxy configuration inherited from the process.
 
 ## Methods
@@ -134,7 +137,7 @@ $client->cancelJob($job->jobId); // idempotent
 
 ## Error handling
 
-Every call raises a typed exception on failure; the API key is never included in
+Every call raises a typed exception on failure; auth material is never included in
 any message.
 
 ```php

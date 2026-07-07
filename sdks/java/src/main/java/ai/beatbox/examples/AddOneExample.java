@@ -12,7 +12,7 @@ import java.util.Map;
  *
  * <p>Run with a daemon on {@code http://127.0.0.1:7300}:
  * <pre>{@code
- *   BEATBOX_API_KEY=... mvn -q exec:java -Dexec.mainClass=ai.beatbox.examples.AddOneExample
+ *   CRADLE_TOKEN=... mvn -q exec:java -Dexec.mainClass=ai.beatbox.examples.AddOneExample
  * }</pre>
  */
 public final class AddOneExample {
@@ -22,12 +22,12 @@ public final class AddOneExample {
                     + "local.get 0 i64.const 1 i64.add))";
 
     public static void main(String[] args) {
-        String baseUrl = System.getenv().getOrDefault("BEATBOX_BASE_URL", "http://127.0.0.1:7300");
-        String apiKey = System.getenv("BEATBOX_API_KEY");
+        String baseUrl = System.getenv().getOrDefault("CRADLE_BASE_URL", "http://127.0.0.1:7300");
+        String token = System.getenv("CRADLE_TOKEN");
 
         BeatboxClient client = BeatboxClient.builder()
                 .baseUrl(baseUrl)
-                .apiKey(apiKey)
+                .token(token)
                 .build();
 
         try {

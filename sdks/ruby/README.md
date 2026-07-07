@@ -38,7 +38,7 @@ require "beatbox"
 
 client = Beatbox::Client.new(
   base_url: "http://127.0.0.1:7300",
-  api_key: ENV["BEATBOX_API_KEY"]
+  token: ENV["CRADLE_TOKEN"]
 )
 
 wat = <<~WAT
@@ -60,7 +60,7 @@ raise "unexpected" unless result.value == 42
 A runnable version is in [`examples/add_one.rb`](examples/add_one.rb):
 
 ```sh
-BEATBOX_API_KEY=... ruby -Ilib examples/add_one.rb
+CRADLE_TOKEN=... ruby -Ilib examples/add_one.rb
 ```
 
 ## Configuration
@@ -68,14 +68,16 @@ BEATBOX_API_KEY=... ruby -Ilib examples/add_one.rb
 ```ruby
 Beatbox::Client.new(
   base_url: "http://127.0.0.1:7300", # required; HTTPS, or HTTP only for loopback literals
-  api_key: ENV["BEATBOX_API_KEY"],   # optional
-  timeout: 65                        # optional, seconds (default 65)
+  token: ENV["CRADLE_TOKEN"],        # optional; Authorization: Bearer <token>
+  timeout_ms: 65000                  # optional; preferred shared config field
 )
 ```
 
-When `api_key` is set it is sent as the `x-beatbox-api-key` header on every
+When `token` is set it is sent as `Authorization: Bearer <token>` on every
 request **except** `health` and `openapi`, which are unauthenticated. Redirects
-are never followed, so the api key cannot leak to another origin.
+are never followed, so the token cannot leak to another origin. `api_key`
+remains as a legacy compatibility alias and sends `x-beatbox-api-key` only when
+`token` is not set.
 
 `base_url` is validated when the client is constructed. Production clients
 should use HTTPS. Plain HTTP is accepted only for exact loopback IP literals

@@ -14,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class BaseUrlPolicyTest {
@@ -120,9 +121,13 @@ class BaseUrlPolicyTest {
     void defaultClientBypassesJvmProxySelectorForPlaintextLoopback() throws Exception {
         ProxySelector original = ProxySelector.getDefault();
         AtomicInteger proxySelections = new AtomicInteger();
+        AtomicReference<String> authorization = new AtomicReference<>();
+        AtomicReference<String> apiKey = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         try {
             server.createContext("/v1/capabilities", exchange -> {
+                authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+                apiKey.set(exchange.getRequestHeaders().getFirst("x-beatbox-api-key"));
                 byte[] body = "{}".getBytes();
                 exchange.sendResponseHeaders(200, body.length);
                 exchange.getResponseBody().write(body);
@@ -145,12 +150,14 @@ class BaseUrlPolicyTest {
 
             BeatboxClient client = BeatboxClient.builder()
                     .baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
-                    .apiKey("secret-key")
+                    .token("secret-token")
                     .build();
 
             client.capabilities();
 
             assertEquals(0, proxySelections.get());
+            assertEquals("Bearer secret-token", authorization.get());
+            assertEquals(null, apiKey.get());
         } finally {
             server.stop(0);
             ProxySelector.setDefault(original);

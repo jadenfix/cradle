@@ -24,15 +24,14 @@ model — so an agent that knows one knows them all.
 A client is constructed with:
 
 - `base_url` (required), e.g. `http://127.0.0.1:7300`. Trim trailing slashes.
-- `api_key` (optional). When set, send header `x-beatbox-api-key: <key>` on every
-  request except `health` and `openapi` (which are unauthenticated).
-- `timeout` (optional, default 65 seconds).
+- `token` (optional). When set, send `Authorization: Bearer <token>` on every
+  authenticated request.
+- `timeout_ms` (optional, default 65000 milliseconds). Languages may also expose
+  idiomatic duration helpers.
 
-The daemon also accepts `Authorization: Bearer <token>` through the same
-server-side verifier. The current seven SDKs keep `x-beatbox-api-key` for
-compatibility; future shared ecosystem client work should migrate all SDKs,
-CLI, MCP docs, and tests together to prefer Bearer while retaining the x-header
-only as a compatibility alias.
+`api_key`/`apiKey` remains a legacy compatibility alias. When set and `token` is
+not set, send `x-beatbox-api-key: <key>` through the same server-side verifier.
+Do not document API-key fields as canonical.
 
 ## Methods (identical across languages, names adapted to case convention)
 
@@ -59,7 +58,7 @@ only as a compatibility alias.
 - `POST` bodies are JSON with header `content-type: application/json`.
 - **Percent-encode `job_id`** as a single path segment; reject an empty, `.`, or
   `..` id (they can retarget the request). Server ids are UUIDs.
-- Do not follow redirects (so the api-key header can't leak cross-origin).
+- Do not follow redirects (so auth headers can't leak cross-origin).
 
 ## Request model (`ExecuteRequest`)
 
@@ -158,7 +157,7 @@ messages.
 ## Quickstart shape (pseudocode, keep parity)
 
 ```
-client = Client(base_url="http://127.0.0.1:7300", api_key=env["BEATBOX_API_KEY"])
+client = Client(base_url="http://127.0.0.1:7300", token=env["CRADLE_TOKEN"], timeout_ms=65000)
 result = client.execute(ExecuteRequest.wasm_wat(
     "(module (func (export \"run\") (param i64) (result i64) local.get 0 i64.const 1 i64.add))",
     input={"n": 41}))

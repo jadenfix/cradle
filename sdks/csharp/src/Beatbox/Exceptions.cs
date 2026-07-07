@@ -4,7 +4,7 @@ namespace Beatbox;
 
 /// <summary>
 /// Base class for every error raised by the beatbox SDK. Neither subclass ever
-/// embeds the API key, so instances are safe to log or surface to users.
+/// embeds auth material, so instances are safe to log or surface to users.
 /// </summary>
 public abstract class BeatboxException : Exception
 {

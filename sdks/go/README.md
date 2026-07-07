@@ -35,7 +35,7 @@ import (
 
 func main() {
 	client := beatbox.New("http://127.0.0.1:7300",
-		beatbox.WithAPIKey(os.Getenv("BEATBOX_API_KEY")))
+		beatbox.WithToken(os.Getenv("CRADLE_TOKEN")))
 
 	res, err := client.Execute(context.Background(), beatbox.WasmWatRequest(
 		`(module (func (export "run") (param i64) (result i64)
@@ -59,7 +59,7 @@ func main() {
 A runnable version lives in [`examples/addone`](./examples/addone):
 
 ```sh
-BEATBOX_API_KEY=... go run ./examples/addone
+CRADLE_TOKEN=... go run ./examples/addone
 ```
 
 ## Configuration
@@ -74,12 +74,13 @@ rejected before any request is built.
 
 | Option | Purpose |
 | --- | --- |
-| `WithAPIKey(key)` | Sent as the `x-beatbox-api-key` header on every request except `Health` and `OpenAPI`. |
+| `WithToken(token)` | Sent as `Authorization: Bearer <token>` on every request except `Health` and `OpenAPI`. |
+| `WithAPIKey(key)` | Legacy compatibility alias sent as `x-beatbox-api-key` only when `WithToken` is not set. |
 | `WithTimeout(d)` | Per-request timeout (default 65s). |
 | `WithHTTPClient(hc)` | Supply your own `*http.Client`. |
 
-The client never follows redirects, so the API key can't leak to another host,
-and the key is never placed in a URL or error message.
+The client never follows redirects, so the token can't leak to another host,
+and the token is never placed in a URL or error message.
 
 ## Methods
 

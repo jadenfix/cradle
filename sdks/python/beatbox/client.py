@@ -25,12 +25,14 @@ from .models import (
 __all__ = ["Client"]
 
 DEFAULT_TIMEOUT = 65.0
+DEFAULT_TIMEOUT_MS = 65_000
+_AUTHORIZATION_HEADER = "Authorization"
 _API_KEY_HEADER = "x-beatbox-api-key"
 _PLAINTEXT_HTTP_LOOPBACK_HOSTS = {"127.0.0.1", "[::1]"}
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Refuse to follow redirects so the API key cannot leak cross-origin."""
+    """Refuse to follow redirects so auth cannot leak cross-origin."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
         return None
@@ -139,11 +141,15 @@ class Client:
             accepted only for loopback IP literal addresses. Userinfo, query
             strings, fragments, relative URLs, non-HTTP schemes, and path
             prefixes with dot segments or encoded slashes are rejected before
-            any API-key-bearing request can be built.
-        api_key: Optional API key. When set it is sent as the
-            ``x-beatbox-api-key`` header on every request except ``health`` and
-            ``openapi``.
+            any token-bearing request can be built.
+        token: Optional Bearer token. When set it is sent as the
+            ``Authorization: Bearer <token>`` header on every request except
+            ``health`` and ``openapi``.
+        api_key: Legacy compatibility alias. When ``token`` is not set,
+            ``api_key`` is sent as the ``x-beatbox-api-key`` header.
         timeout: Per-request timeout in seconds (default 65.0).
+        timeout_ms: Per-request timeout in milliseconds. Preferred for shared
+            ecosystem client configuration; overrides ``timeout`` when set.
     """
 
     def __init__(
@@ -151,10 +157,15 @@ class Client:
         base_url: str,
         api_key: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
+        *,
+        token: Optional[str] = None,
+        timeout_ms: Optional[int] = None,
     ) -> None:
         self.base_url = _validate_base_url(base_url)
+        self.token = token
         self.api_key = api_key
-        self.timeout = timeout
+        self.timeout_ms = DEFAULT_TIMEOUT_MS if timeout_ms is None else timeout_ms
+        self.timeout = timeout if timeout_ms is None else timeout_ms / 1000.0
         self._opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             _NoRedirectHandler,
@@ -265,7 +276,9 @@ class Client:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["content-type"] = "application/json"
-        if auth and self.api_key:
+        if auth and self.token:
+            headers[_AUTHORIZATION_HEADER] = f"Bearer {self.token}"
+        elif auth and self.api_key:
             headers[_API_KEY_HEADER] = self.api_key
 
         req = urllib.request.Request(url, data=data, method=method, headers=headers)

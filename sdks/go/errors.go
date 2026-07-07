@@ -19,7 +19,7 @@ type APIError struct {
 	Message string
 }
 
-// Error implements the error interface. It never includes the API key.
+// Error implements the error interface. It never includes auth material.
 func (e *APIError) Error() string {
 	if e.Code != "" {
 		return fmt.Sprintf("beatbox: api error %d (%s): %s", e.Status, e.Code, e.Message)
