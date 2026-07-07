@@ -95,9 +95,11 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   binding false because DNS/proxy/redirect/retry binding is not implemented; a
   field-complete manifest is still untrusted metadata rather than permission to
   launch browser automation. The returned `conformance_profile`, including
-  `field_complete_launch_request` and its completion-report fixture, is safe to
-  use as a compatibility fixture because all cases remain fail-closed and no
-  case grants adapter trust.
+  `field_complete_launch_request`, its completion-report fixture, and REST-only
+  launch-plan conformance cases, is safe to use as a compatibility fixture
+  because all cases remain fail-closed, no case grants adapter trust, and
+  launch-plan cases carry only a non-secret capability issue request rather than
+  a bearer capability.
 
 ## current grades
 

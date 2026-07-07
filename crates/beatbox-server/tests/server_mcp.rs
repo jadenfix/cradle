@@ -1714,6 +1714,39 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
                         .missing_levels
                         .contains(&BrowserSandboxLevel::OsIsolated)))
     );
+    assert!(
+        validation
+            .conformance_profile
+            .launch_plan_cases
+            .iter()
+            .any(|case| case.name
+                == "os_only_manifest_request_compatible_for_os_isolated_launch_plan"
+                && case.expected_rest_error_code.is_none()
+                && case
+                    .expected_launch_plan
+                    .request_adapter_compatibility
+                    .compatible
+                && case
+                    .expected_launch_plan
+                    .replay_protection_bound_with_matching_capability)
+    );
+    assert!(
+        validation
+            .conformance_profile
+            .launch_plan_cases
+            .iter()
+            .any(|case| case.name
+                == "os_only_manifest_not_request_compatible_for_remote_isolated_launch_plan"
+                && !case
+                    .expected_launch_plan
+                    .request_adapter_compatibility
+                    .compatible
+                && case
+                    .expected_launch_plan
+                    .request_adapter_compatibility
+                    .missing_levels
+                    .contains(&BrowserSandboxLevel::RemoteIsolated))
+    );
     Ok(())
 }
 
@@ -1966,6 +1999,16 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
             .required_cases
             .iter()
             .any(|case| case.name == "field_complete_manifest_stays_fail_closed")
+    );
+    assert!(
+        contract
+            .conformance_profile
+            .launch_plan_cases
+            .iter()
+            .any(|case| case.name
+                == "os_only_manifest_request_compatible_for_os_isolated_launch_plan"
+                && case.capability_issue_request.adapter_id.as_deref()
+                    == Some("tempo-os-isolated-conformance-adapter-v1"))
     );
     assert!(
         contract
@@ -3478,6 +3521,154 @@ async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp()
 }
 
 #[tokio::test]
+async fn browser_adapter_launch_plan_conformance_cases_match_rest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/validate")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(complete_adapter_manifest().to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let validation: BrowserAdapterManifestResponse = serde_json::from_slice(&body)?;
+    let case_names = validation
+        .conformance_profile
+        .launch_plan_cases
+        .iter()
+        .map(|case| case.name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        case_names.contains(&"os_only_manifest_request_compatible_for_os_isolated_launch_plan")
+    );
+    assert!(
+        case_names
+            .contains(&"os_only_manifest_not_request_compatible_for_remote_isolated_launch_plan")
+    );
+
+    for case in &validation.conformance_profile.launch_plan_cases {
+        let issue_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/adapter/capability")
+                    .header("content-type", "application/json")
+                    .header("x-beatbox-api-key", "secret")
+                    .body(Body::from(serde_json::to_vec(
+                        &case.capability_issue_request,
+                    )?))?,
+            )
+            .await?;
+        assert_eq!(
+            issue_response.status(),
+            StatusCode::OK,
+            "capability issue failed for launch-plan conformance case {}",
+            case.name
+        );
+        let body = to_bytes(issue_response.into_body(), usize::MAX).await?;
+        let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+
+        let launch_plan = json!({
+            "same_user_capability": issued.same_user_capability,
+            "admission": &case.admission,
+            "manifest": &case.manifest
+        });
+        let rest_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/adapter/launch/plan")
+                    .header("content-type", "application/json")
+                    .header("x-beatbox-api-key", "secret")
+                    .body(Body::from(launch_plan.to_string()))?,
+            )
+            .await?;
+        assert_eq!(
+            rest_response.status().as_u16(),
+            case.expected_rest_status,
+            "launch-plan conformance case {} returned unexpected status",
+            case.name
+        );
+        let rest_body = to_bytes(rest_response.into_body(), usize::MAX).await?;
+        if let Some(expected_error_code) = &case.expected_rest_error_code {
+            let error: ErrorResponse = serde_json::from_slice(&rest_body)?;
+            assert_eq!(
+                error.error.code, *expected_error_code,
+                "launch-plan conformance case {} returned unexpected error code",
+                case.name
+            );
+            continue;
+        }
+
+        let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&rest_body)?;
+        let expected = &case.expected_launch_plan;
+        assert_eq!(plan.decision, expected.decision);
+        assert_eq!(plan.launchable, expected.launchable);
+        assert_eq!(
+            plan.trusted_for_sensitive_work,
+            expected.trusted_for_sensitive_work
+        );
+        assert_eq!(
+            plan.endpoint_network_policy_bound,
+            expected.endpoint_network_policy_bound
+        );
+        assert_eq!(
+            plan.adapter_contract_fields_complete,
+            expected.adapter_contract_fields_complete
+        );
+        assert_eq!(
+            plan.request_adapter_compatibility,
+            expected.request_adapter_compatibility
+        );
+        assert_eq!(
+            plan.replay_protection_bound,
+            expected.replay_protection_bound_with_matching_capability
+        );
+        assert_eq!(
+            plan.launch_request.requested_controls,
+            expected.launch_request_requested_controls
+        );
+
+        let claim_request = json!({ "launch_request": plan.launch_request });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/browser/adapter/launch/claim")
+                    .header("content-type", "application/json")
+                    .header("x-beatbox-api-key", "secret")
+                    .body(Body::from(claim_request.to_string()))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let claim: BrowserAdapterLaunchClaimResponse = serde_json::from_slice(&body)?;
+        assert_eq!(
+            claim.server_issued_launch_request,
+            expected.replay_protection_bound_with_matching_capability
+        );
+        assert_eq!(
+            claim.launch_request_claim_bound,
+            expected.replay_protection_bound_with_matching_capability
+        );
+        assert!(!claim.launchable);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_manifest_reports_missing_contract_parts()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
@@ -3879,6 +4070,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdapterLaunchClaimRequest",
         "BrowserAdapterLaunchClaimResponse",
         "BrowserAdapterLaunchRequest",
+        "BrowserAdapterLaunchPlanConformanceCase",
+        "BrowserAdapterLaunchPlanConformanceExpectation",
         "BrowserAdapterLaunchPlanDecision",
         "BrowserAdapterLaunchPlanRequest",
         "BrowserAdapterLaunchPlanResponse",
@@ -4145,8 +4338,38 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
             .as_array()
             .is_some_and(|required| required
                 .iter()
-                .any(|field| field == "field_complete_launch_request")),
-        "conformance profile should require a field-complete launch request fixture"
+                .any(|field| field == "field_complete_launch_request")
+                && required.iter().any(|field| field == "launch_plan_cases")),
+        "conformance profile should require launch request and launch-plan fixtures"
+    );
+    assert!(
+        schemas["BrowserAdapterLaunchPlanConformanceCase"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "capability_issue_request")
+                && required
+                    .iter()
+                    .any(|field| field == "expected_rest_error_code")
+                && required.iter().any(|field| field == "expected_launch_plan")),
+        "launch-plan conformance cases should publish runnable request and nullable REST expectations"
+    );
+    assert!(
+        schemas["BrowserAdapterLaunchPlanConformanceExpectation"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "adapter_contract_fields_complete")
+                && required
+                    .iter()
+                    .any(|field| field == "request_adapter_compatibility")
+                && required
+                    .iter()
+                    .any(|field| { field == "replay_protection_bound_with_matching_capability" })
+                && required
+                    .iter()
+                    .any(|field| field == "launch_request_requested_controls")),
+        "launch-plan conformance expectations should expose request-scoped compatibility and replay expectations"
     );
     assert!(
         schemas["BrowserAdapterLaunchRequest"]["required"]
@@ -5259,6 +5482,18 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
                     .as_array()
                     .is_some_and(|levels| levels.iter().any(|level| level == "os_isolated"))))
     );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["launch_plan_cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| case["name"]
+                == "os_only_manifest_request_compatible_for_os_isolated_launch_plan"
+                && case["capability_issue_request"]["adapter_id"]
+                    == "tempo-os-isolated-conformance-adapter-v1"
+                && case["expected_launch_plan"]["request_adapter_compatibility"]["compatible"]
+                    == true
+                && case["expected_launch_plan"]["replay_protection_bound_with_matching_capability"]
+                    == true))
+    );
     assert_eq!(
         result["structuredContent"]["missing_guard_fields"],
         serde_json::json!([])
@@ -5473,6 +5708,18 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
             .is_some_and(|cases| cases
                 .iter()
                 .any(|case| case["name"] == "field_complete_manifest_stays_fail_closed"))
+    );
+    assert!(
+        result["structuredContent"]["conformance_profile"]["launch_plan_cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().any(|case| {
+                case["name"]
+                == "os_only_manifest_not_request_compatible_for_remote_isolated_launch_plan"
+                && case["expected_launch_plan"]["request_adapter_compatibility"]
+                    ["missing_levels"]
+                    .as_array()
+                    .is_some_and(|levels| levels.iter().any(|level| level == "remote_isolated"))
+            }))
     );
     Ok(())
 }

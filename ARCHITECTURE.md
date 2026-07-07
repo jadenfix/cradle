@@ -141,9 +141,12 @@ endpoint binding, and launch paths. The same response includes a
 `conformance_profile` with a canonical field-complete manifest,
 `field_complete_launch_request`, typed completion proof requirements, a
 completion report fixture, and required accepted-but-rejected and
-parser-rejected cases, including separate REST and MCP expectations. That
-profile is the adapter author test fixture for protocol compatibility, not a
-registration credential.
+parser-rejected cases, including separate REST and MCP expectations. It also
+publishes REST-only `launch_plan_cases` that exercise request-scoped adapter
+compatibility and replay binding; runners issue a fresh same-user capability
+from the non-secret fixture request before substituting the returned bearer
+value. That profile is the adapter author test fixture for protocol
+compatibility, not a registration credential.
 
 `POST /v1/browser/adapter/launch/plan` is the REST-only bridge between
 admission intent, adapter manifest, and same-user capability binding. It

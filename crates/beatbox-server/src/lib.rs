@@ -21,6 +21,7 @@ use beatbox_core::{
     BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
     BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchClaimDecision,
     BrowserAdapterLaunchClaimRequest, BrowserAdapterLaunchClaimResponse,
+    BrowserAdapterLaunchPlanConformanceCase, BrowserAdapterLaunchPlanConformanceExpectation,
     BrowserAdapterLaunchPlanDecision, BrowserAdapterLaunchPlanRequest,
     BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
     BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
@@ -2683,6 +2684,19 @@ fn browser_adapter_conformance_profile(
     let mut dns_rebinding_manifest = field_complete_manifest.clone();
     dns_rebinding_manifest.launch_endpoint = Some("https://127.0.0.1.nip.io/launch".to_string());
 
+    let os_isolated_admission =
+        browser_adapter_conformance_launch_admission(BrowserSandboxLevel::OsIsolated);
+    let remote_isolated_admission =
+        browser_adapter_conformance_launch_admission(BrowserSandboxLevel::RemoteIsolated);
+    let os_isolated_manifest =
+        browser_adapter_os_isolated_request_manifest(adapter_contract, &field_complete_manifest);
+    let os_isolated_compatibility =
+        browser_adapter_request_compatibility(&os_isolated_manifest, &os_isolated_admission);
+    let remote_isolated_compatibility =
+        browser_adapter_request_compatibility(&os_isolated_manifest, &remote_isolated_admission);
+    let os_isolated_contract_complete =
+        browser_adapter_manifest_contract_fields_complete(&os_isolated_manifest);
+
     BrowserAdapterConformanceProfile {
         profile_version: "browser-adapter-conformance-v1".to_string(),
         field_complete_manifest: field_complete_manifest.clone(),
@@ -2775,14 +2789,123 @@ fn browser_adapter_conformance_profile(
                 ],
             },
         ],
+        launch_plan_cases: vec![
+            BrowserAdapterLaunchPlanConformanceCase {
+                name: "os_only_manifest_request_compatible_for_os_isolated_launch_plan"
+                    .to_string(),
+                capability_issue_request: browser_adapter_conformance_capability_issue_request(
+                    &os_isolated_admission,
+                    &os_isolated_manifest,
+                ),
+                admission: os_isolated_admission,
+                manifest: os_isolated_manifest.clone(),
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_launch_plan: BrowserAdapterLaunchPlanConformanceExpectation {
+                    decision: BrowserAdapterLaunchPlanDecision::Rejected,
+                    launchable: false,
+                    trusted_for_sensitive_work: false,
+                    endpoint_network_policy_bound: false,
+                    adapter_contract_fields_complete: os_isolated_contract_complete,
+                    request_adapter_compatibility: os_isolated_compatibility.clone(),
+                    replay_protection_bound_with_matching_capability: true,
+                    launch_request_requested_controls: os_isolated_compatibility.required_controls,
+                },
+                notes: vec![
+                    "A manifest that only claims os_isolated is request-compatible for an os_isolated admission even though it does not satisfy global all-level adapter conformance."
+                        .to_string(),
+                    "The launch plan must remain non-launchable; replay binding only proves the daemon emitted and recorded this preflight envelope."
+                        .to_string(),
+                ],
+            },
+            BrowserAdapterLaunchPlanConformanceCase {
+                name: "os_only_manifest_not_request_compatible_for_remote_isolated_launch_plan"
+                    .to_string(),
+                capability_issue_request: browser_adapter_conformance_capability_issue_request(
+                    &remote_isolated_admission,
+                    &os_isolated_manifest,
+                ),
+                admission: remote_isolated_admission,
+                manifest: os_isolated_manifest,
+                expected_rest_status: StatusCode::OK.as_u16(),
+                expected_rest_error_code: None,
+                expected_launch_plan: BrowserAdapterLaunchPlanConformanceExpectation {
+                    decision: BrowserAdapterLaunchPlanDecision::Rejected,
+                    launchable: false,
+                    trusted_for_sensitive_work: false,
+                    endpoint_network_policy_bound: false,
+                    adapter_contract_fields_complete: os_isolated_contract_complete,
+                    request_adapter_compatibility: remote_isolated_compatibility.clone(),
+                    replay_protection_bound_with_matching_capability: false,
+                    launch_request_requested_controls: remote_isolated_compatibility
+                        .required_controls,
+                },
+                notes: vec![
+                    "The same os_isolated-only manifest must not be replay-bound for a remote_isolated admission."
+                        .to_string(),
+                    "Adapters must publish support for the concrete requested level and controls instead of relying on a compatible lower level."
+                        .to_string(),
+                ],
+            },
+        ],
         notes: vec![
-            "Run these cases against both REST and MCP integrations before treating an adapter as compatible; use the protocol-specific expected_rest_* and expected_mcp_* fields."
+            "Run required_cases against both REST and MCP integrations before treating an adapter as compatible; use the protocol-specific expected_rest_* and expected_mcp_* fields."
+                .to_string(),
+            "Run launch_plan_cases through the REST launch-plan and claim preflight with a fresh live same-user capability for each case."
                 .to_string(),
             "The profile is not a registration grant and does not authorize browser launch."
                 .to_string(),
             "Production registration must bind DNS, proxy, redirects, retries, and the request builder to the same endpoint policy."
                 .to_string(),
         ],
+    }
+}
+
+fn browser_adapter_conformance_capability_issue_request(
+    admission: &BrowserAdmissionRequest,
+    manifest: &BrowserAdapterManifestRequest,
+) -> BrowserAdapterCapabilityIssueRequest {
+    BrowserAdapterCapabilityIssueRequest {
+        actor: admission.actor.clone(),
+        sensitivity: admission.sensitivity.clone(),
+        sensitive_activity_mode: Some(admission.sensitive_activity_mode.clone()),
+        adapter_id: Some(manifest.adapter_id.clone()),
+        ttl_seconds: None,
+    }
+}
+
+fn browser_adapter_conformance_launch_admission(
+    requested_level: BrowserSandboxLevel,
+) -> BrowserAdmissionRequest {
+    BrowserAdmissionRequest {
+        requested_level,
+        actor: BrowserSessionActor::Agent,
+        sensitivity: BrowserSensitivity::Sensitive,
+        sensitive_activity_mode: BrowserSensitiveActivityMode::NetworkSuppressed,
+        target_origins: vec!["https://example.com".to_string()],
+        credential_mode: BrowserCredentialMode::NoCredentials,
+        artifact_mode: BrowserArtifactMode::Discard,
+        required_controls: vec![
+            BrowserSandboxControl::EgressPolicy,
+            BrowserSandboxControl::TeardownProof,
+        ],
+        allow_downgrade: false,
+        task_label: Some("browser adapter conformance launch".to_string()),
+    }
+}
+
+fn browser_adapter_os_isolated_request_manifest(
+    adapter_contract: &BrowserAdapterContract,
+    field_complete_manifest: &BrowserAdapterManifestRequest,
+) -> BrowserAdapterManifestRequest {
+    BrowserAdapterManifestRequest {
+        adapter_id: "tempo-os-isolated-conformance-adapter-v1".to_string(),
+        contract_version: adapter_contract.version.clone(),
+        launch_endpoint: field_complete_manifest.launch_endpoint.clone(),
+        supported_levels: vec![BrowserSandboxLevel::OsIsolated],
+        supported_controls: browser_profile_controls(&BrowserSandboxLevel::OsIsolated),
+        guard_fields: adapter_contract.required_guard_fields.clone(),
+        completion_proofs: adapter_contract.required_completion_proofs.clone(),
     }
 }
 
@@ -4011,6 +4134,8 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdapterLaunchClaimRequest,
         beatbox_core::BrowserAdapterLaunchClaimResponse,
         beatbox_core::BrowserAdapterLaunchRequest,
+        beatbox_core::BrowserAdapterLaunchPlanConformanceCase,
+        beatbox_core::BrowserAdapterLaunchPlanConformanceExpectation,
         beatbox_core::BrowserAdapterLaunchPlanDecision,
         beatbox_core::BrowserAdapterLaunchPlanRequest,
         beatbox_core::BrowserAdapterLaunchPlanResponse,

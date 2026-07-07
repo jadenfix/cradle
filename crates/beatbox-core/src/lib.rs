@@ -852,6 +852,31 @@ pub struct BrowserAdapterConformanceCase {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterLaunchPlanConformanceExpectation {
+    pub decision: BrowserAdapterLaunchPlanDecision,
+    pub launchable: bool,
+    pub trusted_for_sensitive_work: bool,
+    pub endpoint_network_policy_bound: bool,
+    pub adapter_contract_fields_complete: bool,
+    pub request_adapter_compatibility: BrowserAdapterRequestCompatibility,
+    pub replay_protection_bound_with_matching_capability: bool,
+    pub launch_request_requested_controls: Vec<BrowserSandboxControl>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterLaunchPlanConformanceCase {
+    pub name: String,
+    pub capability_issue_request: BrowserAdapterCapabilityIssueRequest,
+    pub admission: BrowserAdmissionRequest,
+    pub manifest: BrowserAdapterManifestRequest,
+    pub expected_rest_status: u16,
+    #[schema(required = true)]
+    pub expected_rest_error_code: Option<String>,
+    pub expected_launch_plan: BrowserAdapterLaunchPlanConformanceExpectation,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterConformanceProfile {
     pub profile_version: String,
     pub field_complete_manifest: BrowserAdapterManifestRequest,
@@ -860,6 +885,9 @@ pub struct BrowserAdapterConformanceProfile {
     pub field_complete_launch_request: BrowserAdapterLaunchRequest,
     pub field_complete_expectation: BrowserAdapterConformanceExpectation,
     pub required_cases: Vec<BrowserAdapterConformanceCase>,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub launch_plan_cases: Vec<BrowserAdapterLaunchPlanConformanceCase>,
     pub notes: Vec<String>,
 }
 

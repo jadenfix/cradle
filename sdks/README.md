@@ -100,8 +100,11 @@ All adapter registration/validation responses still return
 adapter registration and launch path exists. Preserve the `conformance_profile`
 field in raw JSON responses; it contains the canonical field-complete manifest,
 `field_complete_launch_request`, typed completion-proof requirements,
-completion-report fixtures, expected missing-gap reports, and protocol-specific
-REST/MCP negative cases Tempo adapters should run.
+completion-report fixtures, expected missing-gap reports, protocol-specific
+REST/MCP negative cases, and REST-only `launch_plan_cases` Tempo adapters
+should run. Each launch-plan case carries a non-secret capability issue request;
+issue a live same-user capability for that case and substitute the returned
+bearer value before posting the launch-plan request.
 Launch planning requests are also raw JSON and REST-only:
 `POST /v1/browser/adapter/launch/plan` combines a same-user capability,
 admission intent, and manifest into a server-issued launch envelope and

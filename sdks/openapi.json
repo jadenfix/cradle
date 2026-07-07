@@ -1242,6 +1242,7 @@
           "field_complete_launch_request",
           "field_complete_expectation",
           "required_cases",
+          "launch_plan_cases",
           "notes"
         ],
         "properties": {
@@ -1253,6 +1254,12 @@
           },
           "field_complete_manifest": {
             "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
+          },
+          "launch_plan_cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserAdapterLaunchPlanConformanceCase"
+            }
           },
           "notes": {
             "type": "array",
@@ -1506,6 +1513,95 @@
           },
           "server_issued_launch_request": {
             "type": "boolean"
+          },
+          "trusted_for_sensitive_work": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrowserAdapterLaunchPlanConformanceCase": {
+        "type": "object",
+        "required": [
+          "name",
+          "capability_issue_request",
+          "admission",
+          "manifest",
+          "expected_rest_status",
+          "expected_rest_error_code",
+          "expected_launch_plan",
+          "notes"
+        ],
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/BrowserAdmissionRequest"
+          },
+          "capability_issue_request": {
+            "$ref": "#/components/schemas/BrowserAdapterCapabilityIssueRequest"
+          },
+          "expected_launch_plan": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchPlanConformanceExpectation"
+          },
+          "expected_rest_error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_rest_status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
+          },
+          "name": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BrowserAdapterLaunchPlanConformanceExpectation": {
+        "type": "object",
+        "required": [
+          "decision",
+          "launchable",
+          "trusted_for_sensitive_work",
+          "endpoint_network_policy_bound",
+          "adapter_contract_fields_complete",
+          "request_adapter_compatibility",
+          "replay_protection_bound_with_matching_capability",
+          "launch_request_requested_controls"
+        ],
+        "properties": {
+          "adapter_contract_fields_complete": {
+            "type": "boolean"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchPlanDecision"
+          },
+          "endpoint_network_policy_bound": {
+            "type": "boolean"
+          },
+          "launch_request_requested_controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowserSandboxControl"
+            }
+          },
+          "launchable": {
+            "type": "boolean"
+          },
+          "replay_protection_bound_with_matching_capability": {
+            "type": "boolean"
+          },
+          "request_adapter_compatibility": {
+            "$ref": "#/components/schemas/BrowserAdapterRequestCompatibility"
           },
           "trusted_for_sensitive_work": {
             "type": "boolean"
