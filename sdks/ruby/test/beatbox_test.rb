@@ -2,6 +2,7 @@
 
 require "minitest/autorun"
 require "json"
+require "socket"
 require "beatbox"
 
 class JobIdEncodingTest < Minitest::Test
@@ -203,7 +204,154 @@ class ErrorModelTest < Minitest::Test
   end
 
   def test_client_trims_trailing_slashes_from_base_url
-    client = Beatbox::Client.new(base_url: "http://host:7300///")
-    assert_equal "http://host:7300", client.base_url
+    client = Beatbox::Client.new(base_url: "https://api.example.test///")
+    assert_equal "https://api.example.test", client.base_url
+  end
+end
+
+class BaseUrlPolicyTest < Minitest::Test
+  def test_accepts_https_base_url
+    client = Beatbox::Client.new(base_url: "https://api.example.test/beatbox")
+    assert_equal "https://api.example.test/beatbox", client.base_url
+  end
+
+  def test_accepts_plaintext_loopback_literals
+    assert_equal "http://127.0.0.1:7300",
+                 Beatbox::Client.new(base_url: "http://127.0.0.1:7300").base_url
+    assert_equal "http://[::1]:7300",
+                 Beatbox::Client.new(base_url: "http://[::1]:7300").base_url
+  end
+
+  def test_rejects_unsafe_base_urls
+    rejected = [
+      " http://127.0.0.1:7300",
+      "https://api.example.test ",
+      "api.example.test",
+      "ftp://api.example.test",
+      "https://@api.example.test",
+      "https://user:pass@api.example.test",
+      "https://api.example.test/path?token=one",
+      "https://api.example.test/path#frag",
+      "http://localhost:7300",
+      "http://api.example.test",
+      "https://api.example.test/./v1",
+      "https://api.example.test/../v1",
+      "https://api.example.test/%2e/v1",
+      "https://api.example.test/%2e%2e/v1",
+      "https://api.example.test/api%2Fv1",
+      "https://api.example.test/api%5Cv1",
+      "https://api.example.test/api\\v1"
+    ]
+
+    rejected.each do |base_url|
+      assert_raises(ArgumentError, "expected #{base_url.inspect} to be rejected") do
+        Beatbox::Client.new(base_url: base_url)
+      end
+    end
+  end
+
+  def test_http_client_disables_environment_proxies
+    with_env("http_proxy" => "http://127.0.0.1:9", "https_proxy" => "http://127.0.0.1:9",
+             "no_proxy" => nil, "NO_PROXY" => nil) do
+      client = Beatbox::Client.new(base_url: "https://api.example.test")
+      http = client.send(:build_http, URI.parse("https://api.example.test/v1/capabilities"))
+
+      refute http.proxy?
+    end
+  end
+
+  def test_public_job_request_preserves_valid_escaped_base_prefix_and_job_segment
+    body = JSON.generate(
+      "job_id" => "a/b",
+      "status" => "queued",
+      "request" => { "lane" => "wasm", "source" => { "kind" => "wasm_wat", "text" => "(module)" } },
+      "created_at" => "2026-07-03T00:00:00Z",
+      "updated_at" => "2026-07-03T00:00:01Z"
+    )
+    server = OneShotHttpServer.new(
+      status: 200,
+      headers: { "Content-Type" => "application/json" },
+      body: body
+    )
+
+    client = Beatbox::Client.new(base_url: "http://127.0.0.1:#{server.port}/root%7E", api_key: "test-key")
+    job = client.get_job("a/b")
+
+    assert_equal "a/b", job.job_id
+    assert_includes server.request, "GET /root%7E/v1/jobs/a%2Fb HTTP/1.1"
+    assert server.request.lines.any? { |line| line.chomp.casecmp("X-Beatbox-Api-Key: test-key").zero? }
+  ensure
+    server&.close
+  end
+
+  def test_redirect_response_is_not_followed
+    server = OneShotHttpServer.new(status: 302, headers: { "Location" => "/leaked" }, body: "")
+
+    client = Beatbox::Client.new(base_url: "http://127.0.0.1:#{server.port}", api_key: "test-key")
+    error = assert_raises(Beatbox::ApiError) { client.capabilities }
+
+    assert_equal 302, error.status
+    assert_includes server.request, "GET /v1/capabilities HTTP/1.1"
+  ensure
+    server&.close
+  end
+
+  private
+
+  def with_env(overrides)
+    old_values = overrides.each_key.to_h { |key| [key, ENV[key]] }
+    overrides.each do |key, value|
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+    end
+    yield
+  ensure
+    old_values.each do |key, value|
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+    end
+  end
+
+  class OneShotHttpServer
+    attr_reader :port, :request
+
+    def initialize(status:, headers:, body:)
+      @server = TCPServer.new("127.0.0.1", 0)
+      @port = @server.addr[1]
+      @request = ""
+      @thread = Thread.new { serve(status, headers, body) }
+    end
+
+    def close
+      @server.close unless @server.closed?
+      @thread.join
+    end
+
+    private
+
+    def serve(status, headers, body)
+      socket = @server.accept
+      @request = read_headers(socket)
+      response_headers = headers.merge(
+        "Content-Length" => body.bytesize.to_s,
+        "Connection" => "close"
+      )
+      socket.write("HTTP/1.1 #{status} #{reason(status)}\r\n")
+      response_headers.each { |name, value| socket.write("#{name}: #{value}\r\n") }
+      socket.write("\r\n")
+      socket.write(body)
+    rescue IOError
+      nil
+    ensure
+      socket&.close
+    end
+
+    def read_headers(socket)
+      buffer = +""
+      buffer << socket.readpartial(4096) until buffer.include?("\r\n\r\n")
+      buffer
+    end
+
+    def reason(status)
+      status == 200 ? "OK" : "Found"
+    end
   end
 end

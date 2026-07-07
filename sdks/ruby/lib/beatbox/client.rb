@@ -26,9 +26,7 @@ module Beatbox
     # @param api_key [String, nil] sent as x-beatbox-api-key on authed routes
     # @param timeout [Numeric] open/read/write timeout in seconds (default 65)
     def initialize(base_url:, api_key: nil, timeout: DEFAULT_TIMEOUT)
-      raise ArgumentError, "base_url is required" if base_url.nil? || base_url.to_s.empty?
-
-      @base_url = base_url.to_s.sub(%r{/+\z}, "")
+      @base_url = self.class.validate_base_url(base_url)
       @api_key = api_key
       @timeout = timeout
     end
@@ -121,7 +119,7 @@ module Beatbox
     private
 
     def request_json(method, path, body: nil, auth: false)
-      uri = URI.parse(@base_url + path)
+      uri = build_uri(path)
       http = build_http(uri)
       req = build_request(method, uri, body, auth)
 
@@ -135,8 +133,14 @@ module Beatbox
       handle_response(response)
     end
 
+    def build_uri(path)
+      raise ArgumentError, "request path must be absolute" unless path.start_with?("/")
+
+      URI.parse(@base_url + path)
+    end
+
     def build_http(uri)
-      http = Net::HTTP.new(uri.host, uri.port)
+      http = Net::HTTP.new(uri.hostname, uri.port, nil)
       http.use_ssl = uri.scheme == "https"
       http.open_timeout = @timeout
       http.read_timeout = @timeout
@@ -205,5 +209,60 @@ module Beatbox
 
       ApiError.new(status: code, code: err_code, message: err_message)
     end
+
+    def self.validate_base_url(base_url)
+      raw = base_url.to_s
+      raise ArgumentError, "base_url is required" if raw.empty?
+      raise ArgumentError, "base_url must not contain leading or trailing whitespace" if raw != raw.strip
+      raise ArgumentError, "base_url must not contain backslashes" if raw.include?("\\")
+
+      uri = parse_base_url(raw)
+      unless uri.is_a?(URI::HTTP) && %w[http https].include?(uri.scheme)
+        raise ArgumentError, "base_url must use http or https"
+      end
+      raise ArgumentError, "base_url must include a host" if uri.host.nil? || uri.host.empty?
+      raise ArgumentError, "base_url must not include credentials" if uri.userinfo || authority_includes_userinfo?(raw)
+      raise ArgumentError, "base_url must not include a query string" if uri.query
+      raise ArgumentError, "base_url must not include a fragment" if uri.fragment
+      if uri.scheme == "http" && !loopback_literal?(uri.hostname)
+        raise ArgumentError, "http base_url is allowed only for 127.0.0.1 or [::1]"
+      end
+
+      validate_base_path(uri.path)
+      raw.sub(%r{/+\z}, "")
+    end
+
+    def self.parse_base_url(raw)
+      URI.parse(raw)
+    rescue URI::InvalidURIError
+      raise ArgumentError, "invalid base_url"
+    end
+    private_class_method :parse_base_url
+
+    def self.authority_includes_userinfo?(raw)
+      raw.match?(%r{\Ahttps?://[^/?#@]*@}i)
+    end
+    private_class_method :authority_includes_userinfo?
+
+    def self.loopback_literal?(host)
+      host == "127.0.0.1" || host == "::1"
+    end
+    private_class_method :loopback_literal?
+
+    def self.validate_base_path(path)
+      return if path.nil? || path.empty?
+
+      if path.match?(/%(?:2f|5c)/i)
+        raise ArgumentError, "base_url path must not include encoded path separators"
+      end
+
+      path.split("/", -1).each do |segment|
+        decoded = URI::DEFAULT_PARSER.unescape(segment)
+        if segment == "." || segment == ".." || decoded == "." || decoded == ".."
+          raise ArgumentError, "base_url path must not include dot segments"
+        end
+      end
+    end
+    private_class_method :validate_base_path
   end
 end

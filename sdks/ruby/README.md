@@ -67,7 +67,7 @@ BEATBOX_API_KEY=... ruby -Ilib examples/add_one.rb
 
 ```ruby
 Beatbox::Client.new(
-  base_url: "http://127.0.0.1:7300", # required; trailing slashes trimmed
+  base_url: "http://127.0.0.1:7300", # required; HTTPS, or HTTP only for loopback literals
   api_key: ENV["BEATBOX_API_KEY"],   # optional
   timeout: 65                        # optional, seconds (default 65)
 )
@@ -76,6 +76,12 @@ Beatbox::Client.new(
 When `api_key` is set it is sent as the `x-beatbox-api-key` header on every
 request **except** `health` and `openapi`, which are unauthenticated. Redirects
 are never followed, so the api key cannot leak to another origin.
+
+`base_url` is validated when the client is constructed. Production clients
+should use HTTPS. Plain HTTP is accepted only for exact loopback IP literals
+(`127.0.0.1` and `[::1]`) for local development. URLs with credentials, query
+strings, fragments, dot-segment paths, encoded path separators, or leading or
+trailing whitespace are rejected before any request can be built.
 
 ## Methods
 
