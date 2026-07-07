@@ -29,10 +29,11 @@ use beatbox_core::{
     BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
     BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
     BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile, BrowserSensitivity,
-    BrowserSessionActor, BrowserStorageGuardPlan, CapabilitiesResponse, CapabilityLane,
-    CapabilityLimits, CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
-    ExecutionStatus, JobRecord, Lane, Policy, Source, browser_adapter_launch_template_expires_at,
+    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan,
+    BrowserSuppressionGuardPlan, CapabilitiesResponse, CapabilityLane, CapabilityLimits,
+    CreateJobResponse, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus,
+    JobRecord, Lane, Policy, Source, browser_adapter_launch_template_expires_at,
     browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
@@ -209,6 +210,7 @@ struct AppState {
 struct BrowserAdapterCapabilityRecord {
     actor: BrowserSessionActor,
     sensitivity: BrowserSensitivity,
+    sensitive_activity_mode: Option<BrowserSensitiveActivityMode>,
     adapter_id: Option<String>,
     expires_at: Instant,
     used: bool,
@@ -1283,6 +1285,7 @@ fn browser_adapter_launch_request_template_with_lease(
         requested_level: request.requested_level.clone(),
         actor: request.actor.clone(),
         sensitivity: request.sensitivity.clone(),
+        sensitive_activity_mode: request.sensitive_activity_mode.clone(),
         target_origins: request.target_origins.clone(),
         credential_mode: request.credential_mode.clone(),
         artifact_mode: request.artifact_mode.clone(),
@@ -1419,6 +1422,7 @@ fn browser_adapter_capability_issue_response(
             BrowserAdapterCapabilityRecord {
                 actor: request.actor.clone(),
                 sensitivity: request.sensitivity.clone(),
+                sensitive_activity_mode: request.sensitive_activity_mode.clone(),
                 adapter_id: request.adapter_id.clone(),
                 expires_at,
                 used: false,
@@ -1431,6 +1435,7 @@ fn browser_adapter_capability_issue_response(
         ttl_seconds,
         actor: request.actor,
         sensitivity: request.sensitivity,
+        sensitive_activity_mode: request.sensitive_activity_mode,
         adapter_id: request.adapter_id,
         registration_endpoint: "/v1/browser/adapter/register".to_string(),
         notes: vec![
@@ -1460,6 +1465,7 @@ fn browser_adapter_consume_capability(
         &request.same_user_capability,
         &request.actor,
         &request.sensitivity,
+        None,
         &request.manifest.adapter_id,
     )
 }
@@ -1469,6 +1475,7 @@ fn browser_adapter_consume_capability_for(
     same_user_capability: &str,
     actor: &BrowserSessionActor,
     sensitivity: &BrowserSensitivity,
+    sensitive_activity_mode: Option<&BrowserSensitiveActivityMode>,
     adapter_id: &str,
 ) -> bool {
     let digest = browser_adapter_capability_digest(same_user_capability);
@@ -1485,8 +1492,13 @@ fn browser_adapter_consume_capability_for(
         Some(bound_adapter_id) => bound_adapter_id == adapter_id,
         None => true,
     };
+    let sensitive_activity_mode_matches = match &record.sensitive_activity_mode {
+        Some(bound_mode) => Some(bound_mode) == sensitive_activity_mode,
+        None => true,
+    };
     if &record.actor == actor
         && &record.sensitivity == sensitivity
+        && sensitive_activity_mode_matches
         && adapter_matches
         && !record.used
         && record.expires_at > now
@@ -1789,7 +1801,7 @@ fn browser_adapter_registration_response(
         );
     } else {
         reasons.push(
-            "same-user capability was not issued by this daemon, was already used, expired, or did not match actor, sensitivity, and adapter_id"
+            "same-user capability was not issued by this daemon, was already used, expired, or did not match actor, sensitivity, adapter_id, and any bound sensitive_activity_mode"
                 .to_string(),
         );
     }
@@ -1832,6 +1844,7 @@ fn browser_adapter_launch_plan_response(
         &request.same_user_capability,
         &request.admission.actor,
         &request.admission.sensitivity,
+        Some(&request.admission.sensitive_activity_mode),
         &request.manifest.adapter_id,
     );
     let request_id = format!("bbx-browser-launch-plan-v1.{}", uuid::Uuid::new_v4());
@@ -1873,7 +1886,7 @@ fn browser_adapter_launch_plan_response(
         }
     } else {
         reasons.push(
-            "same-user capability was not issued by this daemon, was already used, expired, or did not match the admission actor, sensitivity, and adapter_id"
+            "same-user capability was not issued by this daemon, was already used, expired, or did not match the admission actor, sensitivity, sensitive_activity_mode, and adapter_id"
                 .to_string(),
         );
     }
@@ -2164,6 +2177,7 @@ fn browser_adapter_field_complete_launch_request(
         requested_level: BrowserSandboxLevel::OsIsolated,
         actor: BrowserSessionActor::Agent,
         sensitivity: BrowserSensitivity::Sensitive,
+        sensitive_activity_mode: BrowserSensitiveActivityMode::NetworkSuppressed,
         target_origins: vec!["https://example.com".to_string()],
         credential_mode: BrowserCredentialMode::NoCredentials,
         artifact_mode: BrowserArtifactMode::Discard,
@@ -2255,6 +2269,21 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
             "sensitive browser work requires an explicitly available isolated profile".to_string(),
         );
     }
+    match &request.sensitive_activity_mode {
+        BrowserSensitiveActivityMode::Standard => {}
+        BrowserSensitiveActivityMode::Private => reasons.push(format!(
+            "sensitive activity mode `{}` requires verified browser-state, credential, and persistence suppression before launch",
+            browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode)
+        )),
+        BrowserSensitiveActivityMode::NetworkSuppressed => reasons.push(format!(
+            "sensitive activity mode `{}` requires deny-by-default egress before launch",
+            browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode)
+        )),
+        BrowserSensitiveActivityMode::Sealed => reasons.push(format!(
+            "sensitive activity mode `{}` requires deny-by-default egress plus encrypted artifact sealing before launch",
+            browser_sensitive_activity_mode_wire_name(&request.sensitive_activity_mode)
+        )),
+    }
     let mut intent_warnings = Vec::new();
     if request.target_origins.is_empty() {
         intent_warnings.push(
@@ -2306,6 +2335,7 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
         selected_level: None,
         actor: request.actor,
         sensitivity: request.sensitivity,
+        sensitive_activity_mode: request.sensitive_activity_mode,
         target_origins: request.target_origins,
         credential_mode: request.credential_mode,
         artifact_mode: request.artifact_mode,
@@ -2334,7 +2364,11 @@ fn browser_admission_guard_plan(
 ) -> BrowserAdmissionGuardPlan {
     let profile_requires_egress_boundary = requested_profile_controls
         .contains(&BrowserSandboxControl::EgressPolicy)
-        || matches!(&request.sensitivity, BrowserSensitivity::Sensitive);
+        || matches!(&request.sensitivity, BrowserSensitivity::Sensitive)
+        || matches!(
+            &request.sensitive_activity_mode,
+            BrowserSensitiveActivityMode::NetworkSuppressed | BrowserSensitiveActivityMode::Sealed
+        );
     BrowserAdmissionGuardPlan {
         network: BrowserNetworkGuardPlan {
             allowed_origins: request.target_origins.clone(),
@@ -2372,15 +2406,65 @@ fn browser_admission_guard_plan(
             teardown_proof_required: requested_profile_controls
                 .contains(&BrowserSandboxControl::TeardownProof),
         },
+        suppression: browser_suppression_guard_plan(request),
         required_runtime_guards: browser_required_runtime_guards(
             &request.requested_level,
+            &request.sensitive_activity_mode,
             requested_profile_controls,
         ),
     }
 }
 
+fn browser_suppression_guard_plan(
+    request: &BrowserAdmissionRequest,
+) -> BrowserSuppressionGuardPlan {
+    let private_or_stronger = matches!(
+        &request.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Private
+            | BrowserSensitiveActivityMode::NetworkSuppressed
+            | BrowserSensitiveActivityMode::Sealed
+    );
+    let network_suppressed_or_stronger = matches!(
+        &request.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::NetworkSuppressed | BrowserSensitiveActivityMode::Sealed
+    );
+    let sealed = matches!(
+        &request.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Sealed
+    );
+    let mut required_operator_confirmations = Vec::new();
+    if private_or_stronger {
+        required_operator_confirmations.push(
+            "no ambient browser profile, cookies, extensions, or password store are reused"
+                .to_string(),
+        );
+    }
+    if network_suppressed_or_stronger {
+        required_operator_confirmations.push(
+            "egress is deny-by-default and revalidated after DNS, redirects, proxying, and retries"
+                .to_string(),
+        );
+    }
+    if sealed {
+        required_operator_confirmations.push(
+            "persisted artifacts are explicitly allowlisted and encrypted before plaintext cleanup"
+                .to_string(),
+        );
+    }
+    BrowserSuppressionGuardPlan {
+        mode: request.sensitive_activity_mode.clone(),
+        suppress_ambient_browser_state: private_or_stronger,
+        suppress_ambient_credentials: private_or_stronger,
+        suppress_unapproved_network: network_suppressed_or_stronger,
+        suppress_persistent_artifacts: private_or_stronger,
+        downgrade_requires_user_approval: true,
+        required_operator_confirmations,
+    }
+}
+
 fn browser_required_runtime_guards(
     requested_level: &BrowserSandboxLevel,
+    sensitive_activity_mode: &BrowserSensitiveActivityMode,
     requested_profile_controls: &[BrowserSandboxControl],
 ) -> Vec<String> {
     let mut guards = vec![
@@ -2411,6 +2495,27 @@ fn browser_required_runtime_guards(
     }
     if matches!(requested_level, BrowserSandboxLevel::InstrumentedExternal) {
         guards.push("external browser mode must remain unavailable for sensitive work".to_string());
+    }
+    match sensitive_activity_mode {
+        BrowserSensitiveActivityMode::Standard => {}
+        BrowserSensitiveActivityMode::Private => {
+            guards.push(
+                "private activity mode suppresses ambient browser state and persistence"
+                    .to_string(),
+            );
+        }
+        BrowserSensitiveActivityMode::NetworkSuppressed => {
+            guards.push(
+                "network_suppressed activity mode blocks unapproved egress before site interaction"
+                    .to_string(),
+            );
+        }
+        BrowserSensitiveActivityMode::Sealed => {
+            guards.push(
+                "sealed activity mode requires encrypted allowlisted artifacts and plaintext cleanup"
+                    .to_string(),
+            );
+        }
     }
     guards
 }
@@ -2900,6 +3005,15 @@ fn browser_artifact_mode_wire_name(mode: &BrowserArtifactMode) -> &'static str {
         BrowserArtifactMode::Discard => "discard",
         BrowserArtifactMode::ExplicitDownloads => "explicit_downloads",
         BrowserArtifactMode::SealedArtifacts => "sealed_artifacts",
+    }
+}
+
+fn browser_sensitive_activity_mode_wire_name(mode: &BrowserSensitiveActivityMode) -> &'static str {
+    match mode {
+        BrowserSensitiveActivityMode::Standard => "standard",
+        BrowserSensitiveActivityMode::Private => "private",
+        BrowserSensitiveActivityMode::NetworkSuppressed => "network_suppressed",
+        BrowserSensitiveActivityMode::Sealed => "sealed",
     }
 }
 
@@ -3665,6 +3779,11 @@ fn mcp_tools() -> Value {
                     },
                     "actor": {"type": "string", "enum": ["agent", "human"]},
                     "sensitivity": {"type": "string", "enum": ["public", "sensitive"]},
+                    "sensitive_activity_mode": {
+                        "type": "string",
+                        "description": "Requested privacy/suppression posture for sensitive browser activity. It is part of the fail-closed handoff contract and does not make the current daemon runnable.",
+                        "enum": ["standard", "private", "network_suppressed", "sealed"]
+                    },
                     "target_origins": {
                         "type": "array",
                         "description": "Bare public HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port; credentials, paths, queries, fragments, localhost, private/LAN IP ranges, and link-local metadata targets are rejected.",
@@ -4009,6 +4128,7 @@ fn mcp_browser_admission_request(
             "requested_level",
             "actor",
             "sensitivity",
+            "sensitive_activity_mode",
             "target_origins",
             "credential_mode",
             "artifact_mode",
@@ -4029,6 +4149,12 @@ fn mcp_browser_admission_request(
             "sensitivity",
             "admit_browser_session",
         )?,
+        sensitive_activity_mode: mcp_browser_sensitive_activity_mode_arg(
+            arguments,
+            "sensitive_activity_mode",
+            "admit_browser_session",
+        )?
+        .unwrap_or_default(),
         target_origins: mcp_string_array_arg(arguments, "target_origins", "admit_browser_session")?
             .unwrap_or_default(),
         credential_mode: mcp_browser_credential_mode_arg(
@@ -4427,6 +4553,28 @@ fn mcp_browser_artifact_mode_arg(
             other => Err((
                 -32602,
                 format!("{tool} argument `{key}` has unsupported artifact mode `{other}`"),
+            )),
+        })
+        .transpose()
+}
+
+fn mcp_browser_sensitive_activity_mode_arg(
+    arguments: &serde_json::Map<String, Value>,
+    key: &'static str,
+    tool: &'static str,
+) -> Result<Option<BrowserSensitiveActivityMode>, (i64, String)> {
+    arguments
+        .get(key)
+        .map(|_| match mcp_string_arg(arguments, key, tool)?.as_str() {
+            "standard" => Ok(BrowserSensitiveActivityMode::Standard),
+            "private" => Ok(BrowserSensitiveActivityMode::Private),
+            "network_suppressed" => Ok(BrowserSensitiveActivityMode::NetworkSuppressed),
+            "sealed" => Ok(BrowserSensitiveActivityMode::Sealed),
+            other => Err((
+                -32602,
+                format!(
+                    "{tool} argument `{key}` has unsupported sensitive activity mode `{other}`"
+                ),
             )),
         })
         .transpose()

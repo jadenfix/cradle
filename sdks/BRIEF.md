@@ -81,12 +81,13 @@ Provide ergonomic constructors so the 90% case is one line, e.g.
 Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `BrowserProfilesResponse`, `BrowserAdmissionRequest`, `BrowserAdmissionResponse`
 (including `target_origins`, `credential_mode`, `artifact_mode`,
-`required_controls`, profile `controls`, `missing_controls`, and
-`intent_warnings`, plus the browser admission `guard_plan` and
+`sensitive_activity_mode`, `required_controls`, profile `controls`,
+`missing_controls`, and `intent_warnings`, plus the browser admission
+`guard_plan` with `suppression` and
 `adapter_handoff` with its `launch_request_template`,
 `completion_proof_contract`, and `completion_report_template`; raw JSON return
 is acceptable until each language adds typed convenience models; preserve
-`issued_at`, `expires_at`, `max_session_seconds`, and
+`issued_at`, `expires_at`, `max_session_seconds`, `sensitive_activity_mode`, and
 `replay_protection_required` on every launch request envelope, plus
 `replay_protection_bound` on launch-plan responses),
 `BrowserAdapterManifestRequest`,

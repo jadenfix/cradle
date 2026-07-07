@@ -756,6 +756,17 @@
             "maxLength": 128,
             "minLength": 1
           },
+          "sensitive_activity_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserSensitiveActivityMode",
+                "description": "Optional requested browser suppression posture to bind into a later\nlaunch-plan preflight. When present, the nested admission request must\ncarry the same sensitive_activity_mode."
+              }
+            ]
+          },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
           },
@@ -780,6 +791,7 @@
           "ttl_seconds",
           "actor",
           "sensitivity",
+          "sensitive_activity_mode",
           "adapter_id",
           "registration_endpoint",
           "notes"
@@ -811,6 +823,16 @@
             "description": "Secret one-time capability. Treat as bearer material; Beatbox stores only\na digest and never echoes it from consuming preflight responses.",
             "maxLength": 256,
             "minLength": 1
+          },
+          "sensitive_activity_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserSensitiveActivityMode"
+              }
+            ]
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
@@ -1530,6 +1552,7 @@
           "requested_level",
           "actor",
           "sensitivity",
+          "sensitive_activity_mode",
           "target_origins",
           "credential_mode",
           "artifact_mode",
@@ -1627,6 +1650,9 @@
           },
           "same_user_capability_required": {
             "type": "boolean"
+          },
+          "sensitive_activity_mode": {
+            "$ref": "#/components/schemas/BrowserSensitiveActivityMode"
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
@@ -1905,6 +1931,7 @@
           "network",
           "credentials",
           "storage",
+          "suppression",
           "required_runtime_guards"
         ],
         "properties": {
@@ -1922,6 +1949,9 @@
           },
           "storage": {
             "$ref": "#/components/schemas/BrowserStorageGuardPlan"
+          },
+          "suppression": {
+            "$ref": "#/components/schemas/BrowserSuppressionGuardPlan"
           }
         }
       },
@@ -1956,6 +1986,10 @@
               "$ref": "#/components/schemas/BrowserSandboxControl"
             }
           },
+          "sensitive_activity_mode": {
+            "$ref": "#/components/schemas/BrowserSensitiveActivityMode",
+            "description": "Requested privacy/suppression posture for sensitive browser work. This\nis part of the future adapter contract and is still fail-closed until a\nproduction browser launcher enforces it."
+          },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
           },
@@ -1984,6 +2018,7 @@
           "selected_level",
           "actor",
           "sensitivity",
+          "sensitive_activity_mode",
           "target_origins",
           "credential_mode",
           "artifact_mode",
@@ -2083,6 +2118,10 @@
                 "$ref": "#/components/schemas/BrowserSandboxLevel"
               }
             ]
+          },
+          "sensitive_activity_mode": {
+            "$ref": "#/components/schemas/BrowserSensitiveActivityMode",
+            "description": "Echo of the requested privacy/suppression posture."
           },
           "sensitivity": {
             "$ref": "#/components/schemas/BrowserSensitivity"
@@ -2365,6 +2404,15 @@
           }
         }
       },
+      "BrowserSensitiveActivityMode": {
+        "type": "string",
+        "enum": [
+          "standard",
+          "private",
+          "network_suppressed",
+          "sealed"
+        ]
+      },
       "BrowserSensitivity": {
         "type": "string",
         "enum": [
@@ -2402,6 +2450,44 @@
             "type": "boolean"
           },
           "teardown_proof_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrowserSuppressionGuardPlan": {
+        "type": "object",
+        "required": [
+          "mode",
+          "suppress_ambient_browser_state",
+          "suppress_ambient_credentials",
+          "suppress_unapproved_network",
+          "suppress_persistent_artifacts",
+          "downgrade_requires_user_approval",
+          "required_operator_confirmations"
+        ],
+        "properties": {
+          "downgrade_requires_user_approval": {
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/BrowserSensitiveActivityMode"
+          },
+          "required_operator_confirmations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "suppress_ambient_browser_state": {
+            "type": "boolean"
+          },
+          "suppress_ambient_credentials": {
+            "type": "boolean"
+          },
+          "suppress_persistent_artifacts": {
+            "type": "boolean"
+          },
+          "suppress_unapproved_network": {
             "type": "boolean"
           }
         }

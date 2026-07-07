@@ -109,6 +109,7 @@ impl Default for BrowserAdapterContract {
                 "requested_level".to_string(),
                 "actor".to_string(),
                 "sensitivity".to_string(),
+                "sensitive_activity_mode".to_string(),
                 "target_origins".to_string(),
                 "credential_mode".to_string(),
                 "artifact_mode".to_string(),
@@ -137,6 +138,13 @@ impl Default for BrowserAdapterContract {
                 "guard_plan.storage.explicit_artifact_allowlist_required".to_string(),
                 "guard_plan.storage.encryption_required_for_persistence".to_string(),
                 "guard_plan.storage.teardown_proof_required".to_string(),
+                "guard_plan.suppression.mode".to_string(),
+                "guard_plan.suppression.suppress_ambient_browser_state".to_string(),
+                "guard_plan.suppression.suppress_ambient_credentials".to_string(),
+                "guard_plan.suppression.suppress_unapproved_network".to_string(),
+                "guard_plan.suppression.suppress_persistent_artifacts".to_string(),
+                "guard_plan.suppression.downgrade_requires_user_approval".to_string(),
+                "guard_plan.suppression.required_operator_confirmations".to_string(),
                 "guard_plan.required_runtime_guards".to_string(),
             ],
             required_completion_proofs: vec![
@@ -192,6 +200,16 @@ pub enum BrowserArtifactMode {
     Discard,
     ExplicitDownloads,
     SealedArtifacts,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSensitiveActivityMode {
+    #[default]
+    Standard,
+    Private,
+    NetworkSuppressed,
+    Sealed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -265,10 +283,38 @@ impl Default for BrowserStorageGuardPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserSuppressionGuardPlan {
+    pub mode: BrowserSensitiveActivityMode,
+    pub suppress_ambient_browser_state: bool,
+    pub suppress_ambient_credentials: bool,
+    pub suppress_unapproved_network: bool,
+    pub suppress_persistent_artifacts: bool,
+    pub downgrade_requires_user_approval: bool,
+    pub required_operator_confirmations: Vec<String>,
+}
+
+impl Default for BrowserSuppressionGuardPlan {
+    fn default() -> Self {
+        Self {
+            mode: BrowserSensitiveActivityMode::Standard,
+            suppress_ambient_browser_state: false,
+            suppress_ambient_credentials: false,
+            suppress_unapproved_network: false,
+            suppress_persistent_artifacts: false,
+            downgrade_requires_user_approval: true,
+            required_operator_confirmations: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdmissionGuardPlan {
     pub network: BrowserNetworkGuardPlan,
     pub credentials: BrowserCredentialGuardPlan,
     pub storage: BrowserStorageGuardPlan,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub suppression: BrowserSuppressionGuardPlan,
     pub required_runtime_guards: Vec<String>,
 }
 
@@ -278,6 +324,7 @@ impl Default for BrowserAdmissionGuardPlan {
             network: BrowserNetworkGuardPlan::default(),
             credentials: BrowserCredentialGuardPlan::default(),
             storage: BrowserStorageGuardPlan::default(),
+            suppression: BrowserSuppressionGuardPlan::default(),
             required_runtime_guards: vec![
                 "fresh server-issued guard plan required before browser launch".to_string(),
             ],
@@ -492,6 +539,9 @@ pub struct BrowserAdapterLaunchRequest {
     pub requested_level: BrowserSandboxLevel,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode: BrowserSensitiveActivityMode,
     pub target_origins: Vec<String>,
     pub credential_mode: BrowserCredentialMode,
     pub artifact_mode: BrowserArtifactMode,
@@ -531,6 +581,8 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
             requested_level: BrowserSandboxLevel,
             actor: BrowserSessionActor,
             sensitivity: BrowserSensitivity,
+            #[serde(default)]
+            sensitive_activity_mode: BrowserSensitiveActivityMode,
             #[serde(default)]
             target_origins: Vec<String>,
             credential_mode: BrowserCredentialMode,
@@ -572,6 +624,7 @@ impl<'de> Deserialize<'de> for BrowserAdapterLaunchRequest {
             requested_level: wire.requested_level,
             actor: wire.actor,
             sensitivity: wire.sensitivity,
+            sensitive_activity_mode: wire.sensitive_activity_mode,
             target_origins: wire.target_origins,
             credential_mode: wire.credential_mode,
             artifact_mode: wire.artifact_mode,
@@ -604,6 +657,7 @@ impl Default for BrowserAdapterLaunchRequest {
             requested_level: BrowserSandboxLevel::OsIsolated,
             actor: BrowserSessionActor::Agent,
             sensitivity: BrowserSensitivity::Sensitive,
+            sensitive_activity_mode: BrowserSensitiveActivityMode::NetworkSuppressed,
             target_origins,
             credential_mode: BrowserCredentialMode::NoCredentials,
             artifact_mode: BrowserArtifactMode::Discard,
@@ -768,6 +822,11 @@ pub struct BrowserAdapterContractResponse {
 pub struct BrowserAdapterCapabilityIssueRequest {
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    /// Optional requested browser suppression posture to bind into a later
+    /// launch-plan preflight. When present, the nested admission request must
+    /// carry the same sensitive_activity_mode.
+    #[serde(default)]
+    pub sensitive_activity_mode: Option<BrowserSensitiveActivityMode>,
     /// Optional adapter identifier to bind the capability to. When present, any
     /// consuming registration or launch-plan preflight must use the same
     /// manifest adapter_id.
@@ -792,6 +851,9 @@ pub struct BrowserAdapterCapabilityIssueResponse {
     pub ttl_seconds: u64,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode: Option<BrowserSensitiveActivityMode>,
     #[schema(required = true)]
     pub adapter_id: Option<String>,
     pub registration_endpoint: String,
@@ -921,6 +983,11 @@ pub struct BrowserAdmissionRequest {
     pub requested_level: BrowserSandboxLevel,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    /// Requested privacy/suppression posture for sensitive browser work. This
+    /// is part of the future adapter contract and is still fail-closed until a
+    /// production browser launcher enforces it.
+    #[serde(default)]
+    pub sensitive_activity_mode: BrowserSensitiveActivityMode,
     /// Bare public HTTP(S) origins this browser session is allowed to target.
     /// Entries must contain only scheme, host, and optional port. The runtime
     /// rejects credentials, paths, queries, fragments, localhost, private/LAN
@@ -959,6 +1026,10 @@ pub struct BrowserAdmissionResponse {
     pub selected_level: Option<BrowserSandboxLevel>,
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
+    /// Echo of the requested privacy/suppression posture.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub sensitive_activity_mode: BrowserSensitiveActivityMode,
     /// Echo of the validated target origins from the admission request.
     #[serde(default)]
     #[schema(required = true)]
@@ -1559,6 +1630,10 @@ mod tests {
             BrowserCredentialMode::NoCredentials
         );
         assert_eq!(response.artifact_mode, BrowserArtifactMode::Discard);
+        assert_eq!(
+            response.sensitive_activity_mode,
+            BrowserSensitiveActivityMode::Standard
+        );
         assert_eq!(response.intent_warnings, Vec::<String>::new());
         assert_eq!(
             response.guard_plan.network.allowed_origins,
@@ -1576,6 +1651,11 @@ mod tests {
         );
         assert!(!response.guard_plan.credentials.ambient_credentials_allowed);
         assert!(response.guard_plan.storage.teardown_proof_required);
+        assert_eq!(
+            response.guard_plan.suppression.mode,
+            BrowserSensitiveActivityMode::Standard
+        );
+        assert!(!response.guard_plan.suppression.suppress_unapproved_network);
         assert!(
             response
                 .guard_plan
@@ -1710,6 +1790,14 @@ mod tests {
         );
         assert!(request.replay_protection_required);
         assert_eq!(request.adapter_id.as_deref(), Some("tempo-old-adapter"));
+        assert_eq!(
+            request.sensitive_activity_mode,
+            BrowserSensitiveActivityMode::Standard
+        );
+        assert_eq!(
+            request.guard_plan.suppression.mode,
+            BrowserSensitiveActivityMode::Standard
+        );
         assert!(
             request
                 .completion_proof_contract

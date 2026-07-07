@@ -392,6 +392,8 @@ mod tests {
                 requested_level: BrowserSandboxLevel::OsIsolated,
                 actor: BrowserSessionActor::Agent,
                 sensitivity: BrowserSensitivity::Sensitive,
+                sensitive_activity_mode:
+                    beatbox_core::BrowserSensitiveActivityMode::NetworkSuppressed,
                 target_origins: vec!["https://example.com".to_string()],
                 credential_mode: BrowserCredentialMode::NoCredentials,
                 artifact_mode: BrowserArtifactMode::Discard,
@@ -415,6 +417,7 @@ mod tests {
         assert!(request.contains(r#""requested_level":"os_isolated""#));
         assert!(request.contains(r#""actor":"agent""#));
         assert!(request.contains(r#""sensitivity":"sensitive""#));
+        assert!(request.contains(r#""sensitive_activity_mode":"network_suppressed""#));
         assert!(request.contains(r#""target_origins":["https://example.com"]"#));
         assert!(request.contains(r#""credential_mode":"no_credentials""#));
         assert!(request.contains(r#""artifact_mode":"discard""#));
@@ -527,7 +530,7 @@ mod tests {
             request_tx
                 .send(request)
                 .map_err(|_| std::io::Error::other("request receiver dropped"))?;
-            let body = r#"{"same_user_capability":"bbx-browser-adapter-cap-v1.test.fixture","expires_at":"2026-07-06T20:00:00Z","ttl_seconds":60,"actor":"agent","sensitivity":"sensitive","adapter_id":"tempo-os-jail-v1","registration_endpoint":"/v1/browser/adapter/register","notes":["keep it out of logs"]}"#;
+            let body = r#"{"same_user_capability":"bbx-browser-adapter-cap-v1.test.fixture","expires_at":"2026-07-06T20:00:00Z","ttl_seconds":60,"actor":"agent","sensitivity":"sensitive","sensitive_activity_mode":null,"adapter_id":"tempo-os-jail-v1","registration_endpoint":"/v1/browser/adapter/register","notes":["keep it out of logs"]}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -542,6 +545,7 @@ mod tests {
             .browser_adapter_capability(&BrowserAdapterCapabilityIssueRequest {
                 actor: BrowserSessionActor::Agent,
                 sensitivity: BrowserSensitivity::Sensitive,
+                sensitive_activity_mode: None,
                 adapter_id: Some("tempo-os-jail-v1".to_string()),
                 ttl_seconds: Some(60),
             })
@@ -556,12 +560,14 @@ mod tests {
         assert!(request.contains("x-beatbox-api-key: secret"));
         assert!(request.contains("content-type: application/json"));
         assert!(request.contains(r#""adapter_id":"tempo-os-jail-v1""#));
+        assert!(request.contains(r#""sensitive_activity_mode":null"#));
         assert!(request.contains(r#""ttl_seconds":60"#));
         assert_eq!(
             issued.same_user_capability,
             "bbx-browser-adapter-cap-v1.test.fixture"
         );
         assert_eq!(issued.ttl_seconds, 60);
+        assert_eq!(issued.sensitive_activity_mode, None);
         assert_eq!(issued.adapter_id.as_deref(), Some("tempo-os-jail-v1"));
         Ok(())
     }

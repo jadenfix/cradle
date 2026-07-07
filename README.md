@@ -59,9 +59,14 @@ egress boundary, storage policy, and teardown path enforce the claim. Call
 browser work; callers can include `required_controls` such as `fresh_profile`,
 `egress_policy`, `local_network_block`, `sealed_artifacts`, or OS/remote
 isolation controls. They can also declare `target_origins`,
-`credential_mode`, and `artifact_mode` so Tempo can bind a user or agent's
-intent to an origin allowlist, credential posture, and persistence posture
-before any browser starts. Target origins must be public HTTP(S) origins only:
+`credential_mode`, `artifact_mode`, and `sensitive_activity_mode` so Tempo can
+bind a user or agent's intent to an origin allowlist, credential posture,
+persistence posture, and explicit suppression level before any browser starts.
+The activity modes are `standard`, `private`, `network_suppressed`, and
+`sealed`; Beatbox echoes the mode and derives `guard_plan.suppression` booleans
+for ambient browser state, credentials, unapproved network, and persistence,
+but still treats them as planned enforcement until a real launcher binds them.
+Target origins must be public HTTP(S) origins only:
 paths, credentials, localhost, private/LAN addresses, and link-local metadata
 targets are rejected at preflight. Admission responses include a `guard_plan`
 that spells out the network, credential, storage, DNS/redirect revalidation,
@@ -89,9 +94,11 @@ launch, and the response keeps `launchable`, `trusted_for_sensitive_work`, and
 short-lived one-time same-user adapter capabilities. It requires daemon auth to
 be configured, stores only a digest in memory, never appears as an MCP tool, and
 returns bearer material that callers must keep out of model-visible transcripts.
-A capability can be consumed by either a matching registration preflight or a
-matching launch-plan preflight, so callers should issue a fresh capability for
-each consuming operation.
+A capability can optionally bind an adapter id and `sensitive_activity_mode`;
+mode-bound capabilities are accepted only by launch-plan admissions with the
+same mode. A capability can be consumed by either a matching registration
+preflight or a matching launch-plan preflight, so callers should issue a fresh
+capability for each consuming operation.
 `POST /v1/browser/adapter/register` and MCP `register_browser_adapter` define
 the future Tempo adapter registration preflight. Callers submit actor,
 sensitivity, a same-user capability, and the adapter manifest in one request.
@@ -107,7 +114,7 @@ browser admission intent, and adapter manifest together; Beatbox consumes a
 matching live capability at most once and returns a server-issued
 `launch_request` envelope plus completion report template without echoing the
 capability. The live envelope includes `issued_at`, `expires_at`,
-`max_session_seconds`, `replay_protection_required`, and
+`max_session_seconds`, `sensitive_activity_mode`, `replay_protection_required`, and
 `replay_protection_bound` so Tempo can tell whether this daemon recorded the
 request id in its bounded replay ledger. `POST
 /v1/browser/adapter/launch/claim` is the follow-up REST-only preflight Tempo

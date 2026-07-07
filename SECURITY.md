@@ -25,15 +25,17 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   MCP `admit_browser_session` are authenticated fail-closed preflight gates; the
   current decision is always rejected, even when downgrade is allowed. Callers
   may request specific isolation controls and declare target origins,
-  credential mode, and artifact mode, but those controls remain planned
-  metadata until a real implementation enforces fresh profiles, network
-  suppression or allowlisting, credential isolation, teardown, and any stated
-  encryption behavior in the production call path. Target origin declarations
+  credential mode, artifact mode, and `sensitive_activity_mode`, but those
+  controls remain planned metadata until a real implementation enforces fresh
+  profiles, network suppression or allowlisting, credential isolation,
+  teardown, suppression of ambient browser state or unapproved persistence, and
+  any stated encryption behavior in the production call path. Target origin declarations
   reject paths, credentials, localhost, private/LAN IP space, and link-local
   metadata targets so future browser adapters cannot silently turn a sensitive
   browsing preflight into local control-plane or network exploration.
-  Admission responses include a `guard_plan`, but it is a required future
-  enforcement plan, not evidence that browser isolation is currently active.
+  Admission responses include a `guard_plan`, including
+  `guard_plan.suppression`, but it is a required future enforcement plan, not
+  evidence that browser isolation or suppression is currently active.
   The `adapter_handoff` contract remains fail-closed: `launchable` is false and
   `launch_endpoint` is null until a production launcher, teardown path, and
   proof channel exist. Its `launch_request_template` is a secret-free fixture
@@ -61,7 +63,9 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   A matched capability may set `same_user_capability_bound`, but the response
   still rejects launch and keeps `launchable`, `trusted_for_sensitive_work`,
   and `endpoint_network_policy_bound` false until production endpoint binding,
-  launch, and teardown verification exist. Capability-bound launch plans are
+  launch, and teardown verification exist. Capabilities can optionally bind a
+  `sensitive_activity_mode`; a mismatch fails closed and does not make a
+  weaker or stronger mode launchable. Capability-bound launch plans are
   recorded in a bounded in-memory replay ledger, and
   `/v1/browser/adapter/launch/claim` can claim one unmodified, unexpired
   server-issued envelope exactly once. Claim success is not endpoint trust or

@@ -66,8 +66,13 @@ callers should not parse a second serialized JSON copy out of text.
 `POST /v1/browser/admit` and the MCP `admit_browser_session` tool are the
 fail-closed preflight path for browser work. Callers submit the requested
 sandbox level, actor, sensitivity, target origins, credential mode, artifact
-mode, required isolation controls, and any explicit downgrade allowance before
-starting browser automation. Target origins are validated as bare public
+mode, `sensitive_activity_mode`, required isolation controls, and any explicit
+downgrade allowance before starting browser automation. The activity mode is a
+separate privacy/suppression intent, not a sandbox level: `standard`,
+`private`, `network_suppressed`, and `sealed` derive
+`guard_plan.suppression` requirements for ambient state, credentials,
+unapproved egress, persistence, and operator downgrade confirmation. Target
+origins are validated as bare public
 HTTP(S) origins: no paths, credentials, localhost, private/LAN IP space, or
 link-local metadata targets. Profiles publish their planned controls
 (`fresh_profile`, `egress_policy`, `local_network_block`, `sealed_artifacts`,
@@ -75,8 +80,9 @@ OS/remote isolation, and teardown proof) so Tempo can reason about what a level
 would satisfy without guessing from display text. The response echoes the
 requested intent, reports the requested profile's planned controls, lists
 missing controls, surfaces intent warnings, and returns a `guard_plan` for the
-network, credential, storage, DNS/redirect revalidation, and runtime guards a
-future browser adapter must enforce. It also returns `adapter_handoff`, a
+network, credential, storage, suppression, DNS/redirect revalidation, and
+runtime guards a future browser adapter must enforce. It also returns
+`adapter_handoff`, a
 non-launchable handoff contract that names the exact admission fields and
 completion proofs a Tempo-side adapter must bind before any future launch path
 can be trusted. The handoff includes `launch_request_template`, a concrete
@@ -104,8 +110,10 @@ issuer. It is deliberately absent from MCP, requires configured daemon auth
 rather than no-op auth mode, stores only a SHA-256 digest in bounded in-memory
 state, prunes expired entries, and returns a short-lived one-time bearer
 candidate for the local control plane to submit to registration or launch-plan
-preflight. Issuance is not model-facing and does not make any adapter trusted
-or launchable.
+preflight. Capabilities may optionally bind a `sensitive_activity_mode`; such
+capabilities can be consumed only by launch-plan admission with the same mode.
+Issuance is not model-facing and does not make any adapter trusted or
+launchable.
 
 `POST /v1/browser/adapter/register` and MCP `register_browser_adapter` are the
 fail-closed registration preflight. They require a caller-supplied same-user
@@ -141,6 +149,9 @@ consumes a matching one-time capability, and emits a server-issued
 carry into a future adapter launcher. Live launch-plan envelopes use current
 server `issued_at`/`expires_at` values, require request-id replay protection,
 and record capability-bound envelopes in a bounded in-memory replay ledger.
+The launch request carries `sensitive_activity_mode` and the derived
+`guard_plan.suppression` section, so Tempo-side adapters must preserve those
+fields for claim-time canonical comparison.
 `POST /v1/browser/adapter/launch/claim` is the REST-only Tempo-side claim
 preflight for that ledger: callers submit the full launch request, Beatbox
 compares it with the canonical stored envelope, and exactly one unexpired match

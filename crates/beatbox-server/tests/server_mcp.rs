@@ -9,10 +9,11 @@ use beatbox_core::{
     BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestResponse,
     BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
     BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
-    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSensitivity,
-    BrowserSessionActor, CreateJobResponse, ErrorResponse, ExecuteRequest, ExecutionResult,
-    ExecutionStatus, JobRecord, JobStatus, Lane, Policy, Source,
-    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel,
+    BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, CreateJobResponse,
+    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane,
+    Policy, Source, browser_adapter_launch_template_expires_at,
+    browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
@@ -63,6 +64,13 @@ fn complete_adapter_manifest() -> serde_json::Value {
             "guard_plan.storage.explicit_artifact_allowlist_required",
             "guard_plan.storage.encryption_required_for_persistence",
             "guard_plan.storage.teardown_proof_required",
+            "guard_plan.suppression.mode",
+            "guard_plan.suppression.suppress_ambient_browser_state",
+            "guard_plan.suppression.suppress_ambient_credentials",
+            "guard_plan.suppression.suppress_unapproved_network",
+            "guard_plan.suppression.suppress_persistent_artifacts",
+            "guard_plan.suppression.downgrade_requires_user_approval",
+            "guard_plan.suppression.required_operator_confirmations",
             "guard_plan.required_runtime_guards"
         ],
         "completion_proofs": [
@@ -110,6 +118,7 @@ fn complete_adapter_launch_plan(same_user_capability: &str) -> serde_json::Value
             "requested_level": "os_isolated",
             "actor": "agent",
             "sensitivity": "sensitive",
+            "sensitive_activity_mode": "network_suppressed",
             "target_origins": ["https://bank.example"],
             "credential_mode": "no_credentials",
             "artifact_mode": "discard",
@@ -1024,6 +1033,7 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         requested_level: BrowserSandboxLevel::OsIsolated,
         actor: BrowserSessionActor::Agent,
         sensitivity: BrowserSensitivity::Sensitive,
+        sensitive_activity_mode: BrowserSensitiveActivityMode::Sealed,
         target_origins: vec!["https://bank.example".to_string()],
         credential_mode: BrowserCredentialMode::UserMediated,
         artifact_mode: BrowserArtifactMode::SealedArtifacts,
@@ -1066,6 +1076,10 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     assert_eq!(decision.selected_level, None);
     assert_eq!(decision.actor, BrowserSessionActor::Agent);
     assert_eq!(decision.sensitivity, BrowserSensitivity::Sensitive);
+    assert_eq!(
+        decision.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Sealed
+    );
     assert_eq!(decision.target_origins, vec!["https://bank.example"]);
     assert_eq!(
         decision.credential_mode,
@@ -1112,6 +1126,31 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .encryption_required_for_persistence
     );
     assert!(decision.guard_plan.storage.teardown_proof_required);
+    assert_eq!(
+        decision.guard_plan.suppression.mode,
+        BrowserSensitiveActivityMode::Sealed
+    );
+    assert!(
+        decision
+            .guard_plan
+            .suppression
+            .suppress_ambient_browser_state
+    );
+    assert!(decision.guard_plan.suppression.suppress_unapproved_network);
+    assert!(
+        decision
+            .guard_plan
+            .suppression
+            .suppress_persistent_artifacts
+    );
+    assert!(
+        decision
+            .guard_plan
+            .suppression
+            .required_operator_confirmations
+            .iter()
+            .any(|confirmation| confirmation.contains("encrypted"))
+    );
     assert!(
         decision
             .guard_plan
@@ -1144,6 +1183,13 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .adapter_handoff
             .handoff_fields
             .iter()
+            .any(|field| field == "sensitive_activity_mode")
+    );
+    assert!(
+        decision
+            .adapter_handoff
+            .handoff_fields
+            .iter()
             .any(|field| field == "guard_plan")
     );
     assert_eq!(
@@ -1168,6 +1214,13 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     assert_eq!(
         decision.adapter_handoff.launch_request_template.sensitivity,
         BrowserSensitivity::Sensitive
+    );
+    assert_eq!(
+        decision
+            .adapter_handoff
+            .launch_request_template
+            .sensitive_activity_mode,
+        BrowserSensitiveActivityMode::Sealed
     );
     assert!(
         decision
@@ -1990,6 +2043,10 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert_eq!(plan.adapter_id, "tempo-os-jail-v1");
     assert_eq!(plan.actor, BrowserSessionActor::Agent);
     assert_eq!(plan.sensitivity, BrowserSensitivity::Sensitive);
+    assert_eq!(
+        plan.admission.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::NetworkSuppressed
+    );
     assert!(plan.request_id.starts_with("bbx-browser-launch-plan-v1."));
     assert_eq!(plan.launch_request.request_id, plan.request_id);
     let issued_at =
@@ -2013,6 +2070,16 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert_eq!(
         plan.launch_request.target_origins,
         vec!["https://bank.example".to_string()]
+    );
+    assert_eq!(
+        plan.launch_request.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::NetworkSuppressed
+    );
+    assert!(
+        plan.launch_request
+            .guard_plan
+            .suppression
+            .suppress_unapproved_network
     );
     assert_eq!(
         plan.launch_request.completion_report_template.request_id,
@@ -2040,7 +2107,7 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
 
     let claim_request = json!({ "launch_request": plan.launch_request });
     let mut mutated_claim = claim_request.clone();
-    mutated_claim["launch_request"]["target_origins"] = json!(["https://evil.example"]);
+    mutated_claim["launch_request"]["sensitive_activity_mode"] = json!("sealed");
     let response = app
         .clone()
         .oneshot(
@@ -2177,6 +2244,109 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
 }
 
 #[tokio::test]
+async fn browser_adapter_launch_plan_binds_sensitive_activity_mode_capability()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut config = ServerConfig::new(BeatboxEngine::new()?);
+    config.auth = AuthMode::required("secret")?;
+    let app = router(config);
+
+    let mismatched_issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "sensitive_activity_mode": "private",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(mismatched_issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let mismatched: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    assert_eq!(
+        mismatched.sensitive_activity_mode,
+        Some(BrowserSensitiveActivityMode::Private)
+    );
+
+    let launch_plan = complete_adapter_launch_plan(&mismatched.same_user_capability);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert_eq!(
+        plan.admission.sensitive_activity_mode,
+        BrowserSensitiveActivityMode::NetworkSuppressed
+    );
+    assert!(!plan.same_user_capability_bound);
+    assert!(!plan.replay_protection_bound);
+    assert!(!plan.launchable);
+    assert!(plan.reasons.iter().any(|reason| {
+        reason.contains("sensitive_activity_mode") && reason.contains("adapter_id")
+    }));
+
+    let matching_issue = json!({
+        "actor": "agent",
+        "sensitivity": "sensitive",
+        "sensitive_activity_mode": "network_suppressed",
+        "adapter_id": "tempo-os-jail-v1"
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/capability")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(matching_issue.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let matching: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
+    assert_eq!(
+        matching.sensitive_activity_mode,
+        Some(BrowserSensitiveActivityMode::NetworkSuppressed)
+    );
+
+    let launch_plan = complete_adapter_launch_plan(&matching.same_user_capability);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/adapter/launch/plan")
+                .header("content-type", "application/json")
+                .header("x-beatbox-api-key", "secret")
+                .body(Body::from(launch_plan.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let plan: BrowserAdapterLaunchPlanResponse = serde_json::from_slice(&body)?;
+    assert!(plan.same_user_capability_bound);
+    assert!(plan.replay_protection_bound);
+    assert!(!plan.launchable);
+    Ok(())
+}
+
+#[tokio::test]
 async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
@@ -2217,6 +2387,9 @@ async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let mismatch: BrowserAdapterRegistrationResponse = serde_json::from_slice(&body)?;
     assert!(!mismatch.same_user_capability_bound);
+    assert!(mismatch.reasons.iter().any(|reason| {
+        reason.contains("sensitive_activity_mode") && reason.contains("adapter_id")
+    }));
 
     let issue = json!({
         "actor": "agent",
@@ -2949,6 +3122,8 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdmissionResponse",
         "BrowserAdmissionDecision",
         "BrowserAdmissionGuardPlan",
+        "BrowserSensitiveActivityMode",
+        "BrowserSuppressionGuardPlan",
         "BrowserAdapterHandoff",
         "BrowserSessionActor",
         "BrowserSensitivity",
@@ -3049,6 +3224,34 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required.iter().any(|field| field == "manifest_validation")
             ),
         "adapter launch plan response should require the fail-closed launch envelope"
+    );
+    assert!(
+        schemas["BrowserAdmissionRequest"]["properties"]
+            .as_object()
+            .is_some_and(|properties| properties.contains_key("sensitive_activity_mode")),
+        "browser admission request should expose sensitive_activity_mode"
+    );
+    assert!(
+        schemas["BrowserAdmissionResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "sensitive_activity_mode")),
+        "browser admission response should require sensitive_activity_mode"
+    );
+    assert!(
+        schemas["BrowserAdapterLaunchRequest"]["required"]
+            .as_array()
+            .is_some_and(|required| required
+                .iter()
+                .any(|field| field == "sensitive_activity_mode")),
+        "launch request should require sensitive_activity_mode"
+    );
+    assert!(
+        schemas["BrowserAdmissionGuardPlan"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "suppression")),
+        "guard plan should require the suppression sub-plan"
     );
     assert!(
         schemas["BrowserAdapterLaunchClaimResponse"]["required"]
@@ -3794,6 +3997,7 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
                 "requested_level": "network_suppressed",
                 "actor": "agent",
                 "sensitivity": "sensitive",
+                "sensitive_activity_mode": "network_suppressed",
                 "target_origins": ["https://billing.example"],
                 "credential_mode": "scoped_secrets",
                 "artifact_mode": "explicit_downloads",
@@ -3843,6 +4047,10 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         serde_json::json!("explicit_downloads")
     );
     assert_eq!(
+        result["structuredContent"]["sensitive_activity_mode"],
+        serde_json::json!("network_suppressed")
+    );
+    assert_eq!(
         result["structuredContent"]["requested_controls"],
         serde_json::json!(["egress_policy", "sealed_artifacts"])
     );
@@ -3875,6 +4083,14 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         true
     );
     assert_eq!(
+        result["structuredContent"]["guard_plan"]["suppression"]["mode"],
+        serde_json::json!("network_suppressed")
+    );
+    assert_eq!(
+        result["structuredContent"]["guard_plan"]["suppression"]["suppress_unapproved_network"],
+        true
+    );
+    assert_eq!(
         result["structuredContent"]["adapter_handoff"]["launchable"],
         false
     );
@@ -3900,6 +4116,10 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     assert_eq!(
         result["structuredContent"]["adapter_handoff"]["launch_request_template"]["target_origins"],
         serde_json::json!(["https://billing.example"])
+    );
+    assert_eq!(
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["sensitive_activity_mode"],
+        serde_json::json!("network_suppressed")
     );
     assert_eq!(
         result["structuredContent"]["adapter_handoff"]["launch_request_template"]["guard_plan"]["network"]

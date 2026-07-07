@@ -48,17 +48,18 @@ unauthenticated `health`/`openapi` routes, never in a URL, and never in an error
 message.
 
 Browser admission requests are raw JSON today. Pass through
-`target_origins`, `credential_mode`, `artifact_mode`, and `required_controls`
-exactly as described by `openapi.json`; beatbox validates unsafe target origins
-before returning the fail-closed admission decision. Admission responses also
-carry `guard_plan` and `adapter_handoff` blocks; SDKs that return raw JSON must
-preserve both, including `adapter_handoff.launch_request_template`,
+`target_origins`, `credential_mode`, `artifact_mode`,
+`sensitive_activity_mode`, and `required_controls` exactly as described by
+`openapi.json`; beatbox validates unsafe target origins before returning the
+fail-closed admission decision. Admission responses also carry `guard_plan` and
+`adapter_handoff` blocks; SDKs that return raw JSON must preserve both,
+including `guard_plan.suppression`, `adapter_handoff.launch_request_template`,
 `adapter_handoff.completion_proof_contract`, and the launch template's
 `completion_report_template`, so Tempo-style adapters can bind the future
 launch and teardown contracts without guessing. Preserve launch-envelope
-lease/replay fields (`issued_at`, `expires_at`, `max_session_seconds`, and
-`replay_protection_required`) as opaque raw JSON fields until a typed model is
-added.
+lease/replay fields (`issued_at`, `expires_at`, `max_session_seconds`,
+`sensitive_activity_mode`, and `replay_protection_required`) as opaque raw JSON
+fields until a typed model is added.
 
 Browser adapter manifests are also raw JSON today. Pass them through to
 `POST /v1/browser/adapter/validate`; beatbox validates the manifest shape and
@@ -69,9 +70,11 @@ contract and conformance profile without submitting a manifest, and
 `POST /v1/browser/adapter/capability` for the REST-only same-user capability
 issuer. The issuer requires configured daemon auth, stores only a digest, and
 returns short-lived one-time bearer material that must not be exposed to MCP or
-model transcripts. A capability can be consumed by either a matching
-registration preflight or a matching launch-plan preflight, so clients should
-issue a fresh token for each consuming operation. SDKs also expose
+model transcripts. A capability can optionally bind `sensitive_activity_mode`;
+mode-bound capabilities match only launch-plan admissions with the same mode.
+A capability can be consumed by either a matching registration preflight or a
+matching launch-plan preflight, so clients should issue a fresh token for each
+consuming operation. SDKs also expose
 `POST /v1/browser/adapter/register` for the
 future registration preflight with actor, sensitivity, an issued same-user
 capability, and manifest in one request. Beatbox consumes a matching live
