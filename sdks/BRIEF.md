@@ -89,7 +89,8 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 is acceptable until each language adds typed convenience models; preserve
 `issued_at`, `expires_at`, `max_session_seconds`, `sensitive_activity_mode`, and
 `replay_protection_required` on every launch request envelope, plus
-`replay_protection_bound` on launch-plan responses),
+`adapter_contract_fields_complete` and `replay_protection_bound` on launch-plan
+responses),
 `BrowserAdapterManifestRequest`,
 `BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
 `BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,
@@ -102,7 +103,10 @@ is acceptable until each language adds typed convenience models; preserve
 `BrowserAdapterCompletionProofRequirement`, `BrowserAdapterCompletionReport`,
 `BrowserAdapterConformanceCase`, `BrowserAdapterConformanceExpectation`,
 `BrowserAdapterValidationDecision`,
-`BrowserAdapterCompletionValidationResponse`,
+`BrowserAdapterCompletionValidationResponse` (including
+`server_issued_launch_request`, `launch_request_claimed`,
+`launch_request_envelope_matched`, `completion_report_template_matched`, and
+`completion_bound_to_claimed_launch`),
 `BrowserAdapterCompletionValidationDecision`,
 `ExecutionResult` (status, value,
 stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
@@ -112,6 +116,14 @@ stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `CreateJobResponse` (job_id), `ErrorBody` (code, message), enums
 `ExecutionStatus`/`JobStatus`/`Lane`. Unknown/extra fields must not crash
 deserialization (forward-compat).
+
+MCP tooling must not expose same-user capability bearer material. REST SDKs
+still expose `/v1/browser/adapter/register`; model-facing MCP
+`register_browser_adapter` is manifest-only and should not be mirrored as a
+capability-consuming helper.
+MCP completion validation is also shape-only: keep the launch-ledger binding
+fields false there, even though REST completion validation can report binding to
+the current daemon's claimed launch envelope.
 
 ## Error model
 

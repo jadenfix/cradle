@@ -956,6 +956,11 @@
         "required": [
           "decision",
           "report_shape_complete",
+          "server_issued_launch_request",
+          "launch_request_claimed",
+          "launch_request_envelope_matched",
+          "completion_report_template_matched",
+          "completion_bound_to_claimed_launch",
           "verified_on_production_path",
           "trusted_for_sensitive_work",
           "request_id",
@@ -977,11 +982,19 @@
           "adapter_id": {
             "type": "string"
           },
+          "completion_bound_to_claimed_launch": {
+            "type": "boolean",
+            "description": "True only for shape-complete reports that match a claimed server-issued\nlaunch envelope template. This is still not production teardown\nverification."
+          },
           "completion_proof_contract": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BrowserAdapterCompletionProofRequirement"
             }
+          },
+          "completion_report_template_matched": {
+            "type": "boolean",
+            "description": "True when the submitted report exactly matches the completion report\ntemplate embedded in the recorded launch envelope."
           },
           "contract_version": {
             "type": "string"
@@ -994,6 +1007,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "launch_request_claimed": {
+            "type": "boolean",
+            "description": "True when the server-issued launch request was already claimed by an\nadapter through the launch-claim preflight."
+          },
+          "launch_request_envelope_matched": {
+            "type": "boolean",
+            "description": "True when request_id, adapter_id, and contract_version match the\ncanonical launch envelope recorded by this daemon."
           },
           "missing_proof_ids": {
             "type": "array",
@@ -1024,6 +1045,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "server_issued_launch_request": {
+            "type": "boolean",
+            "description": "True when the report request_id is still present in this daemon's\nbounded launch replay ledger."
           },
           "trusted_for_sensitive_work": {
             "type": "boolean"
@@ -1473,6 +1498,7 @@
           "launchable",
           "trusted_for_sensitive_work",
           "endpoint_network_policy_bound",
+          "adapter_contract_fields_complete",
           "same_user_capability_bound",
           "replay_protection_bound",
           "admission",
@@ -1485,6 +1511,10 @@
         "properties": {
           "actor": {
             "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_contract_fields_complete": {
+            "type": "boolean",
+            "description": "True when the submitted adapter manifest satisfies the published field\ncontract before endpoint network-policy binding. This is not\nlaunchability."
           },
           "adapter_id": {
             "type": "string"

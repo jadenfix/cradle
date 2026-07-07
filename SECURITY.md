@@ -51,9 +51,12 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   /v1/browser/adapter/completion/validate` and MCP
   `validate_browser_adapter_completion` keep that same boundary: a
   `report_shape_complete` response only means the submitted JSON matched the
-  expected proof ids and fields, while `verified_on_production_path` and
-  `trusted_for_sensitive_work` remain false until Beatbox can bind the report
-  to a real launch request and production teardown evidence.
+  expected proof ids and fields. REST validation can additionally report binding
+  to a claimed server-issued envelope; MCP validation keeps those binding fields
+  false so model-facing tools cannot probe live launch state. In both cases,
+  `verified_on_production_path` and `trusted_for_sensitive_work` remain false
+  until Beatbox can bind the report to a real launch request and production
+  teardown evidence.
   Direct adapter contract discovery through `/v1/browser/adapter/contract` and
   MCP `get_browser_adapter_contract` is authenticated control-plane metadata
   only. It publishes the planned contract and conformance fixtures without
@@ -66,21 +69,24 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   launch, and teardown verification exist. Capabilities can optionally bind a
   `sensitive_activity_mode`; a mismatch fails closed and does not make a
   weaker or stronger mode launchable. Capability-bound launch plans are
-  recorded in a bounded in-memory replay ledger, and
-  `/v1/browser/adapter/launch/claim` can claim one unmodified, unexpired
-  server-issued envelope exactly once. Claim success is not endpoint trust or
+  recorded in a bounded in-memory replay ledger only when the manifest satisfies
+  the published adapter field contract, and `/v1/browser/adapter/launch/claim`
+  can claim one unmodified, unexpired server-issued envelope exactly once.
+  Claim parsing rejects omitted server-issued fields and unknown nested fields
+  before canonical comparison. Claim success is not endpoint trust or
   permission to launch a browser.
   Same-user adapter capability issuance through
   `/v1/browser/adapter/capability` is REST-only and must never be exposed as an
   MCP/model-facing tool. The issuer requires configured daemon auth, stores
   only a bounded in-memory digest, and returns short-lived one-time bearer
   material that must stay out of logs and transcripts.
-  Adapter registration preflight through `/v1/browser/adapter/register` and
-  MCP `register_browser_adapter` is also fail-closed. It requires a same-user
-  capability but never echoes it; a live matching issued capability can only
-  set `same_user_capability_bound`. Responses still keep `registered`,
-  `launchable`, trust, and endpoint binding false until the production control
-  path enforces those invariants.
+  Adapter registration preflight through `/v1/browser/adapter/register` is also
+  fail-closed. It requires a same-user capability but never echoes it; a live
+  matching issued capability can only set `same_user_capability_bound`.
+  MCP `register_browser_adapter` is manifest-only and must not accept or consume
+  same-user capabilities. Responses still keep `registered`, `launchable`,
+  trust, and endpoint binding false until the production control path enforces
+  those invariants.
   Adapter manifest validation is also fail-closed. It rejects unsafe launch
   endpoint shapes, reports contract gaps, and marks endpoint network-policy
   binding false because DNS/proxy/redirect/retry binding is not implemented; a

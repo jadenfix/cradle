@@ -99,28 +99,34 @@ mode-bound capabilities are accepted only by launch-plan admissions with the
 same mode. A capability can be consumed by either a matching registration
 preflight or a matching launch-plan preflight, so callers should issue a fresh
 capability for each consuming operation.
-`POST /v1/browser/adapter/register` and MCP `register_browser_adapter` define
-the future Tempo adapter registration preflight. Callers submit actor,
-sensitivity, a same-user capability, and the adapter manifest in one request.
-Beatbox validates the shape and manifest contract, consumes a live matching
-issued capability at most once, never echoes the capability, and still returns
-`registered: false`, `endpoint_network_policy_bound: false`, and `launchable:
-false` until endpoint binding, storage/teardown verification, and browser launch
-paths are implemented. A bound capability only flips
-`same_user_capability_bound`; it is not registration or launch trust.
+`POST /v1/browser/adapter/register` defines the future capability-bound Tempo
+adapter registration preflight. Callers submit actor, sensitivity, a same-user
+capability, and the adapter manifest in one REST request. Beatbox validates the
+shape and manifest contract, consumes a live matching issued capability at most
+once, never echoes the capability, and still returns `registered: false`,
+`endpoint_network_policy_bound: false`, and `launchable: false` until endpoint
+binding, storage/teardown verification, and browser launch paths are
+implemented. A bound capability only flips `same_user_capability_bound`; it is
+not registration or launch trust. MCP `register_browser_adapter` is
+manifest-only and never accepts the bearer capability, so model-facing callers
+can inspect adapter shape without exposing same-user secret material.
 `POST /v1/browser/adapter/launch/plan` is a REST-only launch-envelope
 preflight for Tempo control-plane code. It submits a same-user capability,
 browser admission intent, and adapter manifest together; Beatbox consumes a
 matching live capability at most once and returns a server-issued
 `launch_request` envelope plus completion report template without echoing the
 capability. The live envelope includes `issued_at`, `expires_at`,
-`max_session_seconds`, `sensitive_activity_mode`, `replay_protection_required`, and
-`replay_protection_bound` so Tempo can tell whether this daemon recorded the
-request id in its bounded replay ledger. `POST
+`max_session_seconds`, `sensitive_activity_mode`, `replay_protection_required`,
+`adapter_contract_fields_complete`, and `replay_protection_bound` so Tempo can
+tell whether this daemon recorded the request id in its bounded replay ledger.
+Beatbox records only when the same-user capability matches and the submitted
+manifest satisfies the adapter field contract; incomplete manifests still
+return a diagnostic launch envelope, but it is not claimable. `POST
 /v1/browser/adapter/launch/claim` is the follow-up REST-only preflight Tempo
 calls with the full `launch_request` immediately before any adapter invocation;
-Beatbox compares it with the canonical stored envelope, rejects mutations,
-rejects unknown or already-claimed ids, and marks exactly one matching claim.
+Beatbox requires every server-issued field, rejects unknown nested fields,
+compares it with the canonical stored envelope, rejects mutations, rejects
+unknown or already-claimed ids, and marks exactly one matching claim.
 Claim success is only replay-state binding, not launch trust. The launch-plan
 response remains `rejected`, `launchable: false`,
 `trusted_for_sensitive_work: false`, and `endpoint_network_policy_bound: false`
@@ -143,9 +149,14 @@ adapter authors can test compatibility without guessing.
 against the typed proof contract. They check the report shape, stable
 machine-readable `proof_ids`, and teardown evidence booleans, then return
 structured `missing_proof_ids`, `unexpected_proof_ids`, and
-`failed_evidence_fields`. This path is deliberately fail-closed:
-`verified_on_production_path` and `trusted_for_sensitive_work` stay `false`
-because Beatbox has not yet bound reports to a server-issued launch request,
+`failed_evidence_fields`. REST completion validation also reports whether the
+request id is present in this daemon's bounded launch ledger, whether the launch
+request was claimed, whether request id, adapter id, and contract version match
+the recorded envelope, and whether the report exactly matches the embedded
+completion template. MCP completion validation returns those binding fields as
+false and stays shape-only so model-facing tools cannot probe live launch state.
+This path is deliberately fail-closed: `verified_on_production_path` and
+`trusted_for_sensitive_work` stay `false` because Beatbox has not yet verified a
 real browser process, temporary profile, artifact store, or egress log.
 
 ## Ecosystem
