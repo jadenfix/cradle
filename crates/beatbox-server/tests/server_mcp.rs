@@ -1003,6 +1003,33 @@ async fn browser_profiles_are_authenticated_control_plane_metadata()
             .all(|profile| profile.availability != BrowserSandboxAvailability::Available),
         "no browser profile is runnable until a real browser substrate enforces it"
     );
+    assert_eq!(profiles.suppression_modes.len(), 4);
+    let Some(sealed_mode) = profiles
+        .suppression_modes
+        .iter()
+        .find(|mode| mode.mode == BrowserSensitiveActivityMode::Sealed)
+    else {
+        panic!("sealed suppression mode should be published");
+    };
+    assert!(!sealed_mode.runnable);
+    assert!(
+        sealed_mode
+            .compatible_levels
+            .contains(&BrowserSandboxLevel::SealedState)
+    );
+    assert!(
+        sealed_mode
+            .required_controls
+            .contains(&BrowserSandboxControl::SealedArtifacts)
+    );
+    assert!(sealed_mode.guard_plan.suppress_unapproved_network);
+    assert!(
+        sealed_mode
+            .guard_plan
+            .required_operator_confirmations
+            .iter()
+            .any(|confirmation| confirmation.contains("encrypted"))
+    );
     let Some(network_suppressed) = profiles
         .profiles
         .iter()
@@ -3447,6 +3474,7 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "BrowserAdmissionDecision",
         "BrowserAdmissionGuardPlan",
         "BrowserSensitiveActivityMode",
+        "BrowserSensitiveActivityModeContract",
         "BrowserSuppressionGuardPlan",
         "BrowserAdapterHandoff",
         "BrowserSessionActor",
@@ -3568,6 +3596,22 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
                     && required.iter().any(|field| field == "manifest_validation")
             ),
         "adapter launch plan response should require the fail-closed launch envelope"
+    );
+    assert!(
+        schemas["BrowserProfilesResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "suppression_modes")),
+        "browser profile discovery should require suppression mode metadata"
+    );
+    assert!(
+        schemas["BrowserSensitiveActivityModeContract"]["required"]
+            .as_array()
+            .is_some_and(
+                |required| required.iter().any(|field| field == "mode")
+                    && required.iter().any(|field| field == "guard_plan")
+                    && required.iter().any(|field| field == "runnable")
+            ),
+        "suppression mode contract should include mode, guard plan, and runnable status"
     );
     assert!(
         schemas["BrowserAdmissionRequest"]["properties"]
@@ -4333,7 +4377,7 @@ async fn mcp_get_browser_profiles_returns_structured_content()
     );
     assert_eq!(
         result["structuredContent"]["integration"]["selection_field"],
-        "browser_sandbox_level"
+        "requested_level"
     );
     assert_eq!(
         result["structuredContent"]["integration"]["adapter"]["launch_endpoint"],

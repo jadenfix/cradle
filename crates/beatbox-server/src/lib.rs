@@ -30,9 +30,10 @@ use beatbox_core::{
     BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
     BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
     BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
-    BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan,
-    BrowserSuppressionGuardPlan, CapabilitiesResponse, CapabilityLane, CapabilityLimits,
-    CreateJobResponse, EcosystemConsumerContract, EcosystemEndpointContract,
+    BrowserSensitiveActivityMode, BrowserSensitiveActivityModeContract, BrowserSensitivity,
+    BrowserSessionActor, BrowserStorageGuardPlan, BrowserSuppressionGuardPlan,
+    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
+    EcosystemConsumerContract, EcosystemEndpointContract,
     EcosystemIntegrationContract, EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody,
     ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
     Source, browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
@@ -1311,7 +1312,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
             consumer: "tempo".to_string(),
             endpoint: "/v1/browser/profiles".to_string(),
             admission_endpoint: "/v1/browser/admit".to_string(),
-            selection_field: "browser_sandbox_level".to_string(),
+            selection_field: "requested_level".to_string(),
             required_consumer_behavior: vec![
                 "read this endpoint before offering browser work".to_string(),
                 "call /v1/browser/admit before starting browser work".to_string(),
@@ -1321,6 +1322,7 @@ fn browser_profiles_response() -> BrowserProfilesResponse {
             ],
             adapter: browser_adapter_contract(),
         },
+        suppression_modes: browser_suppression_mode_contracts(),
         profiles: vec![
             BrowserSandboxProfile {
                 level: BrowserSandboxLevel::InstrumentedExternal,
@@ -1460,6 +1462,106 @@ fn browser_adapter_contract() -> BrowserAdapterContract {
     BrowserAdapterContract {
         status: BrowserSandboxAvailability::Planned,
         ..BrowserAdapterContract::default()
+    }
+}
+
+fn browser_suppression_mode_contracts() -> Vec<BrowserSensitiveActivityModeContract> {
+    vec![
+        browser_suppression_mode_contract(
+            BrowserSensitiveActivityMode::Standard,
+            "No extra sensitive-activity suppression beyond the selected browser profile.",
+            vec![
+                BrowserSandboxLevel::InstrumentedExternal,
+                BrowserSandboxLevel::EphemeralProfile,
+                BrowserSandboxLevel::NetworkSuppressed,
+                BrowserSandboxLevel::SealedState,
+                BrowserSandboxLevel::OsIsolated,
+                BrowserSandboxLevel::RemoteIsolated,
+            ],
+            Vec::new(),
+            vec!["implement and verify the selected browser profile before launch"],
+        ),
+        browser_suppression_mode_contract(
+            BrowserSensitiveActivityMode::Private,
+            "Suppress ambient browser state, ambient credentials, and persistent artifacts.",
+            vec![
+                BrowserSandboxLevel::EphemeralProfile,
+                BrowserSandboxLevel::NetworkSuppressed,
+                BrowserSandboxLevel::SealedState,
+                BrowserSandboxLevel::OsIsolated,
+                BrowserSandboxLevel::RemoteIsolated,
+            ],
+            vec![
+                BrowserSandboxControl::FreshProfile,
+                BrowserSandboxControl::NoAmbientCredentials,
+                BrowserSandboxControl::TeardownProof,
+            ],
+            vec![
+                "implement fresh-profile launch and verified teardown",
+                "prove no host browser profile, cookies, extensions, or password store are reused",
+            ],
+        ),
+        browser_suppression_mode_contract(
+            BrowserSensitiveActivityMode::NetworkSuppressed,
+            "Add deny-by-default egress suppression to private browser-state controls.",
+            vec![
+                BrowserSandboxLevel::NetworkSuppressed,
+                BrowserSandboxLevel::SealedState,
+                BrowserSandboxLevel::OsIsolated,
+                BrowserSandboxLevel::RemoteIsolated,
+            ],
+            vec![
+                BrowserSandboxControl::FreshProfile,
+                BrowserSandboxControl::NoAmbientCredentials,
+                BrowserSandboxControl::EgressPolicy,
+                BrowserSandboxControl::LocalNetworkBlock,
+                BrowserSandboxControl::TeardownProof,
+            ],
+            vec![
+                "implement a deny-by-default egress proxy",
+                "revalidate DNS, redirects, proxy decisions, retries, and final socket targets",
+            ],
+        ),
+        browser_suppression_mode_contract(
+            BrowserSensitiveActivityMode::Sealed,
+            "Add explicit encrypted artifact sealing to network-suppressed private browsing.",
+            vec![
+                BrowserSandboxLevel::SealedState,
+                BrowserSandboxLevel::OsIsolated,
+                BrowserSandboxLevel::RemoteIsolated,
+            ],
+            vec![
+                BrowserSandboxControl::FreshProfile,
+                BrowserSandboxControl::NoAmbientCredentials,
+                BrowserSandboxControl::EgressPolicy,
+                BrowserSandboxControl::LocalNetworkBlock,
+                BrowserSandboxControl::SealedArtifacts,
+                BrowserSandboxControl::TeardownProof,
+            ],
+            vec![
+                "implement an explicit artifact allowlist",
+                "name and enforce the encryption key policy before persisting artifacts",
+                "prove plaintext browser state is removed after sealing",
+            ],
+        ),
+    ]
+}
+
+fn browser_suppression_mode_contract(
+    mode: BrowserSensitiveActivityMode,
+    summary: &str,
+    compatible_levels: Vec<BrowserSandboxLevel>,
+    required_controls: Vec<BrowserSandboxControl>,
+    required_next_steps: Vec<&str>,
+) -> BrowserSensitiveActivityModeContract {
+    BrowserSensitiveActivityModeContract {
+        guard_plan: browser_suppression_guard_plan_for_mode(&mode),
+        mode,
+        summary: summary.to_string(),
+        compatible_levels,
+        required_controls,
+        runnable: false,
+        required_next_steps: required_next_steps.into_iter().map(str::to_string).collect(),
     }
 }
 
@@ -2837,20 +2939,23 @@ fn browser_admission_guard_plan(
 fn browser_suppression_guard_plan(
     request: &BrowserAdmissionRequest,
 ) -> BrowserSuppressionGuardPlan {
+    browser_suppression_guard_plan_for_mode(&request.sensitive_activity_mode)
+}
+
+fn browser_suppression_guard_plan_for_mode(
+    sensitive_activity_mode: &BrowserSensitiveActivityMode,
+) -> BrowserSuppressionGuardPlan {
     let private_or_stronger = matches!(
-        &request.sensitive_activity_mode,
+        sensitive_activity_mode,
         BrowserSensitiveActivityMode::Private
             | BrowserSensitiveActivityMode::NetworkSuppressed
             | BrowserSensitiveActivityMode::Sealed
     );
     let network_suppressed_or_stronger = matches!(
-        &request.sensitive_activity_mode,
+        sensitive_activity_mode,
         BrowserSensitiveActivityMode::NetworkSuppressed | BrowserSensitiveActivityMode::Sealed
     );
-    let sealed = matches!(
-        &request.sensitive_activity_mode,
-        BrowserSensitiveActivityMode::Sealed
-    );
+    let sealed = matches!(sensitive_activity_mode, BrowserSensitiveActivityMode::Sealed);
     let mut required_operator_confirmations = Vec::new();
     if private_or_stronger {
         required_operator_confirmations.push(
@@ -2871,7 +2976,7 @@ fn browser_suppression_guard_plan(
         );
     }
     BrowserSuppressionGuardPlan {
-        mode: request.sensitive_activity_mode.clone(),
+        mode: sensitive_activity_mode.clone(),
         suppress_ambient_browser_state: private_or_stronger,
         suppress_ambient_credentials: private_or_stronger,
         suppress_unapproved_network: network_suppressed_or_stronger,

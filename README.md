@@ -87,6 +87,10 @@ future Tempo-style adapters, but responses keep `launchable: false` and
 endpoint network policy, storage policy, and teardown proof path exist. See
 [ARCHITECTURE.md](./ARCHITECTURE.md) and [SECURITY.md](./SECURITY.md) for the
 full fail-closed browser contract.
+`GET /v1/browser/profiles` also publishes `suppression_modes` for
+`standard`, `private`, `network_suppressed`, and `sealed`, including compatible
+browser levels, required controls, and the guard-plan effects a future Tempo
+adapter must enforce before any sensitive activity can be considered runnable.
 
 ## Ecosystem
 

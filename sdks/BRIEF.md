@@ -90,6 +90,7 @@ Mirror these components from `openapi.json`: `CapabilitiesResponse`,
 `BrowserProfilesResponse`, `BrowserAdmissionRequest`, `BrowserAdmissionResponse`
 (including `target_origins`, `credential_mode`, `artifact_mode`,
 `sensitive_activity_mode`, `required_controls`, profile `controls`,
+profile-discovery `suppression_modes`,
 `missing_controls`, and `intent_warnings`, plus the browser admission
 `guard_plan` with `suppression` and
 `adapter_handoff` with its `launch_request_template`,
