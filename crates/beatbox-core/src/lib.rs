@@ -656,6 +656,12 @@ pub enum BrowserAdapterRegistrationDecision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAdapterLaunchPlanDecision {
+    Rejected,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterConformanceExpectation {
     pub decision: BrowserAdapterValidationDecision,
     pub manifest_complete: bool,
@@ -712,8 +718,9 @@ pub struct BrowserAdapterContractResponse {
 pub struct BrowserAdapterCapabilityIssueRequest {
     pub actor: BrowserSessionActor,
     pub sensitivity: BrowserSensitivity,
-    /// Optional adapter identifier to bind the capability to. When present, the
-    /// registration preflight must use the same manifest adapter_id.
+    /// Optional adapter identifier to bind the capability to. When present, any
+    /// consuming registration or launch-plan preflight must use the same
+    /// manifest adapter_id.
     #[serde(default)]
     #[schema(min_length = 1, max_length = 128)]
     pub adapter_id: Option<String>,
@@ -727,7 +734,7 @@ pub struct BrowserAdapterCapabilityIssueRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserAdapterCapabilityIssueResponse {
     /// Secret one-time capability. Treat as bearer material; Beatbox stores only
-    /// a digest and never echoes it from registration responses.
+    /// a digest and never echoes it from consuming preflight responses.
     #[schema(min_length = 1, max_length = 256)]
     pub same_user_capability: String,
     pub expires_at: String,
@@ -767,6 +774,36 @@ pub struct BrowserAdapterRegistrationResponse {
     pub endpoint_network_policy_bound: bool,
     pub same_user_capability_bound: bool,
     pub manifest_validation: BrowserAdapterManifestResponse,
+    pub reasons: Vec<String>,
+    pub required_next_steps: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserAdapterLaunchPlanRequest {
+    /// One-time same-user capability issued by the REST control plane. It is
+    /// consumed on a matching preflight and never echoed.
+    #[schema(min_length = 1, max_length = 256)]
+    pub same_user_capability: String,
+    pub admission: BrowserAdmissionRequest,
+    pub manifest: BrowserAdapterManifestRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct BrowserAdapterLaunchPlanResponse {
+    pub decision: BrowserAdapterLaunchPlanDecision,
+    pub request_id: String,
+    pub adapter_id: String,
+    pub actor: BrowserSessionActor,
+    pub sensitivity: BrowserSensitivity,
+    pub launchable: bool,
+    pub trusted_for_sensitive_work: bool,
+    pub endpoint_network_policy_bound: bool,
+    pub same_user_capability_bound: bool,
+    pub admission: BrowserAdmissionResponse,
+    pub manifest_validation: BrowserAdapterManifestResponse,
+    pub launch_request: BrowserAdapterLaunchRequest,
+    pub completion_validation_endpoint: String,
     pub reasons: Vec<String>,
     pub required_next_steps: Vec<String>,
 }

@@ -87,6 +87,9 @@ launch, and the response keeps `launchable`, `trusted_for_sensitive_work`, and
 short-lived one-time same-user adapter capabilities. It requires daemon auth to
 be configured, stores only a digest in memory, never appears as an MCP tool, and
 returns bearer material that callers must keep out of model-visible transcripts.
+A capability can be consumed by either a matching registration preflight or a
+matching launch-plan preflight, so callers should issue a fresh capability for
+each consuming operation.
 `POST /v1/browser/adapter/register` and MCP `register_browser_adapter` define
 the future Tempo adapter registration preflight. Callers submit actor,
 sensitivity, a same-user capability, and the adapter manifest in one request.
@@ -96,6 +99,16 @@ issued capability at most once, never echoes the capability, and still returns
 false` until endpoint binding, storage/teardown verification, and browser launch
 paths are implemented. A bound capability only flips
 `same_user_capability_bound`; it is not registration or launch trust.
+`POST /v1/browser/adapter/launch/plan` is a REST-only launch-envelope
+preflight for Tempo control-plane code. It submits a same-user capability,
+browser admission intent, and adapter manifest together; Beatbox consumes a
+matching live capability at most once and returns a server-issued
+`launch_request` envelope plus completion report template without echoing the
+capability. The response remains `rejected`, `launchable: false`,
+`trusted_for_sensitive_work: false`, and `endpoint_network_policy_bound: false`
+because no production launcher or endpoint request-builder binding exists yet.
+There is intentionally no MCP tool for this route because the request carries
+bearer capability material.
 `POST /v1/browser/adapter/validate` and MCP `validate_browser_adapter` let
 Tempo validate a proposed adapter manifest against the same contract. Validation
 reports missing levels, controls, guard fields, and completion proofs, but it

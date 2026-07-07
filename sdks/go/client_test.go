@@ -506,6 +506,67 @@ func TestRegisterBrowserAdapterMockServer(t *testing.T) {
 	}
 }
 
+func TestPlanBrowserAdapterLaunchMockServer(t *testing.T) {
+	var gotMethod, gotPath, gotKey, gotCT string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotKey = r.Header.Get(apiKeyHeader)
+		gotCT = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{
+			"decision":"rejected",
+			"request_id":"bbx-browser-launch-plan-v1.fixture",
+			"adapter_id":"tempo-os-jail-v1",
+			"actor":"agent",
+			"sensitivity":"sensitive",
+			"launchable":false,
+			"trusted_for_sensitive_work":false,
+			"endpoint_network_policy_bound":false,
+			"same_user_capability_bound":true,
+			"launch_request":{"request_id":"bbx-browser-launch-plan-v1.fixture"},
+			"completion_validation_endpoint":"/v1/browser/adapter/completion/validate"
+		}`)
+	}))
+	defer srv.Close()
+
+	req := map[string]any{
+		"same_user_capability": "test-capability-fixture",
+		"admission": map[string]any{
+			"actor":       "agent",
+			"sensitivity": "sensitive",
+		},
+		"manifest": map[string]any{
+			"adapter_id": "tempo-os-jail-v1",
+		},
+	}
+	c := New(srv.URL, WithAPIKey("secret-key"))
+	raw, err := c.PlanBrowserAdapterLaunch(context.Background(), req)
+	if err != nil {
+		t.Fatalf("PlanBrowserAdapterLaunch: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/browser/adapter/launch/plan" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if gotKey != "secret-key" || gotCT != "application/json" {
+		t.Fatalf("headers key=%q content-type=%q", gotKey, gotCT)
+	}
+	if gotBody["same_user_capability"] != "test-capability-fixture" {
+		t.Fatalf("server received unexpected launch plan body: %+v", gotBody)
+	}
+	if manifest, ok := gotBody["manifest"].(map[string]any); !ok || manifest["adapter_id"] != "tempo-os-jail-v1" {
+		t.Fatalf("server received unexpected manifest: %+v", gotBody["manifest"])
+	}
+	if !strings.Contains(string(raw), `"launchable":false`) || !strings.Contains(string(raw), `"same_user_capability_bound":true`) {
+		t.Fatalf("launch plan response not surfaced: %s", raw)
+	}
+}
+
 func TestValidateBrowserAdapterMockServer(t *testing.T) {
 	var gotMethod, gotPath, gotKey, gotCT string
 	var gotBody map[string]any

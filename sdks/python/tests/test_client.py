@@ -562,6 +562,52 @@ class TestClientRequest(unittest.TestCase):
         self.assertFalse(registration["same_user_capability_bound"])
         self.assertFalse(registration["manifest_validation"]["launchable"])
 
+    def test_browser_adapter_launch_plan_sends_auth_json(self):
+        c = Client("http://host:7300/", api_key="secret-key")
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured["req"] = req
+            body = {
+                "decision": "rejected",
+                "request_id": "bbx-browser-launch-plan-v1.fixture",
+                "adapter_id": "tempo-os-jail-v1",
+                "actor": "agent",
+                "sensitivity": "sensitive",
+                "launchable": False,
+                "trusted_for_sensitive_work": False,
+                "endpoint_network_policy_bound": False,
+                "same_user_capability_bound": True,
+                "launch_request": {
+                    "request_id": "bbx-browser-launch-plan-v1.fixture"
+                },
+                "completion_validation_endpoint": (
+                    "/v1/browser/adapter/completion/validate"
+                ),
+            }
+            return _FakeResponse(200, json.dumps(body).encode())
+
+        request = {
+            "same_user_capability": "test-capability-fixture",
+            "admission": {"actor": "agent", "sensitivity": "sensitive"},
+            "manifest": {"adapter_id": "tempo-os-jail-v1"},
+        }
+        with _patched_open(c, fake_open):
+            plan = c.browser_adapter_launch_plan(request)
+
+        req = captured["req"]
+        self.assertEqual(req.full_url, "http://host:7300/v1/browser/adapter/launch/plan")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("X-beatbox-api-key"), "secret-key")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(json.loads(req.data.decode()), request)
+        self.assertFalse(plan["launchable"])
+        self.assertTrue(plan["same_user_capability_bound"])
+        self.assertEqual(
+            plan["completion_validation_endpoint"],
+            "/v1/browser/adapter/completion/validate",
+        )
+
     def test_cancel_job_204_returns_none(self):
         c = Client("http://host:7300")
 

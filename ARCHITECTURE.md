@@ -100,8 +100,9 @@ it reports `launchable: false`, `trusted_for_sensitive_work: false`, and
 issuer. It is deliberately absent from MCP, requires configured daemon auth
 rather than no-op auth mode, stores only a SHA-256 digest in bounded in-memory
 state, prunes expired entries, and returns a short-lived one-time bearer
-candidate for the local control plane to submit to registration. Issuance is
-not model-facing and does not make any adapter trusted or launchable.
+candidate for the local control plane to submit to registration or launch-plan
+preflight. Issuance is not model-facing and does not make any adapter trusted
+or launchable.
 
 `POST /v1/browser/adapter/register` and MCP `register_browser_adapter` are the
 fail-closed registration preflight. They require a caller-supplied same-user
@@ -128,6 +129,16 @@ completion report fixture, and required accepted-but-rejected and
 parser-rejected cases, including separate REST and MCP expectations. That
 profile is the adapter author test fixture for protocol compatibility, not a
 registration credential.
+
+`POST /v1/browser/adapter/launch/plan` is the REST-only bridge between
+admission intent, adapter manifest, and same-user capability binding. It
+validates the nested admission and manifest through the production parsers,
+consumes a matching one-time capability, and emits a server-issued
+`BrowserAdapterLaunchRequest` plus completion report template that Tempo can
+carry into a future adapter launcher. It is not exposed through MCP because the
+request includes bearer capability material. The response is still rejected and
+non-launchable; capability binding only proves that this local control-plane
+preflight saw a live token for the same actor, sensitivity, and adapter id.
 
 `POST /v1/browser/adapter/completion/validate` and MCP
 `validate_browser_adapter_completion` validate a submitted completion report

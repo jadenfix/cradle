@@ -138,6 +138,16 @@ export class BeatboxClient {
     });
   }
 
+  /** `POST /v1/browser/adapter/launch/plan` — fail-closed browser adapter launch plan preflight. */
+  planBrowserAdapterLaunch(request: unknown): Promise<unknown> {
+    return this.request<unknown>({
+      method: "POST",
+      path: "/v1/browser/adapter/launch/plan",
+      auth: true,
+      body: request,
+    });
+  }
+
   /** `POST /v1/browser/adapter/validate` — validate a proposed browser adapter manifest. */
   validateBrowserAdapter(request: unknown): Promise<unknown> {
     return this.request<unknown>({

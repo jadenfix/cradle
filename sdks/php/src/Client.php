@@ -113,6 +113,17 @@ final class Client
     }
 
     /**
+     * POST /v1/browser/adapter/launch/plan. Returns launch plan JSON.
+     *
+     * @param array<string,mixed> $request
+     * @return array<string,mixed>
+     */
+    public function planBrowserAdapterLaunch(array $request): array
+    {
+        return $this->requestJson('POST', '/v1/browser/adapter/launch/plan', $request, true);
+    }
+
+    /**
      * POST /v1/browser/adapter/validate. Returns browser adapter validation JSON.
      *
      * @param array<string,mixed> $request

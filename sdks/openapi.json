@@ -169,6 +169,56 @@
         }
       }
     },
+    "/v1/browser/adapter/launch/plan": {
+      "post": {
+        "tags": [
+          "v1"
+        ],
+        "operationId": "browser_adapter_launch_plan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserAdapterLaunchPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Fail-closed browser adapter launch plan preflight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAdapterLaunchPlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid adapter launch plan request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing auth or daemon auth is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/browser/adapter/register": {
       "post": {
         "tags": [
@@ -652,7 +702,7 @@
               "string",
               "null"
             ],
-            "description": "Optional adapter identifier to bind the capability to. When present, the\nregistration preflight must use the same manifest adapter_id.",
+            "description": "Optional adapter identifier to bind the capability to. When present, any\nconsuming registration or launch-plan preflight must use the same\nmanifest adapter_id.",
             "maxLength": 128,
             "minLength": 1
           },
@@ -708,7 +758,7 @@
           },
           "same_user_capability": {
             "type": "string",
-            "description": "Secret one-time capability. Treat as bearer material; Beatbox stores only\na digest and never echoes it from registration responses.",
+            "description": "Secret one-time capability. Treat as bearer material; Beatbox stores only\na digest and never echoes it from consuming preflight responses.",
             "maxLength": 256,
             "minLength": 1
           },
@@ -1220,6 +1270,108 @@
           },
           "unavailable_reason": {
             "type": "string"
+          }
+        }
+      },
+      "BrowserAdapterLaunchPlanDecision": {
+        "type": "string",
+        "enum": [
+          "rejected"
+        ]
+      },
+      "BrowserAdapterLaunchPlanRequest": {
+        "type": "object",
+        "required": [
+          "same_user_capability",
+          "admission",
+          "manifest"
+        ],
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/BrowserAdmissionRequest"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BrowserAdapterManifestRequest"
+          },
+          "same_user_capability": {
+            "type": "string",
+            "description": "One-time same-user capability issued by the REST control plane. It is\nconsumed on a matching preflight and never echoed.",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserAdapterLaunchPlanResponse": {
+        "type": "object",
+        "required": [
+          "decision",
+          "request_id",
+          "adapter_id",
+          "actor",
+          "sensitivity",
+          "launchable",
+          "trusted_for_sensitive_work",
+          "endpoint_network_policy_bound",
+          "same_user_capability_bound",
+          "admission",
+          "manifest_validation",
+          "launch_request",
+          "completion_validation_endpoint",
+          "reasons",
+          "required_next_steps"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/BrowserSessionActor"
+          },
+          "adapter_id": {
+            "type": "string"
+          },
+          "admission": {
+            "$ref": "#/components/schemas/BrowserAdmissionResponse"
+          },
+          "completion_validation_endpoint": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchPlanDecision"
+          },
+          "endpoint_network_policy_bound": {
+            "type": "boolean"
+          },
+          "launch_request": {
+            "$ref": "#/components/schemas/BrowserAdapterLaunchRequest"
+          },
+          "launchable": {
+            "type": "boolean"
+          },
+          "manifest_validation": {
+            "$ref": "#/components/schemas/BrowserAdapterManifestResponse"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "required_next_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "same_user_capability_bound": {
+            "type": "boolean"
+          },
+          "sensitivity": {
+            "$ref": "#/components/schemas/BrowserSensitivity"
+          },
+          "trusted_for_sensitive_work": {
+            "type": "boolean"
           }
         }
       },

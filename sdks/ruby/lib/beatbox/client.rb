@@ -68,6 +68,11 @@ module Beatbox
       request_json(:post, "/v1/browser/adapter/register", body: request, auth: true)
     end
 
+    # POST /v1/browser/adapter/launch/plan. Returns browser adapter launch plan JSON.
+    def browser_adapter_launch_plan(request)
+      request_json(:post, "/v1/browser/adapter/launch/plan", body: request, auth: true)
+    end
+
     # POST /v1/browser/adapter/validate. Returns browser adapter validation JSON.
     def validate_browser_adapter(request)
       request_json(:post, "/v1/browser/adapter/validate", body: request, auth: true)

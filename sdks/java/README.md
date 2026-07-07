@@ -69,6 +69,7 @@ Redirects are never followed, so the api-key header can't leak cross-origin.
 | `browserAdapterContract()` | `GET /v1/browser/adapter/contract` | `JsonNode` (raw) |
 | `issueBrowserAdapterCapability(request)` | `POST /v1/browser/adapter/capability` | `JsonNode` (raw) |
 | `registerBrowserAdapter(request)` | `POST /v1/browser/adapter/register` | `JsonNode` (raw) |
+| `planBrowserAdapterLaunch(request)` | `POST /v1/browser/adapter/launch/plan` | `JsonNode` (raw) |
 | `validateBrowserAdapter(request)` | `POST /v1/browser/adapter/validate` | `JsonNode` (raw) |
 | `validateBrowserAdapterCompletion(request)` | `POST /v1/browser/adapter/completion/validate` | `JsonNode` (raw) |
 | `execute(request)`         | `POST /v1/execute`       | `ExecutionResult`   |

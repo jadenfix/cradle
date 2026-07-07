@@ -595,6 +595,57 @@ test("registerBrowserAdapter sends authenticated JSON preflight", async () => {
   }
 });
 
+test("planBrowserAdapterLaunch sends authenticated JSON preflight", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedInit: RequestInit | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    capturedUrl = String(input);
+    capturedInit = init;
+    return new Response(
+      JSON.stringify({
+        decision: "rejected",
+        request_id: "bbx-browser-launch-plan-v1.fixture",
+        adapter_id: "tempo-os-jail-v1",
+        actor: "agent",
+        sensitivity: "sensitive",
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        same_user_capability_bound: true,
+        launch_request: { request_id: "bbx-browser-launch-plan-v1.fixture" },
+        completion_validation_endpoint: "/v1/browser/adapter/completion/validate",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const client = new BeatboxClient({
+      baseUrl: "http://127.0.0.1:7300/",
+      apiKey: "secret-key",
+    });
+    const request = {
+      same_user_capability: "test-capability-fixture",
+      admission: { actor: "agent", sensitivity: "sensitive" },
+      manifest: { adapter_id: "tempo-os-jail-v1" },
+    };
+    const response = await client.planBrowserAdapterLaunch(request) as Record<string, unknown>;
+
+    assert.equal(capturedUrl, "http://127.0.0.1:7300/v1/browser/adapter/launch/plan");
+    assert.equal(capturedInit?.method, "POST");
+    assert.deepEqual(capturedInit?.headers, {
+      "x-beatbox-api-key": "secret-key",
+      "content-type": "application/json",
+    });
+    assert.deepEqual(JSON.parse(String(capturedInit?.body)), request);
+    assert.equal(response.launchable, false);
+    assert.equal(response.same_user_capability_bound, true);
+    assert.equal(response.completion_validation_endpoint, "/v1/browser/adapter/completion/validate");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // --- ExecuteRequest round-trip --------------------------------------------
 
 test("ExecuteRequest.wasmWat serializes to the exact wire shape", () => {

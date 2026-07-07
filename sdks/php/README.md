@@ -95,6 +95,7 @@ key can't leak cross-origin.
 | `browserAdapterContract()` | `GET /v1/browser/adapter/contract` | `array` (raw JSON) |
 | `issueBrowserAdapterCapability($request)` | `POST /v1/browser/adapter/capability` | `array` (raw JSON) |
 | `registerBrowserAdapter($request)` | `POST /v1/browser/adapter/register` | `array` (raw JSON) |
+| `planBrowserAdapterLaunch($request)` | `POST /v1/browser/adapter/launch/plan` | `array` (raw JSON) |
 | `validateBrowserAdapter($request)` | `POST /v1/browser/adapter/validate` | `array` (raw JSON) |
 | `validateBrowserAdapterCompletion($request)` | `POST /v1/browser/adapter/completion/validate` | `array` (raw JSON) |
 | `execute($request)` | `POST /v1/execute` | `ExecutionResult` |

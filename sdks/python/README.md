@@ -70,6 +70,7 @@ client = Client("http://127.0.0.1:7300", api_key="bbx-api-key-placeholder", time
 | `client.browser_adapter_contract()` | `GET /v1/browser/adapter/contract` | yes | `dict` |
 | `client.browser_adapter_capability(request)` | `POST /v1/browser/adapter/capability` | yes | `dict` |
 | `client.browser_adapter_register(request)` | `POST /v1/browser/adapter/register` | yes | `dict` |
+| `client.browser_adapter_launch_plan(request)` | `POST /v1/browser/adapter/launch/plan` | yes | `dict` |
 | `client.browser_adapter_validate(request)` | `POST /v1/browser/adapter/validate` | yes | `dict` |
 | `client.browser_adapter_completion_validate(request)` | `POST /v1/browser/adapter/completion/validate` | yes | `dict` |
 | `client.execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |

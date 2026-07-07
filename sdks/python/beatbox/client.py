@@ -102,6 +102,12 @@ class Client:
             "POST", "/v1/browser/adapter/register", auth=True, body=request
         )
 
+    def browser_adapter_launch_plan(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """POST /v1/browser/adapter/launch/plan. Returns raw launch plan JSON."""
+        return self._request(
+            "POST", "/v1/browser/adapter/launch/plan", auth=True, body=request
+        )
+
     def browser_adapter_validate(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """POST /v1/browser/adapter/validate. Returns raw validation JSON."""
         return self._request(

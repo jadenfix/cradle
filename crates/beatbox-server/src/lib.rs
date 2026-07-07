@@ -19,7 +19,8 @@ use beatbox_core::{
     BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
     BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
     BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
-    BrowserAdapterHandoff, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
+    BrowserAdapterHandoff, BrowserAdapterLaunchPlanDecision, BrowserAdapterLaunchPlanRequest,
+    BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
     BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
     BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
     BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
@@ -238,6 +239,10 @@ pub fn router(config: ServerConfig) -> Router {
             post(browser_adapter_register),
         )
         .route(
+            "/v1/browser/adapter/launch/plan",
+            post(browser_adapter_launch_plan),
+        )
+        .route(
             "/v1/browser/adapter/validate",
             post(browser_adapter_validate),
         )
@@ -326,6 +331,18 @@ async fn browser_adapter_register(
         ApiError::bad_request("invalid_browser_adapter_registration", message)
     })?;
     Ok(Json(browser_adapter_registration_response(&state, request)))
+}
+
+async fn browser_adapter_launch_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+) -> Result<Json<BrowserAdapterLaunchPlanResponse>, ApiError> {
+    state.authorize_required(&headers, "browser adapter launch planning")?;
+    let request = parse_json_body(&state, request).await?;
+    validate_browser_adapter_launch_plan_request(&request)
+        .map_err(|message| ApiError::bad_request("invalid_browser_adapter_launch_plan", message))?;
+    Ok(Json(browser_adapter_launch_plan_response(&state, request)))
 }
 
 async fn browser_adapter_contract_get(
@@ -1311,7 +1328,7 @@ fn browser_adapter_capability_issue_response(
         notes: vec![
             "same_user_capability is bearer material; keep it out of logs and model-visible transcripts"
                 .to_string(),
-            "beatbox stores only a digest and consumes the capability on the first matching registration preflight"
+            "beatbox stores only a digest and consumes the capability on the first matching registration or launch-plan preflight"
                 .to_string(),
             "a bound capability still does not make an adapter registered, trusted, or launchable"
                 .to_string(),
@@ -1330,7 +1347,23 @@ fn browser_adapter_consume_capability(
     state: &AppState,
     request: &BrowserAdapterRegistrationRequest,
 ) -> bool {
-    let digest = browser_adapter_capability_digest(&request.same_user_capability);
+    browser_adapter_consume_capability_for(
+        state,
+        &request.same_user_capability,
+        &request.actor,
+        &request.sensitivity,
+        &request.manifest.adapter_id,
+    )
+}
+
+fn browser_adapter_consume_capability_for(
+    state: &AppState,
+    same_user_capability: &str,
+    actor: &BrowserSessionActor,
+    sensitivity: &BrowserSensitivity,
+    adapter_id: &str,
+) -> bool {
+    let digest = browser_adapter_capability_digest(same_user_capability);
     let now = Instant::now();
     let mut capabilities = match state.browser_adapter_capabilities.lock() {
         Ok(capabilities) => capabilities,
@@ -1341,11 +1374,11 @@ fn browser_adapter_consume_capability(
         return false;
     };
     let adapter_matches = match &record.adapter_id {
-        Some(adapter_id) => adapter_id == &request.manifest.adapter_id,
+        Some(bound_adapter_id) => bound_adapter_id == adapter_id,
         None => true,
     };
-    if record.actor == request.actor
-        && record.sensitivity == request.sensitivity
+    if &record.actor == actor
+        && &record.sensitivity == sensitivity
         && adapter_matches
         && !record.used
         && record.expires_at > now
@@ -1620,6 +1653,82 @@ fn browser_adapter_registration_response(
         endpoint_network_policy_bound: false,
         same_user_capability_bound,
         manifest_validation,
+        reasons,
+        required_next_steps,
+    }
+}
+
+fn browser_adapter_launch_plan_response(
+    state: &AppState,
+    request: BrowserAdapterLaunchPlanRequest,
+) -> BrowserAdapterLaunchPlanResponse {
+    let same_user_capability_bound = browser_adapter_consume_capability_for(
+        state,
+        &request.same_user_capability,
+        &request.admission.actor,
+        &request.admission.sensitivity,
+        &request.manifest.adapter_id,
+    );
+    let request_id = format!("bbx-browser-launch-plan-v1.{}", uuid::Uuid::new_v4());
+    let adapter_id = request.manifest.adapter_id.clone();
+    let actor = request.admission.actor.clone();
+    let sensitivity = request.admission.sensitivity.clone();
+    let admission = browser_admission_response(request.admission.clone());
+    let manifest_validation = browser_adapter_manifest_response(request.manifest);
+    let launch_request = browser_adapter_launch_request_template(
+        &request_id,
+        Some(adapter_id.clone()),
+        &request.admission,
+        &admission.guard_plan,
+        browser_adapter_contract().required_completion_proofs,
+    );
+    let mut reasons = vec![
+        "browser adapter launch planning is a fail-closed compatibility preflight; beatbox does not call adapter launch endpoints yet"
+            .to_string(),
+        "browser launcher, endpoint request-builder binding, teardown verification, and storage sealing are not implemented"
+            .to_string(),
+    ];
+    if same_user_capability_bound {
+        reasons.push(
+            "same-user capability matched this launch plan preflight, but it is not registration, endpoint trust, or launch permission"
+                .to_string(),
+        );
+    } else {
+        reasons.push(
+            "same-user capability was not issued by this daemon, was already used, expired, or did not match the admission actor, sensitivity, and adapter_id"
+                .to_string(),
+        );
+    }
+    let mut required_next_steps = vec![
+        "persist trusted adapter registrations only after conformance checks pass".to_string(),
+        "bind the launch endpoint to DNS, proxy, redirect, retry, and production request-builder network policy"
+            .to_string(),
+        "execute the launch_request only through a real isolated browser launcher".to_string(),
+        "verify completion reports against the concrete launched process, profile directory, artifact store, and egress log"
+            .to_string(),
+    ];
+    if !same_user_capability_bound {
+        required_next_steps.insert(
+            0,
+            "issue and submit a live same-user capability from the local authenticated control plane"
+                .to_string(),
+        );
+    }
+
+    BrowserAdapterLaunchPlanResponse {
+        decision: BrowserAdapterLaunchPlanDecision::Rejected,
+        request_id,
+        adapter_id,
+        actor,
+        sensitivity,
+        launchable: false,
+        trusted_for_sensitive_work: false,
+        endpoint_network_policy_bound: false,
+        same_user_capability_bound,
+        admission,
+        manifest_validation,
+        launch_request,
+        completion_validation_endpoint: "/v1/browser/adapter/completion/validate".to_string(),
         reasons,
         required_next_steps,
     }
@@ -2181,6 +2290,27 @@ fn validate_browser_adapter_registration_request(
     validate_browser_adapter_manifest_request(&request.manifest)
 }
 
+fn validate_browser_adapter_launch_plan_request(
+    request: &BrowserAdapterLaunchPlanRequest,
+) -> Result<(), String> {
+    const MAX_SAME_USER_CAPABILITY_LEN: usize = 256;
+    if request.same_user_capability.is_empty()
+        || request.same_user_capability.trim() != request.same_user_capability
+    {
+        return Err(
+            "browser adapter launch plan same_user_capability must be non-empty without surrounding whitespace"
+                .to_string(),
+        );
+    }
+    if request.same_user_capability.len() > MAX_SAME_USER_CAPABILITY_LEN {
+        return Err(format!(
+            "browser adapter launch plan same_user_capability must be at most {MAX_SAME_USER_CAPABILITY_LEN} bytes"
+        ));
+    }
+    validate_browser_admission_request(&request.admission)?;
+    validate_browser_adapter_manifest_request(&request.manifest)
+}
+
 fn validate_browser_adapter_completion_report_request(
     request: &BrowserAdapterCompletionReport,
 ) -> Result<(), String> {
@@ -2516,6 +2646,7 @@ pub fn openapi_spec_json() -> String {
         openapi_paths::browser_adapter_contract_get,
         openapi_paths::browser_adapter_capability_issue,
         openapi_paths::browser_adapter_register,
+        openapi_paths::browser_adapter_launch_plan,
         openapi_paths::browser_adapter_validate,
         openapi_paths::browser_adapter_completion_validate,
         openapi_paths::execute,
@@ -2561,6 +2692,9 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::BrowserAdapterConformanceExpectation,
         beatbox_core::BrowserAdapterConformanceProfile,
         beatbox_core::BrowserAdapterLaunchRequest,
+        beatbox_core::BrowserAdapterLaunchPlanDecision,
+        beatbox_core::BrowserAdapterLaunchPlanRequest,
+        beatbox_core::BrowserAdapterLaunchPlanResponse,
         beatbox_core::BrowserAdapterManifestRequest,
         beatbox_core::BrowserAdapterManifestResponse,
         beatbox_core::BrowserAdapterRegistrationDecision,
@@ -2599,7 +2733,8 @@ mod openapi_paths {
     use beatbox_core::{
         BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
         BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationResponse,
-        BrowserAdapterContractResponse, BrowserAdapterManifestRequest,
+        BrowserAdapterContractResponse, BrowserAdapterLaunchPlanRequest,
+        BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestRequest,
         BrowserAdapterManifestResponse, BrowserAdapterRegistrationRequest,
         BrowserAdapterRegistrationResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
         BrowserProfilesResponse, CapabilitiesResponse, CreateJobResponse, ErrorResponse,
@@ -2686,6 +2821,19 @@ mod openapi_paths {
         )
     )]
     pub fn browser_adapter_register() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/browser/adapter/launch/plan",
+        tag = "v1",
+        request_body = BrowserAdapterLaunchPlanRequest,
+        responses(
+            (status = 200, description = "Fail-closed browser adapter launch plan preflight", body = BrowserAdapterLaunchPlanResponse),
+            (status = 400, description = "Invalid adapter launch plan request", body = ErrorResponse),
+            (status = 401, description = "Missing auth or daemon auth is not configured", body = ErrorResponse)
+        )
+    )]
+    pub fn browser_adapter_launch_plan() {}
 
     #[utoipa::path(
         post,
