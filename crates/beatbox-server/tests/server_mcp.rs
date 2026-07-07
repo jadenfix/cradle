@@ -8,7 +8,7 @@ use beatbox_core::{
     BrowserAdapterLaunchClaimDecision, BrowserAdapterLaunchClaimResponse,
     BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestResponse,
     BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
-    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    BrowserAdmissionResponse, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel,
     BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, CreateJobResponse,
     ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane,
@@ -1169,7 +1169,10 @@ async fn browser_admission_is_authenticated_and_fails_closed()
         vec![BrowserSandboxControl::SealedArtifacts]
     );
     assert!(!decision.level_satisfies_requested_controls);
-    assert!(decision.intent_warnings.is_empty());
+    assert!(decision.intent_warnings.iter().any(|warning| {
+        warning.contains("target origin hostnames are syntax-validated only")
+            && warning.contains("final socket targets")
+    }));
     assert_eq!(
         decision.guard_plan.network.allowed_origins,
         vec!["https://bank.example"]
@@ -1422,6 +1425,44 @@ async fn browser_admission_rejects_unsafe_target_origins() -> Result<(), Box<dyn
         assert_eq!(error.error.code, "invalid_browser_intent");
         assert!(error.error.message.contains("local or private"));
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn browser_admission_warns_hostname_resolution_is_deferred()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/browser/admit")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "requested_level": "network_suppressed",
+                        "actor": "agent",
+                        "sensitivity": "sensitive",
+                        "target_origins": ["https://127.0.0.1.nip.io"]
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let decision: BrowserAdmissionResponse = serde_json::from_slice(&body)?;
+    assert_eq!(decision.target_origins, vec!["https://127.0.0.1.nip.io"]);
+    assert!(decision.intent_warnings.iter().any(|warning| {
+        warning.contains("target origin hostnames are syntax-validated only")
+            && warning.contains("DNS")
+            && warning.contains("final socket targets")
+    }));
+    assert!(decision.guard_plan.network.deny_private_networks);
+    assert!(decision.guard_plan.network.deny_metadata_endpoints);
+    assert!(decision.guard_plan.network.require_dns_rebinding_protection);
+    assert!(decision.guard_plan.network.require_redirect_revalidation);
+    assert!(decision.guard_plan.network.require_proxy_enforcement);
     Ok(())
 }
 
@@ -3774,6 +3815,15 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "browser admission request should expose sensitive_activity_mode"
     );
     assert!(
+        schemas["BrowserAdmissionRequest"]["properties"]["target_origins"]["description"]
+            .as_str()
+            .is_some_and(|description| {
+                description.contains("Hostname targets are syntax-validated only")
+                    && description.contains("final\nsocket selection")
+            }),
+        "browser admission target_origins schema should not overstate DNS/publicness validation"
+    );
+    assert!(
         schemas["BrowserAdmissionResponse"]["required"]
             .as_array()
             .is_some_and(|required| required
@@ -4107,6 +4157,23 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
         register_tool["inputSchema"]["properties"]["manifest"]["properties"]["adapter_id"]["maxLength"],
         128
+    );
+    let admit_tool = tools
+        .as_array()
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "admit_browser_session")
+        })
+        .ok_or("admit_browser_session tool should be listed")?;
+    assert!(
+        admit_tool["inputSchema"]["properties"]["target_origins"]["description"]
+            .as_str()
+            .is_some_and(|description| {
+                description.contains("Hostname targets are syntax-validated only")
+                    && description.contains("final socket selection")
+            }),
+        "MCP target_origins schema should not overstate DNS/publicness validation"
     );
     let validate_tool = tools
         .as_array()
@@ -4748,7 +4815,9 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
     );
     assert_eq!(
         result["structuredContent"]["intent_warnings"],
-        serde_json::json!([])
+        serde_json::json!([
+            "target origin hostnames are syntax-validated only during admission; future runnable browser sessions must revalidate DNS, proxy decisions, redirects, retries, and final socket targets against the private-network and metadata deny policy before connecting"
+        ])
     );
     assert_eq!(
         result["structuredContent"]["guard_plan"]["network"]["allowed_origins"],

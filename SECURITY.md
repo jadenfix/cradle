@@ -29,10 +29,13 @@ capability access, or out-of-policy network egress is a critical vulnerability.
   controls remain planned metadata until a real implementation enforces fresh
   profiles, network suppression or allowlisting, credential isolation,
   teardown, suppression of ambient browser state or unapproved persistence, and
-  any stated encryption behavior in the production call path. Target origin declarations
-  reject paths, credentials, localhost, private/LAN IP space, and link-local
-  metadata targets so future browser adapters cannot silently turn a sensitive
-  browsing preflight into local control-plane or network exploration.
+  any stated encryption behavior in the production call path. Target origin
+  declarations reject paths, credentials, localhost names, literal private/LAN
+  IP space, and literal link-local metadata targets. Hostname origins are
+  syntax-validated only during admission and must be revalidated after DNS,
+  proxying, redirects, retries, and final socket selection so future browser
+  adapters cannot silently turn a sensitive browsing preflight into local
+  control-plane or network exploration.
   Admission responses include a `guard_plan`, including
   `guard_plan.suppression`, but it is a required future enforcement plan, not
   evidence that browser isolation or suppression is currently active.
