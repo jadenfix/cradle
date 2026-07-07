@@ -6,36 +6,36 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::extract::{Path as AxumPath, State};
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
+use axum::http::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use beatbox_core::{
-    AetherPaymentContextCapabilities, BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
-    BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
-    BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationDecision,
-    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceCase,
-    BrowserAdapterConformanceExpectation, BrowserAdapterConformanceProfile, BrowserAdapterContract,
-    BrowserAdapterContractResponse, BrowserAdapterHandoff, BrowserAdapterLaunchClaimDecision,
-    BrowserAdapterLaunchClaimRequest, BrowserAdapterLaunchClaimResponse,
-    BrowserAdapterLaunchPlanDecision, BrowserAdapterLaunchPlanRequest,
-    BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest, BrowserAdapterManifestRequest,
-    BrowserAdapterManifestResponse, BrowserAdapterRegistrationDecision,
-    BrowserAdapterRegistrationRequest, BrowserAdapterRegistrationResponse,
-    BrowserAdapterValidationDecision, BrowserAdmissionDecision, BrowserAdmissionGuardPlan,
-    BrowserAdmissionRequest, BrowserAdmissionResponse, BrowserArtifactMode,
-    BrowserCredentialGuardPlan, BrowserCredentialMode, BrowserIntegrationContract,
-    BrowserNetworkGuardPlan, BrowserProfilesResponse, BrowserSandboxAvailability,
-    BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
+    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    AetherPaymentContextCapabilities, BrowserAdapterCapabilityIssueRequest,
+    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionReport,
+    BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
+    BrowserAdapterConformanceCase, BrowserAdapterConformanceExpectation,
+    BrowserAdapterConformanceProfile, BrowserAdapterContract, BrowserAdapterContractResponse,
+    BrowserAdapterHandoff, BrowserAdapterLaunchClaimDecision, BrowserAdapterLaunchClaimRequest,
+    BrowserAdapterLaunchClaimResponse, BrowserAdapterLaunchPlanDecision,
+    BrowserAdapterLaunchPlanRequest, BrowserAdapterLaunchPlanResponse, BrowserAdapterLaunchRequest,
+    BrowserAdapterManifestRequest, BrowserAdapterManifestResponse,
+    BrowserAdapterRegistrationDecision, BrowserAdapterRegistrationRequest,
+    BrowserAdapterRegistrationResponse, BrowserAdapterValidationDecision, BrowserAdmissionDecision,
+    BrowserAdmissionGuardPlan, BrowserAdmissionRequest, BrowserAdmissionResponse,
+    BrowserArtifactMode, BrowserCredentialGuardPlan, BrowserCredentialMode,
+    BrowserIntegrationContract, BrowserNetworkGuardPlan, BrowserProfilesResponse,
+    BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
     BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, BrowserStorageGuardPlan,
     BrowserSuppressionGuardPlan, CapabilitiesResponse, CapabilityLane, CapabilityLimits,
     CreateJobResponse, EcosystemConsumerContract, EcosystemEndpointContract,
     EcosystemIntegrationContract, EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody,
     ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy,
-    Source, browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    Source, BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -43,7 +43,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 pub use jobs::JobStore;
 use jobs::{CancelOutcome, JobStoreError};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::{Host, Url};

@@ -265,8 +265,8 @@ fn digest_json<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Err
 #[cfg(feature = "lane-wasi")]
 mod wasm {
     use std::path::Path;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::thread;
 
     use base64::Engine as _;
@@ -921,8 +921,8 @@ mod tests {
     }
 
     #[test]
-    fn metrics_report_peak_memory_and_no_fabricated_cpu_time()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn metrics_report_peak_memory_and_no_fabricated_cpu_time(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         let result = engine.execute(request_for(
             r#"
@@ -956,12 +956,10 @@ mod tests {
         assert_eq!(result.status, ExecutionStatus::Ok);
         assert_eq!(result.value, serde_json::json!(42));
         assert!(result.deterministic);
-        assert!(
-            result
-                .effective_isolation
-                .mechanisms
-                .contains(&"empty-linker".to_string())
-        );
+        assert!(result
+            .effective_isolation
+            .mechanisms
+            .contains(&"empty-linker".to_string()));
         Ok(())
     }
 
@@ -1005,8 +1003,8 @@ mod tests {
     }
 
     #[test]
-    fn wasi_capability_imports_are_denied_under_seeded_policy()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn wasi_capability_imports_are_denied_under_seeded_policy(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         let mut request = request_for(
             r#"
@@ -1033,11 +1031,9 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("denied imports should include an error"))?;
         assert_eq!(error.code, "host_import_denied");
         assert!(result.stderr.contains("wasi:clocks/wall-clock::now"));
-        assert!(
-            result
-                .stderr
-                .contains("wasi:random/random::get-random-bytes")
-        );
+        assert!(result
+            .stderr
+            .contains("wasi:random/random::get-random-bytes"));
         assert!(result.stderr.contains("wasi:sockets/tcp::start-connect"));
         Ok(())
     }
@@ -1300,8 +1296,8 @@ mod tests {
     }
 
     #[test]
-    fn wasm_multiple_tables_cannot_exceed_aggregate_budget()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn wasm_multiple_tables_cannot_exceed_aggregate_budget(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         // Each table individually stays under the budget, but together they would
         // exceed it. The limiter accumulates across tables, so this must be
@@ -1416,8 +1412,8 @@ mod tests {
     }
 
     #[test]
-    fn wasm_memory_grow_preserves_module_max_failure_semantics()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn wasm_memory_grow_preserves_module_max_failure_semantics(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         let request = request_for(
             r#"
@@ -1439,8 +1435,8 @@ mod tests {
     }
 
     #[test]
-    fn guest_entrypoint_names_do_not_drive_memory_classification()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn guest_entrypoint_names_do_not_drive_memory_classification(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         let mut request = request_for(
             r#"
@@ -1459,11 +1455,9 @@ mod tests {
             result.error.as_ref().map(|error| error.code.as_str()),
             Some("wasm_trap")
         );
-        assert!(
-            result
-                .stderr
-                .contains("missing supported entrypoint `grow`")
-        );
+        assert!(result
+            .stderr
+            .contains("missing supported entrypoint `grow`"));
         Ok(())
     }
 
@@ -1508,8 +1502,8 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_short_execution_does_not_trip_long_execution()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn concurrent_short_execution_does_not_trip_long_execution(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Regression for the shared-epoch-counter bug: a short job's deadline
         // ticker must not spuriously time out a concurrent long job. The long
         // execution does bounded work well under its own wall/fuel budget while a
@@ -1568,8 +1562,8 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_lanes_are_denied_without_isolation_claims()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn unimplemented_lanes_are_denied_without_isolation_claims(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = BeatboxEngine::new()?;
         for lane in [
             Lane::PythonWasi,

@@ -1671,12 +1671,10 @@ mod tests {
             r#"{"lane": "wasm", "source": {"kind": "wasm_wat", "text": "(module)"}, "polcy": {}}"#
         )
         .is_err());
-        assert!(
-            serde_json::from_str::<Source>(
-                r#"{"kind": "wasm_wat", "text": "(module)", "txt": "x"}"#
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<Source>(
+            r#"{"kind": "wasm_wat", "text": "(module)", "txt": "x"}"#
+        )
+        .is_err());
     }
 
     #[test]
@@ -1723,26 +1721,20 @@ mod tests {
             BrowserSandboxAvailability::Unavailable
         );
         assert_eq!(response.integration.adapter.launch_endpoint, None);
-        assert!(
-            response
-                .integration
-                .adapter
-                .handoff_fields
-                .iter()
-                .any(|field| field == "guard_plan")
-        );
-        assert!(
-            BrowserAdapterContract::default()
-                .required_guard_fields
-                .iter()
-                .any(|field| field == "guard_plan.storage.teardown_proof_required")
-        );
-        assert!(
-            BrowserAdapterContract::default()
-                .required_guard_fields
-                .iter()
-                .any(|field| field == "guard_plan.network.outbound_network_disabled_without_proxy")
-        );
+        assert!(response
+            .integration
+            .adapter
+            .handoff_fields
+            .iter()
+            .any(|field| field == "guard_plan"));
+        assert!(BrowserAdapterContract::default()
+            .required_guard_fields
+            .iter()
+            .any(|field| field == "guard_plan.storage.teardown_proof_required"));
+        assert!(BrowserAdapterContract::default()
+            .required_guard_fields
+            .iter()
+            .any(|field| field == "guard_plan.network.outbound_network_disabled_without_proxy"));
         Ok(())
     }
 
@@ -1808,22 +1800,18 @@ mod tests {
             BrowserSensitiveActivityMode::Standard
         );
         assert!(!response.guard_plan.suppression.suppress_unapproved_network);
-        assert!(
-            response
-                .guard_plan
-                .required_runtime_guards
-                .iter()
-                .any(|guard| guard.contains("fresh server-issued guard plan"))
-        );
+        assert!(response
+            .guard_plan
+            .required_runtime_guards
+            .iter()
+            .any(|guard| guard.contains("fresh server-issued guard plan")));
         assert!(!response.adapter_handoff.launchable);
         assert_eq!(response.adapter_handoff.launch_endpoint, None);
-        assert!(
-            response
-                .adapter_handoff
-                .handoff_fields
-                .iter()
-                .any(|field| field == "guard_plan")
-        );
+        assert!(response
+            .adapter_handoff
+            .handoff_fields
+            .iter()
+            .any(|field| field == "guard_plan"));
         assert!(
             response
                 .adapter_handoff
@@ -1836,13 +1824,11 @@ mod tests {
                 .launch_request_template
                 .endpoint_network_policy_binding_required
         );
-        assert!(
-            response
-                .adapter_handoff
-                .completion_proof_contract
-                .iter()
-                .any(|proof| proof.proof_id == "temporary_profile_removed")
-        );
+        assert!(response
+            .adapter_handoff
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "temporary_profile_removed"));
         assert_eq!(
             response
                 .adapter_handoff
@@ -1869,19 +1855,17 @@ mod tests {
                 .launch_request_template
                 .target_origins
         );
-        assert!(
-            response
-                .adapter_handoff
-                .unavailable_reason
-                .contains("fresh server-issued browser adapter handoff")
-        );
+        assert!(response
+            .adapter_handoff
+            .unavailable_reason
+            .contains("fresh server-issued browser adapter handoff"));
         assert!(!response.level_satisfies_requested_controls);
         Ok(())
     }
 
     #[test]
-    fn browser_adapter_launch_request_backfills_completion_report_from_sibling_fields()
-    -> Result<(), serde_json::Error> {
+    fn browser_adapter_launch_request_backfills_completion_report_from_sibling_fields(
+    ) -> Result<(), serde_json::Error> {
         let request: BrowserAdapterLaunchRequest = serde_json::from_str(
             r#"{
                 "request_id": "old-launch-123",
@@ -1950,12 +1934,10 @@ mod tests {
             request.guard_plan.suppression.mode,
             BrowserSensitiveActivityMode::Standard
         );
-        assert!(
-            request
-                .completion_proof_contract
-                .iter()
-                .any(|proof| proof.proof_id == "temporary_profile_removed")
-        );
+        assert!(request
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "temporary_profile_removed"));
         assert_eq!(
             request.completion_report_template.request_id,
             request.request_id
@@ -1976,8 +1958,8 @@ mod tests {
     }
 
     #[test]
-    fn browser_adapter_nested_old_payloads_backfill_non_empty_proof_contracts()
-    -> Result<(), serde_json::Error> {
+    fn browser_adapter_nested_old_payloads_backfill_non_empty_proof_contracts(
+    ) -> Result<(), serde_json::Error> {
         let handoff: BrowserAdapterHandoff = serde_json::from_str(
             r#"{
                 "contract_version": "browser-adapter-v1",
@@ -2031,12 +2013,10 @@ mod tests {
             }"#,
         )?;
 
-        assert!(
-            handoff
-                .completion_proof_contract
-                .iter()
-                .any(|proof| proof.proof_id == "browser_process_terminated")
-        );
+        assert!(handoff
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "browser_process_terminated"));
         assert_eq!(
             handoff
                 .launch_request_template
@@ -2072,12 +2052,10 @@ mod tests {
                 "unavailable_reason": "old payload"
             }"#,
         )?;
-        assert!(
-            contract
-                .completion_proof_contract
-                .iter()
-                .any(|proof| proof.proof_id == "temporary_profile_removed")
-        );
+        assert!(contract
+            .completion_proof_contract
+            .iter()
+            .any(|proof| proof.proof_id == "temporary_profile_removed"));
         Ok(())
     }
 
@@ -2103,17 +2081,15 @@ mod tests {
         );
         assert!(!request.allow_downgrade);
         assert_eq!(request.task_label, None);
-        assert!(
-            serde_json::from_str::<BrowserAdmissionRequest>(
-                r#"{
+        assert!(serde_json::from_str::<BrowserAdmissionRequest>(
+            r#"{
                     "requested_level": "network_suppressed",
                     "actor": "agent",
                     "sensitivity": "sensitive",
                     "ambient_cookies": true
                 }"#
-            )
-            .is_err()
-        );
+        )
+        .is_err());
         Ok(())
     }
 

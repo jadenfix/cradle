@@ -388,7 +388,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, mpsc};
+    use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -436,8 +436,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn base_url_path_prefix_is_preserved_on_secret_bearing_requests()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn base_url_path_prefix_is_preserved_on_secret_bearing_requests(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -474,8 +474,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_gets_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn integration_gets_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -573,8 +573,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_admit_posts_authenticated_json_preflight()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_admit_posts_authenticated_json_preflight(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -653,35 +653,29 @@ mod tests {
             vec!["https://example.com"]
         );
         assert!(decision.guard_plan.network.require_proxy_enforcement);
-        assert!(
-            decision
-                .guard_plan
-                .required_runtime_guards
-                .iter()
-                .any(|guard| guard.contains("final socket targets"))
-        );
-        assert!(
-            decision
-                .guard_plan
-                .required_runtime_guards
-                .iter()
-                .any(|guard| guard.contains("OS jail"))
-        );
+        assert!(decision
+            .guard_plan
+            .required_runtime_guards
+            .iter()
+            .any(|guard| guard.contains("final socket targets")));
+        assert!(decision
+            .guard_plan
+            .required_runtime_guards
+            .iter()
+            .any(|guard| guard.contains("OS jail")));
         assert!(!decision.adapter_handoff.launchable);
         assert_eq!(decision.adapter_handoff.launch_endpoint, None);
-        assert!(
-            decision
-                .adapter_handoff
-                .handoff_fields
-                .iter()
-                .any(|field| field == "guard_plan")
-        );
+        assert!(decision
+            .adapter_handoff
+            .handoff_fields
+            .iter()
+            .any(|field| field == "guard_plan"));
         Ok(())
     }
 
     #[tokio::test]
-    async fn browser_adapter_contract_gets_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_adapter_contract_gets_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -727,8 +721,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_adapter_capability_posts_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_adapter_capability_posts_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -784,8 +778,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_adapter_register_posts_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_adapter_register_posts_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -844,8 +838,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_adapter_validate_posts_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_adapter_validate_posts_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -907,8 +901,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_adapter_completion_validate_posts_authenticated_json()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn browser_adapter_completion_validate_posts_authenticated_json(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
         let (request_tx, request_rx) = mpsc::channel();
@@ -968,8 +962,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_key_header_is_not_forwarded_across_redirects()
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn api_key_header_is_not_forwarded_across_redirects(
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;

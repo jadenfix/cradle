@@ -1,24 +1,23 @@
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::http::header::ORIGIN;
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use beatbox_core::{
-    BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS, BrowserAdapterCapabilityIssueResponse,
-    BrowserAdapterCompletionValidationDecision, BrowserAdapterCompletionValidationResponse,
-    BrowserAdapterConformanceExpectation, BrowserAdapterContractResponse,
-    BrowserAdapterLaunchClaimDecision, BrowserAdapterLaunchClaimResponse,
-    BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestResponse,
-    BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
-    BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
+    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    BrowserAdapterCapabilityIssueResponse, BrowserAdapterCompletionValidationDecision,
+    BrowserAdapterCompletionValidationResponse, BrowserAdapterConformanceExpectation,
+    BrowserAdapterContractResponse, BrowserAdapterLaunchClaimDecision,
+    BrowserAdapterLaunchClaimResponse, BrowserAdapterLaunchPlanResponse,
+    BrowserAdapterManifestResponse, BrowserAdapterRegistrationResponse, BrowserAdmissionDecision,
+    BrowserAdmissionRequest, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel,
     BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, CreateJobResponse,
     ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane,
-    Policy, Source, browser_adapter_launch_template_expires_at,
-    browser_adapter_launch_template_issued_at,
+    Policy, Source, BROWSER_ADAPTER_LAUNCH_LEASE_SECONDS,
 };
 use beatbox_engine::BeatboxEngine;
 use beatbox_server::{
-    AETHER_PAYMENT_HASH_HEADER, AETHER_PAYMENT_HEADER, AuthMode, DEFAULT_JOB_WALL_MS,
-    DEFAULT_SYNC_WALL_MS, JobStore, ServerConfig, origin_allowed, router,
+    origin_allowed, router, AuthMode, JobStore, ServerConfig, AETHER_PAYMENT_HASH_HEADER,
+    AETHER_PAYMENT_HEADER, DEFAULT_JOB_WALL_MS, DEFAULT_SYNC_WALL_MS,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -338,8 +337,8 @@ async fn v1_execute_rejects_missing_content_type() -> Result<(), Box<dyn std::er
 }
 
 #[tokio::test]
-async fn v1_execute_rejects_when_sync_concurrency_cap_is_exhausted()
--> Result<(), Box<dyn std::error::Error>> {
+async fn v1_execute_rejects_when_sync_concurrency_cap_is_exhausted(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?).with_max_concurrent_sync(0));
     let request = add_one_request(41);
     let response = app
@@ -961,8 +960,8 @@ async fn auth_required_keeps_bearer_compatibility() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
-async fn browser_profiles_are_authenticated_control_plane_metadata()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_profiles_are_authenticated_control_plane_metadata(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1010,22 +1009,18 @@ async fn browser_profiles_are_authenticated_control_plane_metadata()
     else {
         panic!("network_suppressed profile should be published");
     };
-    assert!(
-        network_suppressed
-            .controls
-            .contains(&BrowserSandboxControl::EgressPolicy)
-    );
-    assert!(
-        network_suppressed
-            .controls
-            .contains(&BrowserSandboxControl::LocalNetworkBlock)
-    );
+    assert!(network_suppressed
+        .controls
+        .contains(&BrowserSandboxControl::EgressPolicy));
+    assert!(network_suppressed
+        .controls
+        .contains(&BrowserSandboxControl::LocalNetworkBlock));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_admission_is_authenticated_and_fails_closed()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_admission_is_authenticated_and_fails_closed(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1143,55 +1138,43 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .suppression
             .suppress_persistent_artifacts
     );
-    assert!(
-        decision
-            .guard_plan
-            .suppression
-            .required_operator_confirmations
-            .iter()
-            .any(|confirmation| confirmation.contains("encrypted"))
-    );
-    assert!(
-        decision
-            .guard_plan
-            .required_runtime_guards
-            .iter()
-            .any(|guard| guard.contains("final socket targets"))
-    );
+    assert!(decision
+        .guard_plan
+        .suppression
+        .required_operator_confirmations
+        .iter()
+        .any(|confirmation| confirmation.contains("encrypted")));
+    assert!(decision
+        .guard_plan
+        .required_runtime_guards
+        .iter()
+        .any(|guard| guard.contains("final socket targets")));
     assert!(!decision.adapter_handoff.launchable);
     assert_eq!(decision.adapter_handoff.launch_endpoint, None);
     assert_eq!(
         decision.adapter_handoff.contract_version,
         "browser-adapter-v1"
     );
-    assert!(
-        decision
-            .adapter_handoff
-            .handoff_fields
-            .iter()
-            .any(|field| field == "request_id")
-    );
-    assert!(
-        decision
-            .adapter_handoff
-            .handoff_fields
-            .iter()
-            .any(|field| field == "adapter_id")
-    );
-    assert!(
-        decision
-            .adapter_handoff
-            .handoff_fields
-            .iter()
-            .any(|field| field == "sensitive_activity_mode")
-    );
-    assert!(
-        decision
-            .adapter_handoff
-            .handoff_fields
-            .iter()
-            .any(|field| field == "guard_plan")
-    );
+    assert!(decision
+        .adapter_handoff
+        .handoff_fields
+        .iter()
+        .any(|field| field == "request_id"));
+    assert!(decision
+        .adapter_handoff
+        .handoff_fields
+        .iter()
+        .any(|field| field == "adapter_id"));
+    assert!(decision
+        .adapter_handoff
+        .handoff_fields
+        .iter()
+        .any(|field| field == "sensitive_activity_mode"));
+    assert!(decision
+        .adapter_handoff
+        .handoff_fields
+        .iter()
+        .any(|field| field == "guard_plan"));
     assert_eq!(
         decision.adapter_handoff.launch_request_template.request_id,
         "browser-admission-launch-template-v1"
@@ -1264,21 +1247,17 @@ async fn browser_admission_is_authenticated_and_fails_closed()
             .allowed_origins,
         decision.guard_plan.network.allowed_origins
     );
-    assert!(
-        decision
-            .adapter_handoff
-            .required_completion_proofs
-            .iter()
-            .any(|proof| proof.contains("temporary profile directory"))
-    );
-    assert!(
-        decision
-            .adapter_handoff
-            .completion_proof_contract
-            .iter()
-            .any(|proof| proof.proof_id == "temporary_profile_removed"
-                && proof.evidence_field == "temporary_profile_removed")
-    );
+    assert!(decision
+        .adapter_handoff
+        .required_completion_proofs
+        .iter()
+        .any(|proof| proof.contains("temporary profile directory")));
+    assert!(decision
+        .adapter_handoff
+        .completion_proof_contract
+        .iter()
+        .any(|proof| proof.proof_id == "temporary_profile_removed"
+            && proof.evidence_field == "temporary_profile_removed"));
     assert_eq!(
         decision
             .adapter_handoff
@@ -1303,12 +1282,10 @@ async fn browser_admission_is_authenticated_and_fails_closed()
     );
     assert!(decision.downgrade_allowed);
     assert_eq!(decision.profiles_endpoint, "/v1/browser/profiles");
-    assert!(
-        decision
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("no weaker browser profile"))
-    );
+    assert!(decision
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("no weaker browser profile")));
     Ok(())
 }
 
@@ -1380,8 +1357,8 @@ async fn browser_admission_rejects_unknown_request_fields() -> Result<(), Box<dy
 }
 
 #[tokio::test]
-async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1424,12 +1401,10 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
     assert!(validation.missing_controls.is_empty());
     assert!(validation.missing_guard_fields.is_empty());
     assert!(validation.missing_completion_proofs.is_empty());
-    assert!(
-        validation
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("endpoint binding"))
-    );
+    assert!(validation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("endpoint binding")));
     assert_eq!(
         validation.conformance_profile.profile_version,
         "browser-adapter-conformance-v1"
@@ -1503,14 +1478,12 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .expires_at,
         browser_adapter_launch_template_expires_at()
     );
-    assert!(
-        validation
-            .conformance_profile
-            .field_complete_launch_request
-            .completion_proof_contract
-            .iter()
-            .any(|proof| proof.proof_id == "egress_log_sealed_or_discarded")
-    );
+    assert!(validation
+        .conformance_profile
+        .field_complete_launch_request
+        .completion_proof_contract
+        .iter()
+        .any(|proof| proof.proof_id == "egress_log_sealed_or_discarded"));
     assert_eq!(
         validation
             .conformance_profile
@@ -1538,57 +1511,51 @@ async fn browser_adapter_manifest_validation_is_authenticated_and_fail_closed()
             .field_complete_expectation
             .endpoint_network_policy_bound
     );
-    assert!(
-        validation
-            .conformance_profile
-            .required_cases
-            .iter()
-            .any(
-                |case| case.name == "dns_rebinding_hostname_stays_incomplete"
-                    && case.expected_rest_status == StatusCode::OK.as_u16()
-                    && case.expected_mcp_error_code.is_none()
-                    && case
-                        .expected_validation
-                        .as_ref()
-                        .is_some_and(|expected| !expected.endpoint_network_policy_bound)
-            )
-    );
-    assert!(
-        validation
-            .conformance_profile
-            .required_cases
-            .iter()
-            .any(
-                |case| case.name == "insecure_scheme_rejected_before_validation"
-                    && case.expected_rest_status == StatusCode::BAD_REQUEST.as_u16()
-                    && case.expected_rest_error_code.as_deref()
-                        == Some("invalid_browser_adapter_manifest")
-                    && case.expected_mcp_error_code == Some(-32602)
-                    && case
-                        .expected_mcp_error_message_contains
-                        .iter()
-                        .any(|message| message == "must use https")
-            )
-    );
-    assert!(
-        validation
-            .conformance_profile
-            .required_cases
-            .iter()
-            .any(|case| case.name == "missing_required_level_reports_gap"
+    assert!(validation
+        .conformance_profile
+        .required_cases
+        .iter()
+        .any(
+            |case| case.name == "dns_rebinding_hostname_stays_incomplete"
+                && case.expected_rest_status == StatusCode::OK.as_u16()
+                && case.expected_mcp_error_code.is_none()
                 && case
                     .expected_validation
                     .as_ref()
-                    .is_some_and(|expected| expected
-                        .missing_levels
-                        .contains(&BrowserSandboxLevel::OsIsolated)))
-    );
+                    .is_some_and(|expected| !expected.endpoint_network_policy_bound)
+        ));
+    assert!(validation
+        .conformance_profile
+        .required_cases
+        .iter()
+        .any(
+            |case| case.name == "insecure_scheme_rejected_before_validation"
+                && case.expected_rest_status == StatusCode::BAD_REQUEST.as_u16()
+                && case.expected_rest_error_code.as_deref()
+                    == Some("invalid_browser_adapter_manifest")
+                && case.expected_mcp_error_code == Some(-32602)
+                && case
+                    .expected_mcp_error_message_contains
+                    .iter()
+                    .any(|message| message == "must use https")
+        ));
+    assert!(validation
+        .conformance_profile
+        .required_cases
+        .iter()
+        .any(|case| case.name == "missing_required_level_reports_gap"
+            && case
+                .expected_validation
+                .as_ref()
+                .is_some_and(|expected| expected
+                    .missing_levels
+                    .contains(&BrowserSandboxLevel::OsIsolated))));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1640,19 +1607,15 @@ async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
     assert!(validation.missing_proof_ids.is_empty());
     assert!(validation.unexpected_proof_ids.is_empty());
     assert!(validation.failed_evidence_fields.is_empty());
-    assert!(
-        validation
-            .completion_proof_contract
-            .iter()
-            .any(|proof| proof.proof_id == "temporary_profile_removed"
-                && proof.evidence_field == "temporary_profile_removed")
-    );
-    assert!(
-        validation
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("not verified it on a real launch request"))
-    );
+    assert!(validation
+        .completion_proof_contract
+        .iter()
+        .any(|proof| proof.proof_id == "temporary_profile_removed"
+            && proof.evidence_field == "temporary_profile_removed"));
+    assert!(validation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("not verified it on a real launch request")));
     assert!(validation.reasons.iter().any(|reason| {
         reason.contains("not present in this daemon's bounded launch replay ledger")
     }));
@@ -1675,16 +1638,12 @@ async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let validation: BrowserAdapterCompletionValidationResponse = serde_json::from_slice(&body)?;
     assert!(!validation.report_shape_complete);
-    assert!(
-        validation
-            .missing_proof_ids
-            .contains(&"temporary_profile_removed".to_string())
-    );
-    assert!(
-        validation
-            .failed_evidence_fields
-            .contains(&"temporary_profile_removed".to_string())
-    );
+    assert!(validation
+        .missing_proof_ids
+        .contains(&"temporary_profile_removed".to_string()));
+    assert!(validation
+        .failed_evidence_fields
+        .contains(&"temporary_profile_removed".to_string()));
 
     let mut unknown = complete_adapter_completion_report();
     unknown["extra"] = serde_json::json!("nope");
@@ -1727,8 +1686,8 @@ async fn browser_adapter_completion_validation_is_authenticated_and_fail_closed(
 }
 
 #[tokio::test]
-async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1765,34 +1724,24 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
         BrowserSandboxAvailability::Planned
     );
     assert_eq!(contract.adapter_contract.launch_endpoint, None);
-    assert!(
-        contract
-            .adapter_contract
-            .completion_proof_contract
-            .iter()
-            .any(|proof| proof.proof_id == "browser_process_terminated"
-                && proof.evidence_field == "process_terminated")
-    );
-    assert!(
-        contract
-            .required_levels
-            .contains(&BrowserSandboxLevel::OsIsolated)
-    );
-    assert!(
-        contract
-            .required_levels
-            .contains(&BrowserSandboxLevel::RemoteIsolated)
-    );
-    assert!(
-        contract
-            .required_controls
-            .contains(&BrowserSandboxControl::LocalNetworkBlock)
-    );
-    assert!(
-        contract
-            .required_controls
-            .contains(&BrowserSandboxControl::TeardownProof)
-    );
+    assert!(contract
+        .adapter_contract
+        .completion_proof_contract
+        .iter()
+        .any(|proof| proof.proof_id == "browser_process_terminated"
+            && proof.evidence_field == "process_terminated"));
+    assert!(contract
+        .required_levels
+        .contains(&BrowserSandboxLevel::OsIsolated));
+    assert!(contract
+        .required_levels
+        .contains(&BrowserSandboxLevel::RemoteIsolated));
+    assert!(contract
+        .required_controls
+        .contains(&BrowserSandboxControl::LocalNetworkBlock));
+    assert!(contract
+        .required_controls
+        .contains(&BrowserSandboxControl::TeardownProof));
     assert_eq!(
         contract.conformance_profile.profile_version,
         "browser-adapter-conformance-v1"
@@ -1812,14 +1761,12 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
             .as_deref(),
         Some("tempo-conformance-adapter-v1")
     );
-    assert!(
-        contract
-            .conformance_profile
-            .field_complete_launch_request
-            .required_completion_proofs
-            .iter()
-            .any(|proof| proof.contains("temporary profile directory"))
-    );
+    assert!(contract
+        .conformance_profile
+        .field_complete_launch_request
+        .required_completion_proofs
+        .iter()
+        .any(|proof| proof.contains("temporary profile directory")));
     assert_eq!(
         contract
             .conformance_profile
@@ -1829,25 +1776,21 @@ async fn browser_adapter_contract_discovery_is_authenticated_and_fail_closed()
             .len(),
         contract.adapter_contract.completion_proof_contract.len()
     );
-    assert!(
-        contract
-            .conformance_profile
-            .required_cases
-            .iter()
-            .any(|case| case.name == "field_complete_manifest_stays_fail_closed")
-    );
-    assert!(
-        contract
-            .notes
-            .iter()
-            .any(|note| note.contains("not adapter registration"))
-    );
+    assert!(contract
+        .conformance_profile
+        .required_cases
+        .iter()
+        .any(|case| case.name == "field_complete_manifest_stays_fail_closed"));
+    assert!(contract
+        .notes
+        .iter()
+        .any(|note| note.contains("not adapter registration")));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_bearer_once()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_bearer_once(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let issue = json!({
         "actor": "agent",
@@ -1867,12 +1810,10 @@ async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_b
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let error: ErrorResponse = serde_json::from_slice(&body)?;
-    assert!(
-        error
-            .error
-            .message
-            .contains("requires daemon authentication")
-    );
+    assert!(error
+        .error
+        .message
+        .contains("requires daemon authentication"));
 
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
@@ -1902,11 +1843,9 @@ async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_b
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let issued: BrowserAdapterCapabilityIssueResponse = serde_json::from_slice(&body)?;
-    assert!(
-        issued
-            .same_user_capability
-            .starts_with("bbx-browser-adapter-cap-v1.")
-    );
+    assert!(issued
+        .same_user_capability
+        .starts_with("bbx-browser-adapter-cap-v1."));
     assert!(issued.same_user_capability.len() <= 256);
     assert!(!issued.same_user_capability.chars().any(char::is_whitespace));
     assert_eq!(issued.ttl_seconds, 60);
@@ -1921,8 +1860,8 @@ async fn browser_adapter_capability_issue_requires_configured_auth_and_returns_b
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_binds_registration_once_without_trusting_adapter()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_binds_registration_once_without_trusting_adapter(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -1988,8 +1927,8 @@ async fn browser_adapter_capability_binds_registration_once_without_trusting_ada
 }
 
 #[tokio::test]
-async fn browser_adapter_launch_plan_binds_capability_without_launching()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_launch_plan_binds_capability_without_launching(
+) -> Result<(), Box<dyn std::error::Error>> {
     let unauthenticated = router(ServerConfig::new(BeatboxEngine::new()?));
     let response = unauthenticated
         .oneshot(
@@ -2105,11 +2044,10 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert_eq!(plan.admission.decision, BrowserAdmissionDecision::Rejected);
     assert!(!plan.admission.runnable_browser_sessions);
     assert!(!plan.manifest_validation.launchable);
-    assert!(
-        plan.reasons
-            .iter()
-            .any(|reason| reason.contains("not registration"))
-    );
+    assert!(plan
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("not registration")));
     assert!(plan.reasons.iter().any(|reason| {
         reason.contains("bounded replay ledger") && reason.contains("REST claim preflight")
     }));
@@ -2181,12 +2119,10 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let error: ErrorResponse = serde_json::from_slice(&body)?;
     assert_eq!(error.error.code, "invalid_browser_adapter_launch_claim");
-    assert!(
-        error
-            .error
-            .message
-            .contains("guard_plan.network does not accept field `extra`")
-    );
+    assert!(error
+        .error
+        .message
+        .contains("guard_plan.network does not accept field `extra`"));
 
     let mut omitted_claim = claim_request.clone();
     omitted_claim["launch_request"]
@@ -2258,12 +2194,10 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
     assert!(claimed_completion.completion_report_template_matched);
     assert!(claimed_completion.completion_bound_to_claimed_launch);
     assert!(!claimed_completion.verified_on_production_path);
-    assert!(
-        claimed_completion
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("claimed through the REST launch-claim preflight"))
-    );
+    assert!(claimed_completion
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("claimed through the REST launch-claim preflight")));
 
     let mut mismatched_completion = serde_json::to_value(&completion_report)?;
     mismatched_completion["adapter_id"] = json!("different-adapter");
@@ -2374,8 +2308,8 @@ async fn browser_adapter_launch_plan_binds_capability_without_launching()
 }
 
 #[tokio::test]
-async fn browser_adapter_launch_plan_binds_sensitive_activity_mode_capability()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_launch_plan_binds_sensitive_activity_mode_capability(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2477,8 +2411,8 @@ async fn browser_adapter_launch_plan_binds_sensitive_activity_mode_capability()
 }
 
 #[tokio::test]
-async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_replay_binding()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_replay_binding(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2523,17 +2457,15 @@ async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_rep
     assert!(!plan.adapter_contract_fields_complete);
     assert!(!plan.replay_protection_bound);
     assert!(!plan.launchable);
-    assert!(
-        plan.manifest_validation
-            .missing_guard_fields
-            .iter()
-            .any(|field| field == "guard_plan.network.allowed_origins")
-    );
-    assert!(
-        plan.reasons
-            .iter()
-            .any(|reason| reason.contains("adapter field contract was incomplete"))
-    );
+    assert!(plan
+        .manifest_validation
+        .missing_guard_fields
+        .iter()
+        .any(|field| field == "guard_plan.network.allowed_origins"));
+    assert!(plan
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("adapter field contract was incomplete")));
 
     let claim_request = json!({ "launch_request": plan.launch_request });
     let response = app
@@ -2557,8 +2489,8 @@ async fn browser_adapter_launch_plan_requires_contract_complete_manifest_for_rep
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2639,8 +2571,8 @@ async fn browser_adapter_capability_binding_rejects_mismatch_and_expiry()
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_unbound_adapter_id_matches_any_manifest()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_unbound_adapter_id_matches_any_manifest(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2678,8 +2610,8 @@ async fn browser_adapter_capability_unbound_adapter_id_matches_any_manifest()
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_quota_limits_live_tokens()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_quota_limits_live_tokens(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2725,8 +2657,8 @@ async fn browser_adapter_capability_quota_limits_live_tokens()
 }
 
 #[tokio::test]
-async fn browser_adapter_capability_concurrent_register_binds_once()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_capability_concurrent_register_binds_once(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2781,8 +2713,8 @@ async fn browser_adapter_capability_concurrent_register_binds_once()
 }
 
 #[tokio::test]
-async fn browser_adapter_registration_is_authenticated_fail_closed_and_non_echoing()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_registration_is_authenticated_fail_closed_and_non_echoing(
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = ServerConfig::new(BeatboxEngine::new()?);
     config.auth = AuthMode::required("secret")?;
     let app = router(config);
@@ -2826,24 +2758,20 @@ async fn browser_adapter_registration_is_authenticated_fail_closed_and_non_echoi
     assert!(!registration.same_user_capability_bound);
     assert!(!registration.manifest_validation.manifest_complete);
     assert!(!registration.manifest_validation.launchable);
-    assert!(
-        registration
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("does not persist or trust adapters yet"))
-    );
-    assert!(
-        registration
-            .required_next_steps
-            .iter()
-            .any(|step| step.contains("same-user capability"))
-    );
+    assert!(registration
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("does not persist or trust adapters yet")));
+    assert!(registration
+        .required_next_steps
+        .iter()
+        .any(|step| step.contains("same-user capability")));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_adapter_registration_rejects_invalid_capability()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_registration_rejects_invalid_capability(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut registration = complete_adapter_registration();
     registration["same_user_capability"] = json!(" test-capability-fixture ");
@@ -2862,18 +2790,16 @@ async fn browser_adapter_registration_rejects_invalid_capability()
     assert!(!raw.contains("test-capability-fixture"));
     let error: ErrorResponse = serde_json::from_str(&raw)?;
     assert_eq!(error.error.code, "invalid_browser_adapter_registration");
-    assert!(
-        error
-            .error
-            .message
-            .contains("same_user_capability must be non-empty")
-    );
+    assert!(error
+        .error
+        .message
+        .contains("same_user_capability must be non-empty"));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_adapter_registration_errors_do_not_echo_capability_or_endpoint_secret()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_registration_errors_do_not_echo_capability_or_endpoint_secret(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut registration = complete_adapter_registration();
     registration["manifest"]["launch_endpoint"] =
@@ -2900,8 +2826,8 @@ async fn browser_adapter_registration_errors_do_not_echo_capability_or_endpoint_
 }
 
 #[tokio::test]
-async fn browser_adapter_registration_rejects_unknown_request_fields()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_registration_rejects_unknown_request_fields(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut registration = complete_adapter_registration();
     registration["unexpected"] = json!("ignored");
@@ -2925,8 +2851,8 @@ async fn browser_adapter_registration_rejects_unknown_request_fields()
 }
 
 #[tokio::test]
-async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let response = app
         .clone()
@@ -3029,8 +2955,8 @@ async fn browser_adapter_conformance_profile_cases_match_rest_and_mcp()
 }
 
 #[tokio::test]
-async fn browser_adapter_manifest_reports_missing_contract_parts()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_manifest_reports_missing_contract_parts(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let response = app
         .oneshot(
@@ -3058,34 +2984,26 @@ async fn browser_adapter_manifest_reports_missing_contract_parts()
     assert!(!validation.manifest_complete);
     assert!(!validation.launchable);
     assert!(validation.launch_endpoint.is_none());
-    assert!(
-        validation
-            .missing_levels
-            .contains(&BrowserSandboxLevel::OsIsolated)
-    );
-    assert!(
-        validation
-            .missing_controls
-            .contains(&BrowserSandboxControl::TeardownProof)
-    );
-    assert!(
-        validation
-            .missing_guard_fields
-            .iter()
-            .any(|field| field == "guard_plan.storage.teardown_proof_required")
-    );
-    assert!(
-        validation
-            .missing_completion_proofs
-            .iter()
-            .any(|proof| proof.contains("temporary profile directory"))
-    );
+    assert!(validation
+        .missing_levels
+        .contains(&BrowserSandboxLevel::OsIsolated));
+    assert!(validation
+        .missing_controls
+        .contains(&BrowserSandboxControl::TeardownProof));
+    assert!(validation
+        .missing_guard_fields
+        .iter()
+        .any(|field| field == "guard_plan.storage.teardown_proof_required"));
+    assert!(validation
+        .missing_completion_proofs
+        .iter()
+        .any(|proof| proof.contains("temporary profile directory")));
     Ok(())
 }
 
 #[tokio::test]
-async fn browser_adapter_manifest_rejects_unsafe_launch_endpoints()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_manifest_rejects_unsafe_launch_endpoints(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     for endpoint in [
         "http://adapter.example/launch",
@@ -3117,8 +3035,8 @@ async fn browser_adapter_manifest_rejects_unsafe_launch_endpoints()
 }
 
 #[tokio::test]
-async fn browser_adapter_manifest_does_not_complete_dns_unverified_endpoints()
--> Result<(), Box<dyn std::error::Error>> {
+async fn browser_adapter_manifest_does_not_complete_dns_unverified_endpoints(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut manifest = complete_adapter_manifest();
     manifest["launch_endpoint"] = json!("https://127.0.0.1.nip.io/launch");
@@ -3141,12 +3059,10 @@ async fn browser_adapter_manifest_does_not_complete_dns_unverified_endpoints()
     assert!(validation.missing_controls.is_empty());
     assert!(validation.missing_guard_fields.is_empty());
     assert!(validation.missing_completion_proofs.is_empty());
-    assert!(
-        validation
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("DNS, proxy, redirect, and retry"))
-    );
+    assert!(validation
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("DNS, proxy, redirect, and retry")));
     Ok(())
 }
 
@@ -3170,13 +3086,11 @@ async fn capabilities_embed_the_browser_profile_contract() -> Result<(), Box<dyn
         value["ecosystem"]["contract_version"],
         "beatbox-ecosystem-integration-v1"
     );
-    assert!(
-        value["ecosystem"]["lanes"]
-            .as_array()
-            .is_some_and(|lanes| lanes.iter().any(|lane| lane["lane"] == "wasm"
-                && lane["status"] == "runnable"
-                && lane["mcp_tool"] == "run_wasm"))
-    );
+    assert!(value["ecosystem"]["lanes"]
+        .as_array()
+        .is_some_and(|lanes| lanes.iter().any(|lane| lane["lane"] == "wasm"
+            && lane["status"] == "runnable"
+            && lane["mcp_tool"] == "run_wasm")));
     assert_eq!(value["browser_sandbox"]["runnable_browser_sessions"], false);
     assert_eq!(
         value["browser_sandbox"]["default_level"],
@@ -3203,19 +3117,17 @@ async fn capabilities_embed_the_browser_profile_contract() -> Result<(), Box<dyn
                 .as_str()
                 .is_some_and(|proof| proof.contains("temporary profile directory"))))
     );
-    assert!(
-        value["browser_sandbox"]["profiles"]
-            .as_array()
-            .is_some_and(|profiles| profiles
-                .iter()
-                .all(|profile| profile["availability"] != "available"))
-    );
+    assert!(value["browser_sandbox"]["profiles"]
+        .as_array()
+        .is_some_and(|profiles| profiles
+            .iter()
+            .all(|profile| profile["availability"] != "available")));
     Ok(())
 }
 
 #[tokio::test]
-async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
--> Result<(), Box<dyn std::error::Error>> {
+async fn integration_contract_reports_runnable_wasm_and_planned_lanes(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let response = app
         .oneshot(
@@ -3249,14 +3161,12 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
     assert_eq!(wasm["sync_endpoint"], "/v1/execute");
     assert_eq!(wasm["job_endpoint"], "/v1/jobs");
     assert_eq!(wasm["mcp_tool"], "run_wasm");
-    assert!(
-        value["auth"]["required_for"]
-            .as_array()
-            .is_some_and(
-                |required| required.iter().any(|item| item == "/mcp tools/list")
-                    && required.iter().any(|item| item == "/mcp tools/call")
-            )
-    );
+    assert!(value["auth"]["required_for"]
+        .as_array()
+        .is_some_and(
+            |required| required.iter().any(|item| item == "/mcp tools/list")
+                && required.iter().any(|item| item == "/mcp tools/call")
+        ));
     let rest = value["rest"]
         .as_array()
         .ok_or("integration contract should include REST endpoints")?;
@@ -3276,10 +3186,9 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
     let mcp = value["mcp"]
         .as_array()
         .ok_or("integration contract should include MCP tools")?;
-    assert!(
-        mcp.iter()
-            .any(|tool| tool["name"] == "register_browser_adapter")
-    );
+    assert!(mcp
+        .iter()
+        .any(|tool| tool["name"] == "register_browser_adapter"));
     assert!(value["sdk_methods"].as_array().is_some_and(|methods| {
         methods.iter().any(|method| method == "integration")
             && methods
@@ -3289,28 +3198,22 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
                 .iter()
                 .any(|method| method == "browser_adapter_launch_claim")
     }));
-    assert!(
-        wasm["accepted_sources"]
-            .as_array()
-            .is_some_and(|sources| sources.iter().any(|source| source == "wasm_wat"))
-    );
-    assert!(
-        lanes
-            .iter()
-            .any(|lane| lane["lane"] == "python_wasi" && lane["status"] == "planned_fail_closed")
-    );
+    assert!(wasm["accepted_sources"]
+        .as_array()
+        .is_some_and(|sources| sources.iter().any(|source| source == "wasm_wat")));
+    assert!(lanes
+        .iter()
+        .any(|lane| lane["lane"] == "python_wasi" && lane["status"] == "planned_fail_closed"));
     assert!(value["consumers"].as_array().is_some_and(|consumers| {
         consumers
             .iter()
             .any(|consumer| consumer["project"] == "tempo")
     }));
-    assert!(
-        value["non_goals"]
-            .as_array()
-            .is_some_and(|non_goals| non_goals.iter().any(|non_goal| non_goal
-                .as_str()
-                .is_some_and(|non_goal| non_goal.contains("not runnable yet"))))
-    );
+    assert!(value["non_goals"]
+        .as_array()
+        .is_some_and(|non_goals| non_goals.iter().any(|non_goal| non_goal
+            .as_str()
+            .is_some_and(|non_goal| non_goal.contains("not runnable yet")))));
     Ok(())
 }
 
@@ -3383,21 +3286,19 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["openapi"], "3.1.0");
-    assert!(
-        value["paths"]
-            .as_object()
-            .is_some_and(|paths| paths.contains_key("/v1/jobs")
-                && paths.contains_key("/v1/integration")
-                && paths.contains_key("/v1/browser/profiles")
-                && paths.contains_key("/v1/browser/admit")
-                && paths.contains_key("/v1/browser/adapter/contract")
-                && paths.contains_key("/v1/browser/adapter/capability")
-                && paths.contains_key("/v1/browser/adapter/register")
-                && paths.contains_key("/v1/browser/adapter/launch/plan")
-                && paths.contains_key("/v1/browser/adapter/launch/claim")
-                && paths.contains_key("/v1/browser/adapter/validate")
-                && paths.contains_key("/v1/browser/adapter/completion/validate"))
-    );
+    assert!(value["paths"]
+        .as_object()
+        .is_some_and(|paths| paths.contains_key("/v1/jobs")
+            && paths.contains_key("/v1/integration")
+            && paths.contains_key("/v1/browser/profiles")
+            && paths.contains_key("/v1/browser/admit")
+            && paths.contains_key("/v1/browser/adapter/contract")
+            && paths.contains_key("/v1/browser/adapter/capability")
+            && paths.contains_key("/v1/browser/adapter/register")
+            && paths.contains_key("/v1/browser/adapter/launch/plan")
+            && paths.contains_key("/v1/browser/adapter/launch/claim")
+            && paths.contains_key("/v1/browser/adapter/validate")
+            && paths.contains_key("/v1/browser/adapter/completion/validate")));
 
     // The spec now carries full component schemas so SDKs can be generated from it.
     let schemas = value["components"]["schemas"]
@@ -3528,11 +3429,13 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         "adapter capability response should require secret and expiry metadata"
     );
     assert_eq!(
-        schemas["BrowserAdapterRegistrationRequest"]["properties"]["same_user_capability"]["maxLength"],
+        schemas["BrowserAdapterRegistrationRequest"]["properties"]["same_user_capability"]
+            ["maxLength"],
         256
     );
     assert_eq!(
-        schemas["BrowserAdapterLaunchPlanRequest"]["properties"]["same_user_capability"]["maxLength"],
+        schemas["BrowserAdapterLaunchPlanRequest"]["properties"]["same_user_capability"]
+            ["maxLength"],
         256
     );
     assert!(
@@ -3834,16 +3737,12 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     assert!(tools.to_string().contains("get_browser_adapter_contract"));
     assert!(tools.to_string().contains("register_browser_adapter"));
     assert!(tools.to_string().contains("validate_browser_adapter"));
-    assert!(
-        tools
-            .to_string()
-            .contains("validate_browser_adapter_completion")
-    );
-    assert!(
-        !tools
-            .to_string()
-            .contains("issue_browser_adapter_capability")
-    );
+    assert!(tools
+        .to_string()
+        .contains("validate_browser_adapter_completion"));
+    assert!(!tools
+        .to_string()
+        .contains("issue_browser_adapter_capability"));
     assert!(!tools.to_string().contains("browser_adapter_launch_plan"));
     assert!(!tools.to_string().contains("plan_browser_adapter_launch"));
     assert!(!tools.to_string().contains("browser_adapter_launch_claim"));
@@ -3885,17 +3784,16 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
         register_tool["inputSchema"]["required"],
         serde_json::json!(["actor", "sensitivity", "manifest"])
     );
-    assert!(
-        register_tool["inputSchema"]["properties"]
-            .as_object()
-            .is_some_and(|properties| !properties.contains_key("same_user_capability"))
-    );
+    assert!(register_tool["inputSchema"]["properties"]
+        .as_object()
+        .is_some_and(|properties| !properties.contains_key("same_user_capability")));
     assert_eq!(
         register_tool["inputSchema"]["properties"]["manifest"]["additionalProperties"],
         serde_json::json!(false)
     );
     assert_eq!(
-        register_tool["inputSchema"]["properties"]["manifest"]["properties"]["adapter_id"]["maxLength"],
+        register_tool["inputSchema"]["properties"]["manifest"]["properties"]["adapter_id"]
+            ["maxLength"],
         128
     );
     let validate_tool = tools
@@ -3954,8 +3852,8 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
-async fn mcp_options_allows_aether_payment_headers_for_local_browser_origin()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_options_allows_aether_payment_headers_for_local_browser_origin(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let response = app
         .oneshot(
@@ -3991,12 +3889,10 @@ async fn mcp_options_allows_aether_payment_headers_for_local_browser_origin()
         .unwrap_or_default();
     assert!(!exposed_headers.contains(AETHER_PAYMENT_HEADER));
     assert!(exposed_headers.contains(AETHER_PAYMENT_HASH_HEADER));
-    assert!(
-        headers
-            .get("access-control-allow-methods")
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|methods| methods.contains("OPTIONS") && methods.contains("POST"))
-    );
+    assert!(headers
+        .get("access-control-allow-methods")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|methods| methods.contains("OPTIONS") && methods.contains("POST")));
     Ok(())
 }
 
@@ -4033,11 +3929,9 @@ async fn mcp_rejects_missing_content_type() -> Result<(), Box<dyn std::error::Er
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32600);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("content-type"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("content-type")));
     Ok(())
 }
 
@@ -4058,11 +3952,9 @@ async fn mcp_rejects_text_plain_json_posts() -> Result<(), Box<dyn std::error::E
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32600);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("content-type"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("content-type")));
     Ok(())
 }
 
@@ -4092,17 +3984,15 @@ async fn mcp_get_capabilities_rejects_unknown_arguments() -> Result<(), Box<dyn 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("ignored"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("ignored")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_get_integration_contract_rejects_unknown_arguments()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_integration_contract_rejects_unknown_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4126,11 +4016,9 @@ async fn mcp_get_integration_contract_rejects_unknown_arguments()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("ignored"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("ignored")));
     Ok(())
 }
 
@@ -4188,8 +4076,8 @@ async fn mcp_get_capabilities_returns_structured_content() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
-async fn mcp_tools_call_accepts_aether_payment_headers_without_echoing_payload()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_tools_call_accepts_aether_payment_headers_without_echoing_payload(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4229,8 +4117,8 @@ async fn mcp_tools_call_accepts_aether_payment_headers_without_echoing_payload()
 }
 
 #[tokio::test]
-async fn mcp_tools_call_rejects_unhashed_aether_payment_header()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_tools_call_rejects_unhashed_aether_payment_header(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4253,17 +4141,15 @@ async fn mcp_tools_call_rejects_unhashed_aether_payment_header()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("must be supplied together"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("must be supplied together")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_tools_call_rejects_duplicate_aether_payment_headers()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_tools_call_rejects_duplicate_aether_payment_headers(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4291,17 +4177,15 @@ async fn mcp_tools_call_rejects_duplicate_aether_payment_headers()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("must be supplied at most once"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("must be supplied at most once")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_get_browser_profiles_returns_structured_content()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_browser_profiles_returns_structured_content(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4350,19 +4234,17 @@ async fn mcp_get_browser_profiles_returns_structured_content()
                 .iter()
                 .any(|field| field == "guard_plan.storage.teardown_proof_required"))
     );
-    assert!(
-        result["structuredContent"]["profiles"]
-            .as_array()
-            .is_some_and(|profiles| profiles
-                .iter()
-                .all(|profile| profile["availability"] != "available"))
-    );
+    assert!(result["structuredContent"]["profiles"]
+        .as_array()
+        .is_some_and(|profiles| profiles
+            .iter()
+            .all(|profile| profile["availability"] != "available")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_get_integration_contract_returns_structured_content()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_integration_contract_returns_structured_content(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4386,19 +4268,17 @@ async fn mcp_get_integration_contract_returns_structured_content()
     assert_eq!(result["isError"], serde_json::json!(false));
     assert_eq!(result["content"][0]["text"], "cradle integration contract");
     assert_eq!(result["structuredContent"]["service"], "cradle");
-    assert!(
-        result["structuredContent"]["lanes"]
-            .as_array()
-            .is_some_and(|lanes| lanes
-                .iter()
-                .any(|lane| lane["lane"] == "wasm" && lane["status"] == "runnable"))
-    );
+    assert!(result["structuredContent"]["lanes"]
+        .as_array()
+        .is_some_and(|lanes| lanes
+            .iter()
+            .any(|lane| lane["lane"] == "wasm" && lane["status"] == "runnable")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_get_browser_profiles_rejects_unknown_arguments()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_browser_profiles_rejects_unknown_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4422,17 +4302,15 @@ async fn mcp_get_browser_profiles_rejects_unknown_arguments()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("level"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("level")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_admit_browser_session_returns_structured_rejection()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_admit_browser_session_returns_structured_rejection(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4518,7 +4396,8 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         serde_json::json!(["https://billing.example"])
     );
     assert_eq!(
-        result["structuredContent"]["guard_plan"]["network"]["outbound_network_disabled_without_proxy"],
+        result["structuredContent"]["guard_plan"]["network"]
+            ["outbound_network_disabled_without_proxy"],
         true
     );
     assert_eq!(
@@ -4526,7 +4405,8 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         true
     );
     assert_eq!(
-        result["structuredContent"]["guard_plan"]["storage"]["explicit_artifact_allowlist_required"],
+        result["structuredContent"]["guard_plan"]["storage"]
+            ["explicit_artifact_allowlist_required"],
         true
     );
     assert_eq!(
@@ -4565,20 +4445,23 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
         serde_json::json!(["https://billing.example"])
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["sensitive_activity_mode"],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]
+            ["sensitive_activity_mode"],
         serde_json::json!("network_suppressed")
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["guard_plan"]["network"]
-            ["allowed_origins"],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["guard_plan"]
+            ["network"]["allowed_origins"],
         serde_json::json!(["https://billing.example"])
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["same_user_capability_required"],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]
+            ["same_user_capability_required"],
         true
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["endpoint_network_policy_binding_required"],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]
+            ["endpoint_network_policy_binding_required"],
         true
     );
     assert!(
@@ -4597,29 +4480,27 @@ async fn mcp_admit_browser_session_returns_structured_rejection()
                     && proof["evidence_field"] == "temporary_profile_removed"))
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["completion_report_template"]
-            ["request_id"],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]
+            ["completion_report_template"]["request_id"],
         "browser-admission-launch-template-v1"
     );
     assert_eq!(
-        result["structuredContent"]["adapter_handoff"]["launch_request_template"]["completion_report_template"]
-            ["proof_ids"][0],
+        result["structuredContent"]["adapter_handoff"]["launch_request_template"]
+            ["completion_report_template"]["proof_ids"][0],
         "browser_process_terminated"
     );
     assert_eq!(result["structuredContent"]["downgrade_allowed"], true);
-    assert!(
-        result["structuredContent"]["reasons"]
-            .as_array()
-            .is_some_and(|reasons| reasons.iter().any(|reason| reason
-                .as_str()
-                .is_some_and(|reason| reason.contains("no weaker browser profile"))))
-    );
+    assert!(result["structuredContent"]["reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason
+            .as_str()
+            .is_some_and(|reason| reason.contains("no weaker browser profile")))));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_validate_browser_adapter_returns_structured_rejection()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_validate_browser_adapter_returns_structured_rejection(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4671,15 +4552,18 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
         serde_json::json!("browser-adapter-conformance-v1")
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["adapter_id"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["adapter_id"],
         "tempo-conformance-adapter-v1"
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["same_user_capability_required"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["same_user_capability_required"],
         true
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["endpoint_network_policy_binding_required"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["endpoint_network_policy_binding_required"],
         true
     );
     assert!(
@@ -4729,16 +4613,16 @@ async fn mcp_validate_browser_adapter_returns_structured_rejection()
                 && proof["evidence_field"] == "egress_log_sealed_or_discarded"))
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["completion_report_template"]
-            ["adapter_id"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["completion_report_template"]["adapter_id"],
         "tempo-conformance-adapter-v1"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_validate_browser_adapter_completion_returns_structured_rejection()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_validate_browser_adapter_completion_returns_structured_rejection(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4805,33 +4689,27 @@ async fn mcp_validate_browser_adapter_completion_returns_structured_rejection()
         result["structuredContent"]["failed_evidence_fields"],
         serde_json::json!([])
     );
-    assert!(
-        result["structuredContent"]["completion_proof_contract"]
-            .as_array()
-            .is_some_and(|proofs| proofs
-                .iter()
-                .any(|proof| proof["proof_id"] == "temporary_profile_removed"))
-    );
-    assert!(
-        result["structuredContent"]["reasons"]
-            .as_array()
-            .is_some_and(|reasons| reasons.iter().any(|reason| reason
-                .as_str()
-                .is_some_and(|reason| reason.contains("not verified"))))
-    );
-    assert!(
-        result["structuredContent"]["reasons"]
-            .as_array()
-            .is_some_and(|reasons| reasons.iter().any(|reason| reason
-                .as_str()
-                .is_some_and(|reason| reason.contains("shape-only"))))
-    );
+    assert!(result["structuredContent"]["completion_proof_contract"]
+        .as_array()
+        .is_some_and(|proofs| proofs
+            .iter()
+            .any(|proof| proof["proof_id"] == "temporary_profile_removed")));
+    assert!(result["structuredContent"]["reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason
+            .as_str()
+            .is_some_and(|reason| reason.contains("not verified")))));
+    assert!(result["structuredContent"]["reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason
+            .as_str()
+            .is_some_and(|reason| reason.contains("shape-only")))));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_get_browser_adapter_contract_returns_structured_content()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_browser_adapter_contract_returns_structured_content(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4877,31 +4755,28 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
         result["structuredContent"]["adapter_contract"]["launch_endpoint"],
         serde_json::Value::Null
     );
-    assert!(
-        result["structuredContent"]["required_levels"]
-            .as_array()
-            .is_some_and(|levels| levels.iter().any(|level| level == "os_isolated")
-                && levels.iter().any(|level| level == "remote_isolated"))
-    );
-    assert!(
-        result["structuredContent"]["required_controls"]
-            .as_array()
-            .is_some_and(|controls| controls
-                .iter()
-                .any(|control| control == "local_network_block")
-                && controls.iter().any(|control| control == "teardown_proof"))
-    );
+    assert!(result["structuredContent"]["required_levels"]
+        .as_array()
+        .is_some_and(|levels| levels.iter().any(|level| level == "os_isolated")
+            && levels.iter().any(|level| level == "remote_isolated")));
+    assert!(result["structuredContent"]["required_controls"]
+        .as_array()
+        .is_some_and(|controls| controls
+            .iter()
+            .any(|control| control == "local_network_block")
+            && controls.iter().any(|control| control == "teardown_proof")));
     assert_eq!(
         result["structuredContent"]["conformance_profile"]["profile_version"],
         serde_json::json!("browser-adapter-conformance-v1")
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["adapter_id"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["adapter_id"],
         "tempo-conformance-adapter-v1"
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["guard_plan"]
-            ["network"]["allowed_origins"],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["guard_plan"]["network"]["allowed_origins"],
         serde_json::json!(["https://example.com"])
     );
     assert!(
@@ -4914,8 +4789,8 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
                     .is_some_and(|invariant| invariant.contains("profile directory"))))
     );
     assert_eq!(
-        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]["completion_report_template"]
-            ["proof_ids"][1],
+        result["structuredContent"]["conformance_profile"]["field_complete_launch_request"]
+            ["completion_report_template"]["proof_ids"][1],
         "temporary_profile_removed"
     );
     assert!(
@@ -4929,8 +4804,8 @@ async fn mcp_get_browser_adapter_contract_returns_structured_content()
 }
 
 #[tokio::test]
-async fn mcp_get_browser_adapter_contract_rejects_unknown_arguments()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_get_browser_adapter_contract_rejects_unknown_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -4954,17 +4829,15 @@ async fn mcp_get_browser_adapter_contract_rejects_unknown_arguments()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], serde_json::json!(-32602));
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("does not accept argument"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("does not accept argument")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_register_browser_adapter_returns_structured_rejection_without_capability_echo()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_register_browser_adapter_returns_structured_rejection_without_capability_echo(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut registration = complete_adapter_registration();
     registration
@@ -5022,28 +4895,24 @@ async fn mcp_register_browser_adapter_returns_structured_rejection_without_capab
         result["structuredContent"]["manifest_validation"]["endpoint_network_policy_bound"],
         false
     );
-    assert!(
-        result["structuredContent"]["required_next_steps"]
-            .as_array()
-            .is_some_and(|steps| steps
-                .iter()
-                .any(|step| step.as_str().is_some_and(|step| step
-                    .contains("REST registration endpoint")
-                    || step.contains("REST"))))
-    );
-    assert!(
-        result["structuredContent"]["reasons"]
-            .as_array()
-            .is_some_and(|reasons| reasons.iter().any(|reason| reason
-                .as_str()
-                .is_some_and(|reason| reason.contains("model-visible transcripts"))))
-    );
+    assert!(result["structuredContent"]["required_next_steps"]
+        .as_array()
+        .is_some_and(|steps| steps
+            .iter()
+            .any(|step| step.as_str().is_some_and(|step| step
+                .contains("REST registration endpoint")
+                || step.contains("REST")))));
+    assert!(result["structuredContent"]["reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason
+            .as_str()
+            .is_some_and(|reason| reason.contains("model-visible transcripts")))));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_register_browser_adapter_rejects_unknown_arguments()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_register_browser_adapter_rejects_unknown_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let mut registration = complete_adapter_registration();
     registration["secret_note"] = json!("ignored");
@@ -5069,17 +4938,15 @@ async fn mcp_register_browser_adapter_rejects_unknown_arguments()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], serde_json::json!(-32602));
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("does not accept argument"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("does not accept argument")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_admit_browser_session_rejects_unsafe_target_origins()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_admit_browser_session_rejects_unsafe_target_origins(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -5108,17 +4975,15 @@ async fn mcp_admit_browser_session_rejects_unsafe_target_origins()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("scheme, host, and optional port"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("scheme, host, and optional port")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_admit_browser_session_rejects_mistyped_arguments()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_admit_browser_session_rejects_mistyped_arguments(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -5147,17 +5012,15 @@ async fn mcp_admit_browser_session_rejects_mistyped_arguments()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("boolean"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("boolean")));
     Ok(())
 }
 
 #[tokio::test]
-async fn mcp_admit_browser_session_rejects_mistyped_controls()
--> Result<(), Box<dyn std::error::Error>> {
+async fn mcp_admit_browser_session_rejects_mistyped_controls(
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
     let request = json!({
         "jsonrpc": "2.0",
@@ -5186,11 +5049,9 @@ async fn mcp_admit_browser_session_rejects_mistyped_controls()
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("ambient_cookies"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("ambient_cookies")));
     Ok(())
 }
 
@@ -5223,11 +5084,9 @@ async fn mcp_run_wasm_rejects_over_sync_ceiling() -> Result<(), Box<dyn std::err
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("sync_limit_exceeded"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("sync_limit_exceeded")));
     Ok(())
 }
 
@@ -5259,11 +5118,9 @@ async fn mcp_run_wasm_rejects_ambiguous_sources() -> Result<(), Box<dyn std::err
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("exactly one"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("exactly one")));
     Ok(())
 }
 
@@ -5295,11 +5152,9 @@ async fn mcp_run_wasm_rejects_mistyped_limits() -> Result<(), Box<dyn std::error
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("unsigned integer"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("unsigned integer")));
     Ok(())
 }
 
@@ -5328,11 +5183,9 @@ async fn mcp_run_python_requires_code() -> Result<(), Box<dyn std::error::Error>
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let value: serde_json::Value = serde_json::from_slice(&body)?;
     assert_eq!(value["error"]["code"], -32602);
-    assert!(
-        value["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("code"))
-    );
+    assert!(value["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("code")));
     Ok(())
 }
 
