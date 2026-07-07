@@ -1,4 +1,5 @@
 /target
 /.beatbox
+AGENTS.md
 *.log
 .DS_Store
