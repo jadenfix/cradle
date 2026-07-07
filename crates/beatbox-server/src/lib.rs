@@ -4633,6 +4633,15 @@ fn mcp_tools() -> Value {
     ])
 }
 
+/// Committed MCP tool descriptor catalog served through `tools/list`.
+///
+/// Keep this synchronized with `crates/beatbox-server/fixtures/mcp-tools.catalog.json`
+/// through `tests/mcp_catalog_drift.rs` so MCP-facing tool names and schemas do
+/// not drift from the server implementation.
+pub fn mcp_tool_catalog() -> Value {
+    mcp_tools()
+}
+
 async fn mcp_tools_call(
     state: &AppState,
     headers: &HeaderMap,

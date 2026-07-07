@@ -69,6 +69,11 @@ boundaries, not by linking to internal crates.
   intended Tempo/beater.js/beaterOS boundaries.
 - MCP exposes the same integration contract through
   `get_integration_contract`.
+- MCP `tools/list` descriptors are fixture-pinned at
+  [`crates/beatbox-server/fixtures/mcp-tools.catalog.json`](crates/beatbox-server/fixtures/mcp-tools.catalog.json)
+  and checked by `cargo test -p beatbox-server --test mcp_catalog_drift`.
+  Update the fixture in the same PR as any MCP tool name, description, or input
+  schema change.
 
 Authenticated routes accept `Authorization: Bearer <token>`. The daemon also
 keeps `x-beatbox-api-key` as a compatibility header for current SDKs. Tokens

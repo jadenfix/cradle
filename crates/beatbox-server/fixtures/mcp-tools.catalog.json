@@ -1,0 +1,498 @@
+[
+  {
+    "description": "Run a WebAssembly text or base64 module in the hermetic Wasmtime lane.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "wat"
+          ]
+        },
+        {
+          "required": [
+            "wasm_base64"
+          ]
+        }
+      ],
+      "properties": {
+        "entrypoint": {
+          "type": "string"
+        },
+        "fuel": {
+          "type": "integer"
+        },
+        "input": {},
+        "memory_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "wasm_base64": {
+          "type": "string"
+        },
+        "wat": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "run_wasm"
+  },
+  {
+    "description": "Run Python source in the planned python-wasi lane.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "input": {},
+        "memory_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "name": "run_python"
+  },
+  {
+    "description": "Run JavaScript source in the planned js-wasm lane.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "input": {},
+        "memory_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "name": "run_javascript"
+  },
+  {
+    "description": "Return beatbox lane availability.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "get_capabilities"
+  },
+  {
+    "description": "Return Cradle's ecosystem integration contract: runnable Wasm surfaces, planned fail-closed lanes, auth posture, REST/MCP boundaries, and sibling-consumer expectations.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "get_integration_contract"
+  },
+  {
+    "description": "Return beatbox browser sandbox profile discovery metadata and the planned adapter handoff contract for Tempo-style integrations.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "get_browser_profiles"
+  },
+  {
+    "description": "Return beatbox's planned browser adapter contract and conformance_profile for Tempo-style integrations without trusting or launching an adapter.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "get_browser_adapter_contract"
+  },
+  {
+    "description": "Submit Tempo-style browser adapter manifest metadata through MCP without bearer capabilities. Capability-bound registration is REST-only because same-user capabilities must stay out of model-visible transcripts.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "agent",
+            "human"
+          ],
+          "type": "string"
+        },
+        "manifest": {
+          "additionalProperties": false,
+          "properties": {
+            "adapter_id": {
+              "description": "Stable adapter identifier with no surrounding whitespace.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "completion_proofs": {
+              "items": {
+                "description": "Required completion proof label with no surrounding whitespace.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "contract_version": {
+              "description": "Browser adapter contract version with no surrounding whitespace.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "guard_fields": {
+              "items": {
+                "description": "Required guard_plan field name with no surrounding whitespace.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "launch_endpoint": {
+              "description": "Optional HTTPS adapter endpoint. Rejects credentials, query/fragment components, localhost, literal local/private IPs, and empty or whitespace-padded values. DNS, proxy, redirect, and retry binding are not implemented.",
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supported_controls": {
+              "items": {
+                "enum": [
+                  "fresh_profile",
+                  "no_ambient_credentials",
+                  "egress_policy",
+                  "local_network_block",
+                  "sealed_artifacts",
+                  "os_process_isolation",
+                  "remote_worker_isolation",
+                  "teardown_proof"
+                ],
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "supported_levels": {
+              "items": {
+                "enum": [
+                  "instrumented_external",
+                  "ephemeral_profile",
+                  "network_suppressed",
+                  "sealed_state",
+                  "os_isolated",
+                  "remote_isolated"
+                ],
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            }
+          },
+          "required": [
+            "adapter_id",
+            "contract_version",
+            "launch_endpoint",
+            "supported_levels",
+            "supported_controls",
+            "guard_fields",
+            "completion_proofs"
+          ],
+          "type": "object"
+        },
+        "sensitivity": {
+          "enum": [
+            "public",
+            "sensitive"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor",
+        "sensitivity",
+        "manifest"
+      ],
+      "type": "object"
+    },
+    "name": "register_browser_adapter"
+  },
+  {
+    "description": "Return a fail-closed browser sandbox admission decision, guard plan, and non-launchable adapter handoff for a requested actor, sensitivity, and sandbox level.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "enum": [
+            "agent",
+            "human"
+          ],
+          "type": "string"
+        },
+        "allow_downgrade": {
+          "type": "boolean"
+        },
+        "artifact_mode": {
+          "description": "Artifact persistence posture requested for the session. Non-default modes remain fail-closed until storage and sealing are implemented.",
+          "enum": [
+            "discard",
+            "explicit_downloads",
+            "sealed_artifacts"
+          ],
+          "type": "string"
+        },
+        "credential_mode": {
+          "description": "Credential posture requested for the session. Non-default modes remain fail-closed until a real browser substrate implements them.",
+          "enum": [
+            "no_credentials",
+            "user_mediated",
+            "scoped_secrets"
+          ],
+          "type": "string"
+        },
+        "requested_level": {
+          "enum": [
+            "instrumented_external",
+            "ephemeral_profile",
+            "network_suppressed",
+            "sealed_state",
+            "os_isolated",
+            "remote_isolated"
+          ],
+          "type": "string"
+        },
+        "required_controls": {
+          "items": {
+            "enum": [
+              "fresh_profile",
+              "no_ambient_credentials",
+              "egress_policy",
+              "local_network_block",
+              "sealed_artifacts",
+              "os_process_isolation",
+              "remote_worker_isolation",
+              "teardown_proof"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sensitive_activity_mode": {
+          "description": "Requested privacy/suppression posture for sensitive browser activity. It is part of the fail-closed handoff contract and does not make the current daemon runnable.",
+          "enum": [
+            "standard",
+            "private",
+            "network_suppressed",
+            "sealed"
+          ],
+          "type": "string"
+        },
+        "sensitivity": {
+          "enum": [
+            "public",
+            "sensitive"
+          ],
+          "type": "string"
+        },
+        "target_origins": {
+          "description": "Bare public HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port; credentials, paths, queries, fragments, localhost, private/LAN IP ranges, and link-local metadata targets are rejected.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "task_label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requested_level",
+        "actor",
+        "sensitivity"
+      ],
+      "type": "object"
+    },
+    "name": "admit_browser_session"
+  },
+  {
+    "description": "Validate a proposed browser adapter manifest against beatbox's planned Tempo handoff contract without trusting or launching the adapter. Responses include a conformance_profile with canonical fail-closed cases for REST/MCP adapter compatibility tests.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "description": "Stable adapter identifier with no surrounding whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "completion_proofs": {
+          "items": {
+            "description": "Required completion proof label with no surrounding whitespace.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "contract_version": {
+          "description": "Browser adapter contract version with no surrounding whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "guard_fields": {
+          "items": {
+            "description": "Required guard_plan field name with no surrounding whitespace.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "launch_endpoint": {
+          "description": "HTTPS endpoint string a future trusted request builder might call. Credentials, queries, fragments, localhost names, and literal local/private IP addresses are rejected; DNS, proxy, redirect, and retry binding is not implemented by this validator.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supported_controls": {
+          "items": {
+            "enum": [
+              "fresh_profile",
+              "no_ambient_credentials",
+              "egress_policy",
+              "local_network_block",
+              "sealed_artifacts",
+              "os_process_isolation",
+              "remote_worker_isolation",
+              "teardown_proof"
+            ],
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "supported_levels": {
+          "items": {
+            "enum": [
+              "instrumented_external",
+              "ephemeral_profile",
+              "network_suppressed",
+              "sealed_state",
+              "os_isolated",
+              "remote_isolated"
+            ],
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "adapter_id",
+        "contract_version",
+        "launch_endpoint",
+        "supported_levels",
+        "supported_controls",
+        "guard_fields",
+        "completion_proofs"
+      ],
+      "type": "object"
+    },
+    "name": "validate_browser_adapter"
+  },
+  {
+    "description": "Validate a browser adapter completion report against beatbox's typed proof contract without trusting the report or marking any browser session complete.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_id": {
+          "description": "Adapter id from the launch request with no surrounding whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "contract_version": {
+          "description": "Browser adapter contract version with no surrounding whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "egress_log_sealed_or_discarded": {
+          "type": "boolean"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "plaintext_artifacts_removed": {
+          "type": "boolean"
+        },
+        "process_terminated": {
+          "type": "boolean"
+        },
+        "proof_ids": {
+          "items": {
+            "description": "Machine proof id from completion_proof_contract.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "request_id": {
+          "description": "Server-issued launch request id with no surrounding whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "sealed_artifact_handles": {
+          "items": {
+            "description": "Opaque storage handle, never raw browser state or secrets.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "temporary_profile_removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "request_id",
+        "adapter_id",
+        "contract_version",
+        "process_terminated",
+        "temporary_profile_removed",
+        "plaintext_artifacts_removed",
+        "egress_log_sealed_or_discarded",
+        "sealed_artifact_handles",
+        "proof_ids",
+        "notes"
+      ],
+      "type": "object"
+    },
+    "name": "validate_browser_adapter_completion"
+  }
+]
