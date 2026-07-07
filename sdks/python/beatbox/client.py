@@ -7,8 +7,8 @@ standard library. Works on Python 3.9+.
 from __future__ import annotations
 
 import json
-import ipaddress
 import socket
+import string
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +26,7 @@ __all__ = ["Client"]
 
 DEFAULT_TIMEOUT = 65.0
 _API_KEY_HEADER = "x-beatbox-api-key"
+_PLAINTEXT_HTTP_LOOPBACK_HOSTS = {"127.0.0.1", "[::1]"}
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -49,10 +50,21 @@ def _encode_job_id(job_id: str) -> str:
 def _validate_base_url(base_url: str) -> str:
     if not isinstance(base_url, str):
         raise ValueError("base_url must be a string")
+    if any(char.isspace() for char in base_url):
+        raise ValueError("base_url must not contain whitespace")
+    if "\\" in base_url:
+        raise ValueError("base_url must not contain backslashes")
+    if "?" in base_url:
+        raise ValueError("base_url must not contain a query delimiter")
+    if "#" in base_url:
+        raise ValueError("base_url must not contain a fragment delimiter")
     trimmed = base_url.rstrip("/")
     parsed = urllib.parse.urlsplit(trimmed)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError("base_url must be an absolute HTTP(S) origin")
+    raw_host = _raw_authority_host(parsed.netloc)
+    if any(char.isspace() for char in parsed.netloc):
+        raise ValueError("base_url authority must not contain whitespace")
     if "@" in parsed.netloc or parsed.username is not None or parsed.password is not None:
         raise ValueError("base_url must not contain credentials")
     if parsed.query:
@@ -64,40 +76,58 @@ def _validate_base_url(base_url: str) -> str:
         parsed.port
     except ValueError as exc:
         raise ValueError(f"base_url has an invalid port: {exc}") from None
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("base_url must include a host")
     if parsed.scheme == "https":
         return urllib.parse.urlunsplit(
             (parsed.scheme, parsed.netloc.lower(), parsed.path, "", "")
         )
     if parsed.scheme != "http":
         raise ValueError("base_url must use http or https")
-    hostname = parsed.hostname
-    if hostname is None:
-        raise ValueError("base_url must include a host")
-    if not _is_loopback_ip_literal(hostname):
+    if raw_host not in _PLAINTEXT_HTTP_LOOPBACK_HOSTS:
         raise ValueError(
-            "http base_url is allowed only for loopback IP literal addresses"
+            "http base_url is allowed only for exact loopback IP literals"
         )
     return urllib.parse.urlunsplit(
         (parsed.scheme, parsed.netloc.lower(), parsed.path, "", "")
     )
 
 
-def _is_loopback_ip_literal(hostname: str) -> bool:
-    try:
-        return ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        return False
+def _raw_authority_host(netloc: str) -> str:
+    if "\\" in netloc:
+        raise ValueError("base_url authority must not contain backslashes")
+    if netloc.startswith("["):
+        end = netloc.find("]")
+        if end < 0:
+            raise ValueError("base_url has an invalid bracketed host")
+        suffix = netloc[end + 1 :]
+        if suffix and not suffix.startswith(":"):
+            raise ValueError("base_url has an invalid bracketed host suffix")
+        return netloc[: end + 1].lower()
+    return netloc.rsplit(":", 1)[0].lower()
 
 
 def _validate_base_path(path: str) -> None:
     if "\\" in path:
         raise ValueError("base_url path must not contain backslashes")
     for segment in path.split("/"):
-        decoded = urllib.parse.unquote(segment)
+        decoded = _strict_unquote_path_segment(segment)
         if decoded in (".", ".."):
             raise ValueError("base_url path must not contain dot segments")
         if "/" in decoded or "\\" in decoded:
             raise ValueError("base_url path must not contain encoded slashes")
+
+
+def _strict_unquote_path_segment(segment: str) -> str:
+    hexdigits = set(string.hexdigits)
+    for index, char in enumerate(segment):
+        if char != "%":
+            continue
+        escape = segment[index + 1 : index + 3]
+        if len(escape) != 2 or any(digit not in hexdigits for digit in escape):
+            raise ValueError("base_url path contains invalid percent encoding")
+    return urllib.parse.unquote(segment)
 
 
 class Client:

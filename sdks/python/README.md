@@ -58,10 +58,11 @@ cross-origin or through a proxy.
 
 The Python client validates `base_url` before it can build authenticated
 requests: HTTPS URLs are accepted, and plain HTTP is accepted only for
-loopback IP literal addresses such as `127.0.0.1` or `[::1]`. Credentials,
-query strings, fragments, relative URLs, non-HTTP schemes, and path prefixes
-with dot segments or encoded slashes are rejected so API keys are not sent to
-hidden, escaped, DNS-rebound, or public plaintext origins.
+the exact local-development loopback literals `127.0.0.1` or `[::1]`.
+Credentials, query/fragment delimiters, relative URLs, non-HTTP schemes, raw
+whitespace or backslashes, malformed bracketed IPv6 authorities, and path
+prefixes with dot segments or encoded slashes are rejected so API keys are not
+sent to hidden, escaped, DNS-rebound, or public plaintext origins.
 
 ```python
 client = Client("http://127.0.0.1:7300", api_key="bbx-api-key-placeholder", timeout=65.0)
