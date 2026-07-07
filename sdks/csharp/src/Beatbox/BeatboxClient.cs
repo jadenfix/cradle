@@ -28,8 +28,8 @@ public sealed class BeatboxClient : IDisposable
     /// Creates a client.
     /// </summary>
     /// <param name="baseUrl">
-    /// Base URL of the daemon, e.g. <c>http://127.0.0.1:7300</c>. Trailing slashes
-    /// are trimmed.
+    /// Base URL of the daemon, e.g. <c>http://127.0.0.1:7300</c>. HTTPS is
+    /// required except for exact loopback IP literals. Trailing slashes are trimmed.
     /// </param>
     /// <param name="apiKey">
     /// Optional API key. When set, it is sent as the <c>x-beatbox-api-key</c> header
@@ -38,15 +38,10 @@ public sealed class BeatboxClient : IDisposable
     /// <param name="timeout">Optional request timeout. Defaults to 65 seconds.</param>
     public BeatboxClient(string baseUrl, string? apiKey = null, TimeSpan? timeout = null)
     {
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            throw new ArgumentException("baseUrl is required", nameof(baseUrl));
-        }
-
-        _baseUrl = baseUrl.TrimEnd('/');
+        _baseUrl = ValidateBaseUrl(baseUrl);
         _apiKey = apiKey;
 
-        var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        var handler = CreateHttpHandler();
         _http = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = timeout ?? TimeSpan.FromSeconds(65),
@@ -223,6 +218,78 @@ public sealed class BeatboxClient : IDisposable
         return "/v1/jobs/" + Uri.EscapeDataString(jobId);
     }
 
+    internal static string ValidateBaseUrl(string baseUrl)
+    {
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            throw new ArgumentException("baseUrl is required", nameof(baseUrl));
+        }
+
+        if (!string.Equals(baseUrl, baseUrl.Trim(), StringComparison.Ordinal))
+        {
+            throw new ArgumentException("baseUrl must not contain leading or trailing whitespace", nameof(baseUrl));
+        }
+
+        if (baseUrl.Contains('\\', StringComparison.Ordinal))
+        {
+            throw new ArgumentException("baseUrl must not contain backslashes", nameof(baseUrl));
+        }
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri))
+        {
+            throw new ArgumentException("invalid baseUrl", nameof(baseUrl));
+        }
+
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new ArgumentException("baseUrl must use http or https", nameof(baseUrl));
+        }
+
+        if (string.IsNullOrEmpty(uri.Host))
+        {
+            throw new ArgumentException("baseUrl must include a host", nameof(baseUrl));
+        }
+
+        if (!string.IsNullOrEmpty(uri.UserInfo) || AuthorityIncludesUserInfo(baseUrl))
+        {
+            throw new ArgumentException("baseUrl must not include credentials", nameof(baseUrl));
+        }
+
+        if (!string.IsNullOrEmpty(uri.Query))
+        {
+            throw new ArgumentException("baseUrl must not include a query string", nameof(baseUrl));
+        }
+
+        if (!string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new ArgumentException("baseUrl must not include a fragment", nameof(baseUrl));
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp && !IsLoopbackLiteral(ExtractRawHost(baseUrl)))
+        {
+            throw new ArgumentException("http baseUrl is allowed only for 127.0.0.1 or [::1]", nameof(baseUrl));
+        }
+
+        ValidateBasePath(ExtractRawPath(baseUrl));
+        return baseUrl.TrimEnd('/');
+    }
+
+    internal static Uri BuildRequestUri(string baseUrl, string path)
+    {
+        if (!path.StartsWith("/", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("request path must be absolute", nameof(path));
+        }
+
+        return new Uri(baseUrl + path, UriKind.Absolute);
+    }
+
+    internal static HttpClientHandler CreateHttpHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseProxy = false,
+    };
+
     private async Task<HttpResponseMessage> SendAsync(
         HttpMethod method,
         string path,
@@ -230,7 +297,7 @@ public sealed class BeatboxClient : IDisposable
         HttpContent? content,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, _baseUrl + path);
+        using var request = new HttpRequestMessage(method, BuildRequestUri(_baseUrl, path));
         if (auth && _apiKey is not null)
         {
             request.Headers.TryAddWithoutValidation(ApiKeyHeader, _apiKey);
@@ -340,5 +407,110 @@ public sealed class BeatboxClient : IDisposable
     {
         var json = JsonSerializer.Serialize(value, BeatboxJson.Options);
         return new StringContent(json, Encoding.UTF8, "application/json");
+    }
+
+    private static bool IsLoopbackLiteral(string host) => host is "127.0.0.1" or "[::1]";
+
+    private static bool AuthorityIncludesUserInfo(string raw)
+    {
+        var schemeEnd = raw.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0)
+        {
+            return false;
+        }
+
+        var authorityStart = schemeEnd + 3;
+        var authorityEnd = raw.IndexOfAny(['/', '?', '#'], authorityStart);
+        var authority = authorityEnd < 0
+            ? raw[authorityStart..]
+            : raw[authorityStart..authorityEnd];
+        return authority.Contains('@', StringComparison.Ordinal);
+    }
+
+    private static string ExtractRawPath(string raw)
+    {
+        var schemeEnd = raw.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0)
+        {
+            return string.Empty;
+        }
+
+        var pathStart = raw.IndexOfAny(['/', '?', '#'], schemeEnd + 3);
+        if (pathStart < 0 || raw[pathStart] != '/')
+        {
+            return string.Empty;
+        }
+
+        var pathEnd = raw.IndexOfAny(['?', '#'], pathStart);
+        return pathEnd < 0 ? raw[pathStart..] : raw[pathStart..pathEnd];
+    }
+
+    private static string ExtractRawHost(string raw)
+    {
+        var schemeEnd = raw.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 0)
+        {
+            return string.Empty;
+        }
+
+        var authorityStart = schemeEnd + 3;
+        var authorityEnd = raw.IndexOfAny(['/', '?', '#'], authorityStart);
+        var authority = authorityEnd < 0
+            ? raw[authorityStart..]
+            : raw[authorityStart..authorityEnd];
+        var userInfoEnd = authority.LastIndexOf('@');
+        if (userInfoEnd >= 0)
+        {
+            authority = authority[(userInfoEnd + 1)..];
+        }
+
+        if (authority.StartsWith("[", StringComparison.Ordinal))
+        {
+            var bracketEnd = authority.IndexOf(']', StringComparison.Ordinal);
+            if (bracketEnd < 0)
+            {
+                return authority;
+            }
+
+            var rest = authority[(bracketEnd + 1)..];
+            return rest.Length == 0 || rest.StartsWith(":", StringComparison.Ordinal)
+                ? authority[..(bracketEnd + 1)]
+                : authority;
+        }
+
+        var portStart = authority.IndexOf(':', StringComparison.Ordinal);
+        return portStart < 0 ? authority : authority[..portStart];
+    }
+
+    private static void ValidateBasePath(string rawPath)
+    {
+        if (string.IsNullOrEmpty(rawPath))
+        {
+            return;
+        }
+
+        if (rawPath.Contains("%2f", StringComparison.OrdinalIgnoreCase) ||
+            rawPath.Contains("%5c", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("baseUrl path must not include encoded path separators", nameof(rawPath));
+        }
+
+        foreach (var segment in rawPath.Split('/'))
+        {
+            string decoded;
+            try
+            {
+                decoded = Uri.UnescapeDataString(segment);
+            }
+            catch (UriFormatException ex)
+            {
+                throw new ArgumentException("invalid baseUrl path escape", nameof(rawPath), ex);
+            }
+
+            if (segment is "." or ".." || decoded is "." or "..")
+            {
+                throw new ArgumentException("baseUrl path must not include dot segments", nameof(rawPath));
+            }
+        }
     }
 }

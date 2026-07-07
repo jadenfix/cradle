@@ -37,7 +37,7 @@ any JSON shape the program returns.
 
 ```csharp
 var client = new BeatboxClient(
-    baseUrl: "http://127.0.0.1:7300", // required; trailing slashes trimmed
+    baseUrl: "http://127.0.0.1:7300", // required; HTTPS, or HTTP only for loopback literals
     apiKey:  "sk-...",                 // optional
     timeout: TimeSpan.FromSeconds(30)  // optional; default 65s
 );
@@ -47,6 +47,13 @@ When `apiKey` is set it is sent as the `x-beatbox-api-key` header on every reque
 except `HealthAsync` and `OpenApiAsync` (which are unauthenticated). The client
 never follows redirects, so the key can't leak cross-origin, and it never appears
 in an exception message.
+
+`baseUrl` is validated when the client is constructed. Production clients should
+use HTTPS. Plain HTTP is accepted only for exact loopback IP literals
+(`127.0.0.1` and `[::1]`) for local development. URLs with credentials, query
+strings, fragments, dot-segment paths, encoded path separators, or leading or
+trailing whitespace are rejected before any request can be built. The SDK-owned
+HTTP handler also disables proxy use for secret-bearing requests.
 
 `BeatboxClient` owns its `HttpClient`; construct one per base URL, reuse it, and
 `Dispose()` it (or wrap it in `using`) when done.
