@@ -539,7 +539,10 @@
           "200": {
             "description": "Daemon health"
           }
-        }
+        },
+        "security": [
+          {}
+        ]
       }
     },
     "/v1/integration": {
@@ -3644,8 +3647,20 @@
           }
         ]
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
     }
   },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "tags": [
     {
       "name": "v1",
