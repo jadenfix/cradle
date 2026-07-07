@@ -93,7 +93,10 @@ browser levels, required controls, and the guard-plan effects a future Tempo
 adapter must enforce before any sensitive activity can be considered runnable.
 `POST /v1/browser/admit` echoes the requested suppression mode and reports
 whether that mode is compatible with the requested browser level, including the
-mode-required controls that the requested level is missing.
+mode-required controls that the requested level is missing. Admission rejects
+malformed origins, localhost names, and literal local/private IP targets, but
+hostname target origins are reported as syntax-validated only until a future
+adapter binds DNS, proxy, redirect, retry, and final socket policy.
 
 ## Ecosystem
 

@@ -72,9 +72,11 @@ separate privacy/suppression intent, not a sandbox level: `standard`,
 `private`, `network_suppressed`, and `sealed` derive
 `guard_plan.suppression` requirements for ambient state, credentials,
 unapproved egress, persistence, and operator downgrade confirmation. Target
-origins are validated as bare public
-HTTP(S) origins: no paths, credentials, localhost, private/LAN IP space, or
-link-local metadata targets. Profiles publish their planned controls
+origins are validated as bare HTTP(S) origins with no paths or credentials;
+admission rejects localhost names and literal private/LAN/link-local metadata
+IP targets, while hostname targets remain syntax-validated only until DNS,
+proxying, redirects, retries, and final socket targets are revalidated by the
+future runtime guard. Profiles publish their planned controls
 (`fresh_profile`, `egress_policy`, `local_network_block`, `sealed_artifacts`,
 OS/remote isolation, and teardown proof) so Tempo can reason about what a level
 would satisfy without guessing from display text. The response echoes the

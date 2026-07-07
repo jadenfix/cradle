@@ -2082,7 +2082,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Bare public HTTP(S) origins this browser session is allowed to target.\nEntries must contain only scheme, host, and optional port. The runtime\nrejects credentials, paths, queries, fragments, localhost, private/LAN\naddress space, link-local metadata ranges, and more than 16 entries."
+            "description": "Bare HTTP(S) origins this browser session is allowed to target. Entries\nmust contain only scheme, host, and optional port. Admission rejects\ncredentials, paths, queries, fragments, localhost names, literal\nprivate/LAN IP ranges, literal link-local metadata targets, and more\nthan 16 entries. Hostname targets are syntax-validated only here and\nmust be revalidated after DNS, proxying, redirects, retries, and final\nsocket selection before any future runnable session connects."
           },
           "task_label": {
             "type": [
@@ -2343,29 +2343,35 @@
             "items": {
               "type": "string"
             },
-            "description": "Validated public origins this browser session may target."
+            "description": "Syntax-validated origins this browser session may target. Hostname\norigins still require runtime DNS/proxy/redirect/final-socket policy\nbinding before a session can become runnable."
           },
           "deny_localhost": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must reject localhost targets before any session\nbecomes runnable."
           },
           "deny_metadata_endpoints": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must reject cloud metadata endpoints before any\nsession becomes runnable."
           },
           "deny_private_networks": {
             "type": "boolean",
-            "description": "Runtime must deny localhost, loopback, private, shared, link-local, and\nmetadata-address egress even after DNS resolution, redirects, and proxying."
+            "description": "Future runtime/adapter must deny localhost, loopback, private, shared,\nlink-local, and metadata-address egress even after DNS resolution,\nredirects, and proxying before any session becomes runnable."
           },
           "outbound_network_disabled_without_proxy": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must disable direct outbound networking when a\nrequired proxy is unavailable before any session becomes runnable."
           },
           "require_dns_rebinding_protection": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must protect against DNS rebinding before any\nsession becomes runnable."
           },
           "require_proxy_enforcement": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must enforce outbound proxy policy before any\nsession becomes runnable."
           },
           "require_redirect_revalidation": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Future runtime/adapter must revalidate redirects before any session\nbecomes runnable."
           }
         }
       },

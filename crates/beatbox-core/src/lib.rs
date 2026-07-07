@@ -228,16 +228,31 @@ pub struct BrowserSensitiveActivityModeContract {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BrowserNetworkGuardPlan {
-    /// Validated public origins this browser session may target.
+    /// Syntax-validated origins this browser session may target. Hostname
+    /// origins still require runtime DNS/proxy/redirect/final-socket policy
+    /// binding before a session can become runnable.
     pub allowed_origins: Vec<String>,
-    /// Runtime must deny localhost, loopback, private, shared, link-local, and
-    /// metadata-address egress even after DNS resolution, redirects, and proxying.
+    /// Future runtime/adapter must deny localhost, loopback, private, shared,
+    /// link-local, and metadata-address egress even after DNS resolution,
+    /// redirects, and proxying before any session becomes runnable.
     pub deny_private_networks: bool,
+    /// Future runtime/adapter must reject localhost targets before any session
+    /// becomes runnable.
     pub deny_localhost: bool,
+    /// Future runtime/adapter must reject cloud metadata endpoints before any
+    /// session becomes runnable.
     pub deny_metadata_endpoints: bool,
+    /// Future runtime/adapter must protect against DNS rebinding before any
+    /// session becomes runnable.
     pub require_dns_rebinding_protection: bool,
+    /// Future runtime/adapter must revalidate redirects before any session
+    /// becomes runnable.
     pub require_redirect_revalidation: bool,
+    /// Future runtime/adapter must enforce outbound proxy policy before any
+    /// session becomes runnable.
     pub require_proxy_enforcement: bool,
+    /// Future runtime/adapter must disable direct outbound networking when a
+    /// required proxy is unavailable before any session becomes runnable.
     pub outbound_network_disabled_without_proxy: bool,
 }
 
@@ -1034,10 +1049,13 @@ pub struct BrowserAdmissionRequest {
     /// production browser launcher enforces it.
     #[serde(default)]
     pub sensitive_activity_mode: BrowserSensitiveActivityMode,
-    /// Bare public HTTP(S) origins this browser session is allowed to target.
-    /// Entries must contain only scheme, host, and optional port. The runtime
-    /// rejects credentials, paths, queries, fragments, localhost, private/LAN
-    /// address space, link-local metadata ranges, and more than 16 entries.
+    /// Bare HTTP(S) origins this browser session is allowed to target. Entries
+    /// must contain only scheme, host, and optional port. Admission rejects
+    /// credentials, paths, queries, fragments, localhost names, literal
+    /// private/LAN IP ranges, literal link-local metadata targets, and more
+    /// than 16 entries. Hostname targets are syntax-validated only here and
+    /// must be revalidated after DNS, proxying, redirects, retries, and final
+    /// socket selection before any future runnable session connects.
     #[serde(default)]
     pub target_origins: Vec<String>,
     /// Credential posture requested for the session. Non-default modes remain

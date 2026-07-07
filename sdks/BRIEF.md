@@ -102,6 +102,10 @@ is acceptable until each language adds typed convenience models; preserve
 `replay_protection_required` on every launch request envelope, plus
 `adapter_contract_fields_complete` and `replay_protection_bound` on launch-plan
 responses),
+including admission `intent_warnings` that distinguish syntax-validated
+hostname target origins from literal local/private IP rejection until the
+network `guard_plan` is enforced after DNS, proxying, redirects, retries, and
+final socket selection,
 `BrowserAdapterManifestRequest`,
 `BrowserAdapterContractResponse`, `BrowserAdapterCapabilityIssueRequest`,
 `BrowserAdapterCapabilityIssueResponse`, `BrowserAdapterRegistrationRequest`,

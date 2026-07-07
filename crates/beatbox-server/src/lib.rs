@@ -2862,6 +2862,12 @@ fn browser_admission_response(request: BrowserAdmissionRequest) -> BrowserAdmiss
                 .to_string(),
         );
     }
+    if browser_target_origins_include_runtime_resolved_hostname(&request.target_origins) {
+        intent_warnings.push(
+            "target origin hostnames are syntax-validated only during admission; future runnable browser sessions must revalidate DNS, proxy decisions, redirects, retries, and final socket targets against the private-network and metadata deny policy before connecting"
+                .to_string(),
+        );
+    }
     if matches!(
         &request.credential_mode,
         BrowserCredentialMode::UserMediated | BrowserCredentialMode::ScopedSecrets
@@ -3156,6 +3162,15 @@ fn validate_browser_admission_request(request: &BrowserAdmissionRequest) -> Resu
         validate_browser_target_origin(origin)?;
     }
     Ok(())
+}
+
+fn browser_target_origins_include_runtime_resolved_hostname(target_origins: &[String]) -> bool {
+    target_origins.iter().any(|origin| {
+        Url::parse(origin)
+            .ok()
+            .and_then(|url| url.host().map(|host| matches!(host, Host::Domain(_))))
+            .unwrap_or(false)
+    })
 }
 
 fn validate_browser_adapter_manifest_request(
@@ -4620,7 +4635,7 @@ fn mcp_tools() -> Value {
                     },
                     "target_origins": {
                         "type": "array",
-                        "description": "Bare public HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port; credentials, paths, queries, fragments, localhost, private/LAN IP ranges, and link-local metadata targets are rejected.",
+                        "description": "Bare HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port. Credentials, paths, queries, fragments, localhost names, and literal local/private IP targets are rejected. Hostname targets are syntax-validated only and must be revalidated after DNS, proxy decisions, redirects, retries, and final socket selection before any future runnable session connects.",
                         "maxItems": 16,
                         "items": {"type": "string"}
                     },

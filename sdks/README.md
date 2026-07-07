@@ -53,8 +53,12 @@ set.
 Browser admission requests are raw JSON today. Pass through
 `target_origins`, `credential_mode`, `artifact_mode`,
 `sensitive_activity_mode`, and `required_controls` exactly as described by
-`openapi.json`; beatbox validates unsafe target origins before returning the
-fail-closed admission decision. Profile discovery responses publish
+`openapi.json`; beatbox rejects malformed origins, localhost names, and literal
+local/private IP targets before returning the fail-closed admission decision.
+Hostname target origins are syntax-validated only during admission, so preserve
+`intent_warnings` and the network `guard_plan` fields that require DNS, proxy,
+redirect, retry, and final-socket revalidation before any future runnable
+browser session connects. Profile discovery responses publish
 `suppression_modes` for the supported sensitive-activity postures, with each
 mode's compatible levels, required controls, guard-plan effects, runnable flag,
 and required next steps. Admission responses carry

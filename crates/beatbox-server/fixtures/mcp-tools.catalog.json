@@ -309,7 +309,7 @@
           "type": "string"
         },
         "target_origins": {
-          "description": "Bare public HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port; credentials, paths, queries, fragments, localhost, private/LAN IP ranges, and link-local metadata targets are rejected.",
+          "description": "Bare HTTP(S) origins allowed for the requested browser session. Entries must contain only scheme, host, and optional port. Credentials, paths, queries, fragments, localhost names, and literal local/private IP targets are rejected. Hostname targets are syntax-validated only and must be revalidated after DNS, proxy decisions, redirects, retries, and final socket selection before any future runnable session connects.",
           "items": {
             "type": "string"
           },
