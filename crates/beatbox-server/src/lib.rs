@@ -3735,12 +3735,35 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::EcosystemLaneContract,
         beatbox_core::EcosystemMcpToolContract,
     )),
+    modifiers(&SecurityAddon),
+    security(("bearerAuth" = [])),
     tags(
         (name = "v1", description = "beatbox REST API"),
         (name = "mcp", description = "stateless MCP JSON-RPC endpoint")
     )
 )]
 struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+
+        let components = openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::new);
+        components.add_security_scheme(
+            "bearerAuth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("opaque")
+                    .build(),
+            ),
+        );
+    }
+}
 
 #[allow(dead_code)]
 mod openapi_paths {
@@ -3760,6 +3783,7 @@ mod openapi_paths {
         get,
         path = "/v1/health",
         tag = "v1",
+        security(()),
         responses((status = 200, description = "Daemon health"))
     )]
     pub fn health() {}
