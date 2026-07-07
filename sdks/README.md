@@ -104,8 +104,9 @@ admission intent, and manifest into a server-issued launch envelope and
 completion report template. The envelope includes current server lease
 timestamps and a replay-protection requirement. A capability-bound response also
 sets `adapter_contract_fields_complete` and `replay_protection_bound`; the
-daemon records only field-complete adapter manifests in its bounded replay
-ledger. `POST /v1/browser/adapter/launch/claim` accepts the full
+daemon records only field-complete adapter manifests with compatible,
+control-complete admission mode/profile requests in its bounded replay ledger.
+`POST /v1/browser/adapter/launch/claim` accepts the full
 `launch_request`, rejects omitted server-issued fields and unknown nested
 fields, and can bind exactly one unmodified, unexpired claim before a future
 Tempo adapter invocation. SDKs must never expose launch planning or
