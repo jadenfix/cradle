@@ -4554,6 +4554,8 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     let tools = &value["result"]["tools"];
     assert!(tools.to_string().contains("run_wasm"));
     assert!(tools.to_string().contains("get_capabilities"));
+    assert!(tools.to_string().contains("projects.capabilities.get"));
+    assert!(tools.to_string().contains("projects.jobs.create"));
     assert!(tools.to_string().contains("get_integration_contract"));
     assert!(tools.to_string().contains("get_browser_profiles"));
     assert!(tools.to_string().contains("admit_browser_session"));
@@ -4806,6 +4808,37 @@ async fn mcp_rejects_text_plain_json_posts() -> Result<(), Box<dyn std::error::E
             .as_str()
             .is_some_and(|message| message.contains("content-type"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_rest_only_operation_id_tools_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "projects.jobs.create",
+            "arguments": {}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("projects.jobs.create"));
+    assert!(message.contains("REST-only"));
     Ok(())
 }
 

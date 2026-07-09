@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod jobs;
 
 use std::collections::{BTreeMap, HashMap};
@@ -5096,6 +5098,94 @@ fn mcp_tools() -> Value {
                     }
                 }
             }
+        },
+        {
+            "name": "projects.capabilities.get",
+            "description": "OperationId-named alias for get_capabilities.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.integration.get",
+            "description": "OperationId-named alias for get_integration_contract.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserProfiles.get",
+            "description": "OperationId-named alias for get_browser_profiles.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserAdapters.getContract",
+            "description": "OperationId-named alias for get_browser_adapter_contract.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserSessions.admit",
+            "description": "OperationId-named alias for admit_browser_session.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.register",
+            "description": "OperationId-named alias for register_browser_adapter.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.validate",
+            "description": "OperationId-named alias for validate_browser_adapter.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.validateCompletion",
+            "description": "OperationId-named alias for validate_browser_adapter_completion.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.executions.execute",
+            "description": "OperationId-named alias for run_wasm on the currently runnable Wasm lane.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "oneOf": [{"required": ["wat"]}, {"required": ["wasm_base64"]}],
+                "properties": {
+                    "wat": {"type": "string"},
+                    "wasm_base64": {"type": "string"},
+                    "input": {},
+                    "entrypoint": {"type": "string"},
+                    "timeout_ms": {"type": "integer"},
+                    "memory_bytes": {"type": "integer"},
+                    "fuel": {"type": "integer"}
+                }
+            }
+        },
+        {
+            "name": "projects.browserAdapters.issueCapability",
+            "description": "REST-only operationId. Same-user browser adapter capabilities are bearer material and are not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.planLaunch",
+            "description": "REST-only operationId. Launch planning remains capability-bound and is not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.claimLaunch",
+            "description": "REST-only operationId. Launch claim replay checks remain capability-bound and are not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.create",
+            "description": "REST-only operationId for asynchronous job creation.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.get",
+            "description": "REST-only operationId for asynchronous job lookup.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.cancel",
+            "description": "REST-only operationId for asynchronous job cancellation.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
         }
     ])
 }
@@ -5124,7 +5214,7 @@ async fn mcp_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let mut result = match name {
-        "get_capabilities" => {
+        "get_capabilities" | "projects.capabilities.get" => {
             mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
             let capabilities = capabilities_json(&state.config);
             Ok(json!({
@@ -5133,7 +5223,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_integration_contract" => {
+        "get_integration_contract" | "projects.integration.get" => {
             mcp_tool_arguments(&arguments, "get_integration_contract", &[])?;
             let integration = ecosystem_integration_contract();
             Ok(json!({
@@ -5142,7 +5232,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_browser_profiles" => {
+        "get_browser_profiles" | "projects.browserProfiles.get" => {
             mcp_tool_arguments(&arguments, "get_browser_profiles", &[])?;
             let profiles = serde_json::to_value(browser_profiles_response()).map_err(|error| {
                 (
@@ -5156,7 +5246,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_browser_adapter_contract" => {
+        "get_browser_adapter_contract" | "projects.browserAdapters.getContract" => {
             mcp_tool_arguments(&arguments, "get_browser_adapter_contract", &[])?;
             let contract =
                 serde_json::to_value(browser_adapter_contract_response()).map_err(|error| {
@@ -5171,7 +5261,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "admit_browser_session" => {
+        "admit_browser_session" | "projects.browserSessions.admit" => {
             let request = mcp_browser_admission_request(&arguments)?;
             let decision = browser_admission_response(request);
             let is_error = decision.decision != BrowserAdmissionDecision::Accepted;
@@ -5187,7 +5277,7 @@ async fn mcp_tools_call(
                 "isError": is_error,
             }))
         }
-        "register_browser_adapter" => {
+        "register_browser_adapter" | "projects.browserAdapters.register" => {
             let request = mcp_browser_adapter_registration_request(&arguments)?;
             let registration = browser_adapter_mcp_registration_response(request);
             let registration = serde_json::to_value(registration).map_err(|error| {
@@ -5202,7 +5292,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "validate_browser_adapter" => {
+        "validate_browser_adapter" | "projects.browserAdapters.validate" => {
             let request = mcp_browser_adapter_manifest_request(&arguments)?;
             let validation = browser_adapter_manifest_response(request);
             let validation = serde_json::to_value(validation).map_err(|error| {
@@ -5217,7 +5307,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "validate_browser_adapter_completion" => {
+        "validate_browser_adapter_completion" | "projects.browserAdapters.validateCompletion" => {
             let request = mcp_browser_adapter_completion_report(&arguments)?;
             let validation = browser_adapter_completion_validation_response(None, request);
             let validation = serde_json::to_value(validation).map_err(|error| {
@@ -5232,7 +5322,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "run_wasm" => {
+        "run_wasm" | "projects.executions.execute" => {
             let request = mcp_run_wasm_request(&arguments)?;
             let result = execute_sync(state, request)
                 .await
@@ -5253,6 +5343,15 @@ async fn mcp_tools_call(
                 .map_err(api_error_to_rpc)?;
             tool_result(result)
         }
+        "projects.browserAdapters.issueCapability"
+        | "projects.browserAdapters.planLaunch"
+        | "projects.browserAdapters.claimLaunch"
+        | "projects.jobs.create"
+        | "projects.jobs.get"
+        | "projects.jobs.cancel" => Err((
+            -32602,
+            format!("{name} is REST-only in this daemon; use the REST API"),
+        )),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }?;
     payment_context.apply_to_tool_result(&mut result);

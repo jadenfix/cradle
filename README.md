@@ -67,6 +67,10 @@ boundaries, not by linking to internal crates.
   advertise the required `Idempotency-Key` header, and asynchronous job creation
   returns an Operation-compatible envelope while retaining the existing `job_id`
   field for current clients.
+- MCP keeps the legacy domain tool names and also lists operationId-named aliases
+  for the OpenAPI operations. Sensitive browser capability/launch operations and
+  async job operations are listed by operationId but fail closed from MCP with a
+  REST-only error.
 - `GET /v1/capabilities` reports lanes, limits, engines, browser posture, and
   the ecosystem integration summary.
 - `GET /v1/integration` returns the focused ecosystem contract: runnable lanes,
