@@ -402,12 +402,42 @@ fn base_url_authority_contains_at(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, mpsc};
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    fn read_http_request(stream: &mut TcpStream) -> std::io::Result<String> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let bytes = stream.read(&mut buffer)?;
+            if bytes == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..bytes]);
+            let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        Ok(String::from_utf8_lossy(&request).into_owned())
+    }
 
     #[test]
     fn try_new_builds_without_panicking() -> Result<(), Box<dyn std::error::Error>> {
@@ -1046,9 +1076,7 @@ mod tests {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-                        let mut buffer = [0_u8; 4096];
-                        let bytes = stream.read(&mut buffer)?;
-                        let request = String::from_utf8_lossy(&buffer[..bytes]);
+                        let request = read_http_request(&mut stream)?;
                         let lower = request.to_ascii_lowercase();
                         if request.starts_with("POST /v1/execute ") {
                             handled_initial_request = true;
