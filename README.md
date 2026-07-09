@@ -62,6 +62,11 @@ boundaries, not by linking to internal crates.
 
 - `GET /v1/health` is unauthenticated liveness.
 - `GET /openapi.json` is the generated API contract.
+- The OpenAPI contract follows the shared ecosystem API style for contract
+  identity: REST operations use `projects.*` operation IDs, mutating operations
+  advertise the required `Idempotency-Key` header, and asynchronous job creation
+  returns an Operation-compatible envelope while retaining the existing `job_id`
+  field for current clients.
 - `GET /v1/capabilities` reports lanes, limits, engines, browser posture, and
   the ecosystem integration summary.
 - `GET /v1/integration` returns the focused ecosystem contract: runnable lanes,

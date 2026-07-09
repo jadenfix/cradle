@@ -34,7 +34,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "issueBrowserAdapterCapability",
+        "operationId": "projects.browserAdapters.issueCapability",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -94,7 +105,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "validateBrowserAdapterCompletion",
+        "operationId": "projects.browserAdapters.validateCompletion",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -144,7 +166,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "getBrowserAdapterContract",
+        "operationId": "projects.browserAdapters.getContract",
         "responses": {
           "200": {
             "description": "Fail-closed browser adapter contract and conformance profile discovery",
@@ -174,7 +196,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "claimBrowserAdapterLaunch",
+        "operationId": "projects.browserAdapters.claimLaunch",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -224,7 +257,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "planBrowserAdapterLaunch",
+        "operationId": "projects.browserAdapters.planLaunch",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -274,7 +318,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "registerBrowserAdapter",
+        "operationId": "projects.browserAdapters.register",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -324,7 +379,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "validateBrowserAdapter",
+        "operationId": "projects.browserAdapters.validate",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -374,7 +440,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "admitBrowserSession",
+        "operationId": "projects.browserSessions.admit",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -424,7 +501,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "getBrowserProfiles",
+        "operationId": "projects.browserProfiles.get",
         "responses": {
           "200": {
             "description": "Browser sandbox profile discovery contract",
@@ -454,7 +531,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "getCapabilities",
+        "operationId": "projects.capabilities.get",
         "responses": {
           "200": {
             "description": "Lane availability and host limits",
@@ -484,7 +561,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "execute",
+        "operationId": "projects.executions.execute",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -550,7 +638,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "getIntegrationContract",
+        "operationId": "projects.integration.get",
         "responses": {
           "200": {
             "description": "Focused ecosystem integration contract",
@@ -580,7 +668,18 @@
         "tags": [
           "v1"
         ],
-        "operationId": "createJob",
+        "operationId": "projects.jobs.create",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -593,11 +692,11 @@
         },
         "responses": {
           "202": {
-            "description": "Created asynchronous job",
+            "description": "Created asynchronous job operation",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateJobResponse"
+                  "$ref": "#/components/schemas/Operation"
                 }
               }
             }
@@ -650,7 +749,7 @@
         "tags": [
           "v1"
         ],
-        "operationId": "getJob",
+        "operationId": "projects.jobs.get",
         "parameters": [
           {
             "name": "id",
@@ -699,12 +798,21 @@
         "tags": [
           "v1"
         ],
-        "operationId": "cancelJob",
+        "operationId": "projects.jobs.cancel",
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "description": "Job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Required for idempotent state-changing operations",
             "required": true,
             "schema": {
               "type": "string"
@@ -3731,6 +3839,70 @@
             }
           }
         ]
+      },
+      "Operation": {
+        "type": "object",
+        "required": [
+          "name",
+          "done",
+          "job_id"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean"
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorBody"
+              }
+            ]
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OperationMetadata"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "response": {}
+        }
+      },
+      "OperationMetadata": {
+        "type": "object",
+        "required": [
+          "target_resource",
+          "create_time",
+          "current_stage",
+          "progress_ratio"
+        ],
+        "properties": {
+          "create_time": {
+            "type": "string"
+          },
+          "current_stage": {
+            "type": "string"
+          },
+          "progress_ratio": {
+            "type": "number",
+            "format": "double"
+          },
+          "target_resource": {
+            "type": "string"
+          }
+        }
       },
       "Policy": {
         "type": "object",

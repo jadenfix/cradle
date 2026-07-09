@@ -1623,6 +1623,27 @@ pub struct CreateJobResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OperationMetadata {
+    pub target_resource: String,
+    pub create_time: String,
+    pub current_stage: String,
+    pub progress_ratio: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct Operation {
+    pub name: String,
+    pub done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<OperationMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorBody>,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct JobRecord {
     pub job_id: String,
     pub status: JobStatus,

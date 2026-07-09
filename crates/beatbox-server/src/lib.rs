@@ -36,8 +36,8 @@ use beatbox_core::{
     CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
     EcosystemConsumerContract, EcosystemEndpointContract, EcosystemIntegrationContract,
     EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody, ErrorResponse, ExecuteRequest,
-    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
-    browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
+    ExecutionResult, ExecutionStatus, JobRecord, Lane, Operation, OperationMetadata, Policy,
+    Source, browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
 use bytes::Bytes;
@@ -449,7 +449,7 @@ async fn create_job(
     State(state): State<AppState>,
     headers: HeaderMap,
     request: Request<Body>,
-) -> Result<(StatusCode, Json<CreateJobResponse>), ApiError> {
+) -> Result<(StatusCode, Json<Operation>), ApiError> {
     state.authorize(&headers)?;
     let request = parse_json_body(&state, request).await?;
     admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
@@ -462,7 +462,7 @@ async fn create_job(
         .await
         .map_err(ApiError::job_store)?
     {
-        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
+        return Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))));
     }
 
     // Insert-or-dedupe atomically. A duplicate (inserted == false) returns here
@@ -475,7 +475,7 @@ async fn create_job(
         .map_err(ApiError::job_store)?;
     let job_id = created.job_id;
     if !created.inserted {
-        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
+        return Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))));
     }
 
     // Genuinely new job: reserve a worker slot. If the cap is hit, roll back the
@@ -521,7 +521,23 @@ async fn create_job(
     };
     let request = Arc::try_unwrap(request).unwrap_or_else(|arc| (*arc).clone());
     spawn_job(state, job_id.clone(), request, permit);
-    Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })))
+    Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))))
+}
+
+fn job_operation(job_id: String) -> Operation {
+    Operation {
+        name: format!("projects/default/operations/{job_id}"),
+        done: false,
+        metadata: Some(OperationMetadata {
+            target_resource: format!("projects/default/jobs/{job_id}"),
+            create_time: Utc::now().to_rfc3339(),
+            current_stage: "queued".to_string(),
+            progress_ratio: 0.0,
+        }),
+        response: None,
+        error: None,
+        job_id,
+    }
 }
 
 async fn get_job(
@@ -4115,6 +4131,8 @@ pub fn openapi_spec_json() -> String {
         ErrorBody,
         ErrorResponse,
         CreateJobResponse,
+        Operation,
+        OperationMetadata,
         JobRecord,
         beatbox_core::JobStatus,
         beatbox_core::BrowserProfilesResponse,
@@ -4211,8 +4229,8 @@ mod openapi_paths {
         BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestRequest,
         BrowserAdapterManifestResponse, BrowserAdapterRegistrationRequest,
         BrowserAdapterRegistrationResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
-        BrowserProfilesResponse, CapabilitiesResponse, CreateJobResponse,
-        EcosystemIntegrationContract, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord,
+        BrowserProfilesResponse, CapabilitiesResponse, EcosystemIntegrationContract, ErrorResponse,
+        ExecuteRequest, ExecutionResult, JobRecord, Operation,
     };
 
     #[utoipa::path(
@@ -4227,7 +4245,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/capabilities",
-        operation_id = "getCapabilities",
+        operation_id = "projects.capabilities.get",
         tag = "v1",
         responses(
             (status = 200, description = "Lane availability and host limits", body = CapabilitiesResponse),
@@ -4239,7 +4257,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/integration",
-        operation_id = "getIntegrationContract",
+        operation_id = "projects.integration.get",
         tag = "v1",
         responses(
             (status = 200, description = "Focused ecosystem integration contract", body = EcosystemIntegrationContract),
@@ -4251,7 +4269,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/profiles",
-        operation_id = "getBrowserProfiles",
+        operation_id = "projects.browserProfiles.get",
         tag = "v1",
         responses(
             (status = 200, description = "Browser sandbox profile discovery contract", body = BrowserProfilesResponse),
@@ -4263,8 +4281,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/admit",
-        operation_id = "admitBrowserSession",
+        operation_id = "projects.browserSessions.admit",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdmissionRequest,
         responses(
             (status = 200, description = "Browser sandbox admission decision", body = BrowserAdmissionResponse),
@@ -4277,7 +4296,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/adapter/contract",
-        operation_id = "getBrowserAdapterContract",
+        operation_id = "projects.browserAdapters.getContract",
         tag = "v1",
         responses(
             (status = 200, description = "Fail-closed browser adapter contract and conformance profile discovery", body = BrowserAdapterContractResponse),
@@ -4289,8 +4308,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/capability",
-        operation_id = "issueBrowserAdapterCapability",
+        operation_id = "projects.browserAdapters.issueCapability",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterCapabilityIssueRequest,
         responses(
             (status = 200, description = "Issue a short-lived one-time browser adapter same-user capability", body = BrowserAdapterCapabilityIssueResponse),
@@ -4304,8 +4324,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/register",
-        operation_id = "registerBrowserAdapter",
+        operation_id = "projects.browserAdapters.register",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterRegistrationRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter registration preflight", body = BrowserAdapterRegistrationResponse),
@@ -4318,8 +4339,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/plan",
-        operation_id = "planBrowserAdapterLaunch",
+        operation_id = "projects.browserAdapters.planLaunch",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterLaunchPlanRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter launch plan preflight", body = BrowserAdapterLaunchPlanResponse),
@@ -4332,8 +4354,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/claim",
-        operation_id = "claimBrowserAdapterLaunch",
+        operation_id = "projects.browserAdapters.claimLaunch",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterLaunchClaimRequest,
         responses(
             (status = 200, description = "REST-only browser adapter launch request replay claim", body = BrowserAdapterLaunchClaimResponse),
@@ -4346,8 +4369,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/validate",
-        operation_id = "validateBrowserAdapter",
+        operation_id = "projects.browserAdapters.validate",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterManifestRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter manifest validation", body = BrowserAdapterManifestResponse),
@@ -4360,8 +4384,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/completion/validate",
-        operation_id = "validateBrowserAdapterCompletion",
+        operation_id = "projects.browserAdapters.validateCompletion",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterCompletionReport,
         responses(
             (status = 200, description = "Fail-closed browser adapter completion report validation", body = BrowserAdapterCompletionValidationResponse),
@@ -4374,7 +4399,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/execute",
+        operation_id = "projects.executions.execute",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = ExecuteRequest,
         responses(
             (status = 200, description = "ExecutionResult", body = ExecutionResult),
@@ -4387,11 +4414,12 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/jobs",
-        operation_id = "createJob",
+        operation_id = "projects.jobs.create",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = ExecuteRequest,
         responses(
-            (status = 202, description = "Created asynchronous job", body = CreateJobResponse),
+            (status = 202, description = "Created asynchronous job operation", body = Operation),
             (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
             (status = 409, description = "Idempotency key reused with a different payload", body = ErrorResponse),
             (status = 422, description = "Protocol, source, policy, or job-limit rejection", body = ErrorResponse),
@@ -4403,7 +4431,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/jobs/{id}",
-        operation_id = "getJob",
+        operation_id = "projects.jobs.get",
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
@@ -4417,9 +4445,12 @@ mod openapi_paths {
     #[utoipa::path(
         delete,
         path = "/v1/jobs/{id}",
-        operation_id = "cancelJob",
+        operation_id = "projects.jobs.cancel",
         tag = "v1",
-        params(("id" = String, Path, description = "Job id")),
+        params(
+            ("id" = String, Path, description = "Job id"),
+            ("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")
+        ),
         responses(
             (status = 204, description = "Canceled job (or already canceled)"),
             (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
