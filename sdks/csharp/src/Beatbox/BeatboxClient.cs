@@ -188,7 +188,7 @@ public sealed class BeatboxClient : IDisposable
     }
 
     /// <summary>POST <c>/v1/jobs</c>. Enqueues an asynchronous job (HTTP 202).</summary>
-    public async Task<CreateJobResponse> CreateJobAsync(ExecuteRequest request, CancellationToken cancellationToken = default)
+    public async Task<Operation> CreateJobAsync(ExecuteRequest request, CancellationToken cancellationToken = default)
     {
         if (request is null)
         {
@@ -198,7 +198,7 @@ public sealed class BeatboxClient : IDisposable
         using var content = JsonContent(request);
         using var response = await SendAsync(HttpMethod.Post, "/v1/jobs", auth: true, content, cancellationToken)
             .ConfigureAwait(false);
-        return await ReadJsonAsync<CreateJobResponse>(response, cancellationToken).ConfigureAwait(false);
+        return await ReadJsonAsync<Operation>(response, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>GET <c>/v1/jobs/{id}</c>. Fetches a job record.</summary>

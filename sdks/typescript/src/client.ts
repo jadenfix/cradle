@@ -5,11 +5,11 @@
 
 import { BeatboxApiError, BeatboxTransportError } from "./errors.js";
 import type {
-  CreateJobResponse,
   ExecuteRequest,
   ExecutionResult,
   HealthResponse,
   JobRecord,
+  Operation,
 } from "./models.js";
 
 /** The HTTP header used to carry the canonical Bearer token. */
@@ -290,8 +290,8 @@ export class BeatboxClient {
   }
 
   /** `POST /v1/jobs` — enqueue an asynchronous job (HTTP 202). */
-  createJob(request: ExecuteRequest): Promise<CreateJobResponse> {
-    return this.request<CreateJobResponse>({
+  createJob(request: ExecuteRequest): Promise<Operation> {
+    return this.request<Operation>({
       method: "POST",
       path: "/v1/jobs",
       auth: true,

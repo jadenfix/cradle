@@ -16,10 +16,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from .errors import BeatboxApiError, BeatboxTransportError
 from .models import (
-    CreateJobResponse,
     ExecuteRequest,
     ExecutionResult,
     JobRecord,
+    Operation,
 )
 
 __all__ = ["Client"]
@@ -240,10 +240,10 @@ class Client:
         body = self._request("POST", "/v1/execute", auth=True, body=request.to_dict())
         return ExecutionResult.from_dict(body)
 
-    def create_job(self, request: ExecuteRequest) -> CreateJobResponse:
-        """POST /v1/jobs. Returns a :class:`CreateJobResponse` (HTTP 202)."""
+    def create_job(self, request: ExecuteRequest) -> Operation:
+        """POST /v1/jobs. Returns a :class:`Operation` (HTTP 202)."""
         body = self._request("POST", "/v1/jobs", auth=True, body=request.to_dict())
-        return CreateJobResponse.from_dict(body)
+        return Operation.from_dict(body)
 
     def get_job(self, job_id: str) -> JobRecord:
         """GET /v1/jobs/{id}. Returns a :class:`JobRecord`."""

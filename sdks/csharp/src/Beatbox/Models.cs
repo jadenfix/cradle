@@ -96,6 +96,22 @@ public sealed record ErrorBody
     /// <summary>Human-readable message.</summary>
     [JsonPropertyName("message")]
     public string Message { get; init; } = "";
+
+    /// <summary>HTTP status associated with the error.</summary>
+    [JsonPropertyName("status")]
+    public int Status { get; init; }
+
+    /// <summary>Request correlation id.</summary>
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; init; } = "";
+
+    /// <summary>Whether retrying the request is expected to be safe/useful.</summary>
+    [JsonPropertyName("retryable")]
+    public bool Retryable { get; init; }
+
+    /// <summary>Structured field/detail metadata.</summary>
+    [JsonPropertyName("details")]
+    public List<Dictionary<string, JsonElement>> Details { get; init; } = new();
 }
 
 /// <summary>Envelope wrapping an <see cref="ErrorBody"/> in error responses.</summary>
@@ -213,12 +229,47 @@ public sealed record ExecutionResult
     public List<EgressRecord> Egress { get; init; } = new();
 }
 
-/// <summary>Response from <c>create_job</c>.</summary>
+/// <summary>Legacy pre-Operation create-job response shape.</summary>
 public sealed record CreateJobResponse
 {
     /// <summary>Identifier of the created job.</summary>
     [JsonPropertyName("job_id")]
     public string JobId { get; init; } = "";
+}
+
+/// <summary>Metadata carried by a long-running operation.</summary>
+public sealed record OperationMetadata
+{
+    [JsonPropertyName("target_resource")]
+    public string TargetResource { get; init; } = "";
+
+    [JsonPropertyName("create_time")]
+    public string CreateTime { get; init; } = "";
+
+    [JsonPropertyName("current_stage")]
+    public string CurrentStage { get; init; } = "";
+
+    [JsonPropertyName("progress_ratio")]
+    public double ProgressRatio { get; init; }
+}
+
+/// <summary>Shared long-running operation envelope.</summary>
+public sealed record Operation
+{
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    [JsonPropertyName("done")]
+    public bool Done { get; init; }
+
+    [JsonPropertyName("metadata")]
+    public OperationMetadata? Metadata { get; init; }
+
+    [JsonPropertyName("response")]
+    public JsonElement? Response { get; init; }
+
+    [JsonPropertyName("error")]
+    public ErrorBody? Error { get; init; }
 }
 
 /// <summary>Full record of an asynchronous job.</summary>

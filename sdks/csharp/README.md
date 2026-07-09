@@ -76,7 +76,7 @@ HTTP handler also disables proxy use for secret-bearing requests.
 | `ValidateBrowserAdapterAsync(req)` | `POST /v1/browser/adapter/validate` | yes | `JsonElement` |
 | `ValidateBrowserAdapterCompletionAsync(req)` | `POST /v1/browser/adapter/completion/validate` | yes | `JsonElement` |
 | `ExecuteAsync(req)` | `POST /v1/execute` | yes | `ExecutionResult` |
-| `CreateJobAsync(req)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
+| `CreateJobAsync(req)` | `POST /v1/jobs` | yes | `Operation` |
 | `GetJobAsync(id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
 | `CancelJobAsync(id)` | `DELETE /v1/jobs/{id}` | yes | `Task` |
 | `OpenApiAsync()` | `GET /openapi.json` | no | `JsonElement` |
@@ -134,13 +134,14 @@ catch (BeatboxTransportException ex)
 ## Async jobs
 
 ```csharp
-var created = await client.CreateJobAsync(request);
-var job = await client.GetJobAsync(created.JobId);
+var operation = await client.CreateJobAsync(request);
+var jobId = operation.Name.Split('/').Last();
+var job = await client.GetJobAsync(jobId);
 if (job.Status == JobStatus.Succeeded)
 {
     Console.WriteLine(job.Result!.Value);
 }
-await client.CancelJobAsync(created.JobId);
+await client.CancelJobAsync(jobId);
 ```
 
 ## Development

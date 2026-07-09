@@ -1,11 +1,11 @@
 package ai.beatbox;
 
 import ai.beatbox.internal.Json;
-import ai.beatbox.model.CreateJobResponse;
 import ai.beatbox.model.ErrorResponse;
 import ai.beatbox.model.ExecuteRequest;
 import ai.beatbox.model.ExecutionResult;
 import ai.beatbox.model.JobRecord;
+import ai.beatbox.model.Operation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -141,9 +141,9 @@ public final class BeatboxClient {
     }
 
     /** {@code POST /v1/jobs}. Enqueues an asynchronous job (HTTP 202). */
-    public CreateJobResponse createJob(ExecuteRequest request) {
+    public Operation createJob(ExecuteRequest request) {
         Objects.requireNonNull(request, "request");
-        return send("POST", uri("/v1/jobs"), true, encode(request), CreateJobResponse.class);
+        return send("POST", uri("/v1/jobs"), true, encode(request), Operation.class);
     }
 
     /** {@code GET /v1/jobs/{id}}. Fetches the current record for a job. */

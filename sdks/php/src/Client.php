@@ -178,9 +178,9 @@ final class Client
     }
 
     /** POST /v1/jobs — enqueue an asynchronous job (202). */
-    public function createJob(ExecuteRequest $request): CreateJobResponse
+    public function createJob(ExecuteRequest $request): Operation
     {
-        return CreateJobResponse::fromArray(
+        return Operation::fromArray(
             $this->requestJson('POST', '/v1/jobs', $request->toArray(), true)
         );
     }

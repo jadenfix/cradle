@@ -114,7 +114,7 @@ cross-origin or through proxy configuration inherited from the process.
 | `validateBrowserAdapter($request)` | `POST /v1/browser/adapter/validate` | `array` (raw JSON) |
 | `validateBrowserAdapterCompletion($request)` | `POST /v1/browser/adapter/completion/validate` | `array` (raw JSON) |
 | `execute($request)` | `POST /v1/execute` | `ExecutionResult` |
-| `createJob($request)` | `POST /v1/jobs` | `CreateJobResponse` |
+| `createJob($request)` | `POST /v1/jobs` | `Operation` |
 | `getJob($jobId)` | `GET /v1/jobs/{id}` | `JobRecord` |
 | `cancelJob($jobId)` | `DELETE /v1/jobs/{id}` | `void` |
 | `openapi()` | `GET /openapi.json` | `array` (raw JSON) |
@@ -125,14 +125,15 @@ are rejected with `InvalidArgumentException`.
 ### Asynchronous jobs
 
 ```php
-$job = $client->createJob(ExecuteRequest::wasmWat($wat, input: ['n' => 41]));
-$record = $client->getJob($job->jobId);
+$operation = $client->createJob(ExecuteRequest::wasmWat($wat, input: ['n' => 41]));
+$jobId = basename($operation->name);
+$record = $client->getJob($jobId);
 
 if ($record->status === Beatbox\JobStatus::Succeeded) {
     echo $record->result->value, "\n";
 }
 
-$client->cancelJob($job->jobId); // idempotent
+$client->cancelJob($jobId); // idempotent
 ```
 
 ## Error handling
@@ -164,7 +165,7 @@ try {
 Typed models mirror the OpenAPI components and serialize to the exact snake_case
 wire names (`wall_ms`, `cpu_time_ms`, `idempotency_key`, ...): `ExecuteRequest`,
 `Source`, `Policy`, `Limits`, `ExecutionResult`, `Metrics`, `EffectiveIsolation`,
-`EgressRecord`, `JobRecord`, `CreateJobResponse`, `ErrorBody`, and the enums
+`EgressRecord`, `JobRecord`, `Operation`, `ErrorBody`, and the enums
 `Lane`, `ExecutionStatus`, `JobStatus`. Unknown/extra fields are ignored and
 unknown enum values deserialize to `null`, so new server fields never break an
 older SDK.

@@ -9,7 +9,7 @@ import (
 
 // APIError is returned when the daemon responds with a non-2xx status. It
 // carries the HTTP status and, when the response body follows the standard
-// {"error": {code, message}} envelope, the code and message from that body.
+// {"error": {...}} envelope, the code and message from that body.
 type APIError struct {
 	// Status is the HTTP status code.
 	Status int

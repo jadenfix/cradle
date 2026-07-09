@@ -7,7 +7,7 @@ namespace Beatbox;
 use Beatbox\Internal\Coerce;
 
 /**
- * Response from {@see Client::createJob()} — carries the new job id.
+ * Legacy pre-Operation create-job response shape.
  */
 final class CreateJobResponse
 {

@@ -66,6 +66,8 @@ export type {
   ErrorResponse,
   ExecutionResult,
   JobRecord,
+  Operation,
+  OperationMetadata,
   CreateJobResponse,
   HealthResponse,
 } from "./models.js";

@@ -282,6 +282,10 @@ export interface EgressRecord {
 export interface ErrorBody {
   code: string;
   message: string;
+  status: number;
+  request_id: string;
+  retryable: boolean;
+  details: Array<Record<string, unknown>>;
   [extra: string]: unknown;
 }
 
@@ -324,9 +328,28 @@ export interface JobRecord {
   [extra: string]: unknown;
 }
 
-/** Returned by `createJob` (HTTP 202). */
+/** Legacy pre-Operation create-job response shape. `createJob` now returns `Operation`. */
 export interface CreateJobResponse {
   job_id: string;
+  [extra: string]: unknown;
+}
+
+/** Metadata carried by a long-running operation. */
+export interface OperationMetadata {
+  target_resource?: string;
+  create_time?: string;
+  current_stage?: string;
+  progress_ratio?: number;
+  [extra: string]: unknown;
+}
+
+/** Shared long-running operation envelope. */
+export interface Operation {
+  name: string;
+  done: boolean;
+  metadata?: OperationMetadata | null;
+  response?: unknown;
+  error?: ErrorBody | null;
   [extra: string]: unknown;
 }
 

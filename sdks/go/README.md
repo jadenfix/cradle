@@ -101,7 +101,7 @@ All methods are context-first.
 | `ValidateBrowserAdapter(ctx, req)` | `POST /v1/browser/adapter/validate` | yes | `json.RawMessage` |
 | `ValidateBrowserAdapterCompletion(ctx, req)` | `POST /v1/browser/adapter/completion/validate` | yes | `json.RawMessage` |
 | `Execute(ctx, req)` | `POST /v1/execute` | yes | `*ExecutionResult` |
-| `CreateJob(ctx, req)` | `POST /v1/jobs` | yes | `*CreateJobResponse` |
+| `CreateJob(ctx, req)` | `POST /v1/jobs` | yes | `*Operation` |
 | `GetJob(ctx, id)` | `GET /v1/jobs/{id}` | yes | `*JobRecord` |
 | `CancelJob(ctx, id)` | `DELETE /v1/jobs/{id}` | yes | `error` |
 | `OpenAPI(ctx)` | `GET /openapi.json` | no | `json.RawMessage` |

@@ -50,7 +50,7 @@ Do not document API-key fields as canonical.
 | `browser_adapter_validate` / `validate_browser_adapter` / `validateBrowserAdapter` / `ValidateBrowserAdapter` | `POST /v1/browser/adapter/validate` | yes | raw JSON |
 | `browser_adapter_completion_validate` / `validate_browser_adapter_completion` / `validateBrowserAdapterCompletion` / `ValidateBrowserAdapterCompletion` | `POST /v1/browser/adapter/completion/validate` | yes | raw JSON |
 | `execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
-| `create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` (`202`) |
+| `create_job(request)` | `POST /v1/jobs` | yes | `Operation` (`202`) |
 | `get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
 | `cancel_job(job_id)` | `DELETE /v1/jobs/{id}` | yes | void (`204`) |
 | `openapi()` | `GET /openapi.json` | no | raw JSON |
@@ -130,7 +130,8 @@ stdout/stderr, error, `metrics`, `deterministic`, `inputs_digest`,
 `effective_isolation`, ...), `Metrics` (`wall_time_ms`, **`cpu_time_ms` nullable**,
 `fuel_used` nullable, `peak_memory_bytes` nullable), `JobRecord`
 (job_id, status, request, result, error, created_at, updated_at),
-`CreateJobResponse` (job_id), `ErrorBody` (code, message), enums
+`Operation` (name, done, metadata, response, error), `ErrorBody`
+(code, message, status, request_id, retryable, details), enums
 `ExecutionStatus`/`JobStatus`/`Lane`. Unknown/extra fields must not crash
 deserialization (forward-compat).
 

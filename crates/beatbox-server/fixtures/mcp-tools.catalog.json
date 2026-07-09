@@ -494,5 +494,158 @@
       "type": "object"
     },
     "name": "validate_browser_adapter_completion"
+  },
+  {
+    "description": "OperationId-named alias for get_capabilities.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "projects.capabilities.get"
+  },
+  {
+    "description": "OperationId-named alias for get_integration_contract.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "projects.integration.get"
+  },
+  {
+    "description": "OperationId-named alias for get_browser_profiles.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "projects.browserProfiles.get"
+  },
+  {
+    "description": "OperationId-named alias for get_browser_adapter_contract.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.getContract"
+  },
+  {
+    "description": "OperationId-named alias for admit_browser_session.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserSessions.admit"
+  },
+  {
+    "description": "OperationId-named alias for register_browser_adapter.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.register"
+  },
+  {
+    "description": "OperationId-named alias for validate_browser_adapter.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.validate"
+  },
+  {
+    "description": "OperationId-named alias for validate_browser_adapter_completion.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.validateCompletion"
+  },
+  {
+    "description": "OperationId-named alias for run_wasm on the currently runnable Wasm lane.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "wat"
+          ]
+        },
+        {
+          "required": [
+            "wasm_base64"
+          ]
+        }
+      ],
+      "properties": {
+        "entrypoint": {
+          "type": "string"
+        },
+        "fuel": {
+          "type": "integer"
+        },
+        "input": {},
+        "memory_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "wasm_base64": {
+          "type": "string"
+        },
+        "wat": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "projects.executions.execute"
+  },
+  {
+    "description": "REST-only operationId. Same-user browser adapter capabilities are bearer material and are not exposed through MCP transcripts.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.issueCapability"
+  },
+  {
+    "description": "REST-only operationId. Launch planning remains capability-bound and is not exposed through MCP transcripts.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.planLaunch"
+  },
+  {
+    "description": "REST-only operationId. Launch claim replay checks remain capability-bound and are not exposed through MCP transcripts.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.browserAdapters.claimLaunch"
+  },
+  {
+    "description": "REST-only operationId for asynchronous job creation.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.jobs.create"
+  },
+  {
+    "description": "REST-only operationId for asynchronous job lookup.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.jobs.get"
+  },
+  {
+    "description": "REST-only operationId for asynchronous job cancellation.",
+    "inputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "name": "projects.jobs.cancel"
   }
 ]

@@ -205,21 +205,41 @@ module Beatbox
     end
   end
 
-  # A {code, message} error object as it appears inside result/job bodies.
+  # A shared error object as it appears inside result/job/operation bodies.
   class ErrorBody
-    attr_reader :code, :message
+    attr_reader :code, :message, :status, :request_id, :retryable, :details
 
-    def initialize(code:, message:)
+    def initialize(code:, message:, status: 0, request_id: "", retryable: false, details: [])
       @code = code
       @message = message
+      @status = status
+      @request_id = request_id
+      @retryable = retryable
+      @details = details
     end
 
-    def to_h = { "code" => code, "message" => message }
+    def to_h
+      {
+        "code" => code,
+        "message" => message,
+        "status" => status,
+        "request_id" => request_id,
+        "retryable" => retryable,
+        "details" => details
+      }
+    end
 
     def self.from_h(hash)
       return nil if hash.nil?
 
-      new(code: hash["code"], message: hash["message"])
+      new(
+        code: hash["code"],
+        message: hash["message"],
+        status: hash.fetch("status", 0),
+        request_id: hash.fetch("request_id", ""),
+        retryable: hash.fetch("retryable", false),
+        details: hash.fetch("details", [])
+      )
     end
   end
 
@@ -297,13 +317,56 @@ module Beatbox
     end
   end
 
-  # Response to POST /v1/jobs (202).
+  # Legacy pre-Operation create-job response shape.
   class CreateJobResponse
     attr_reader :job_id, :raw
 
     def initialize(fields)
       @raw = fields
       @job_id = fields["job_id"]
+    end
+
+    def to_h = @raw.dup
+
+    def self.from_h(hash)
+      return nil if hash.nil?
+
+      new(hash)
+    end
+  end
+
+  # Metadata carried by a long-running operation.
+  class OperationMetadata
+    attr_reader :target_resource, :create_time, :current_stage, :progress_ratio, :raw
+
+    def initialize(fields)
+      @raw = fields
+      @target_resource = fields["target_resource"]
+      @create_time = fields["create_time"]
+      @current_stage = fields["current_stage"]
+      @progress_ratio = fields["progress_ratio"]
+    end
+
+    def to_h = @raw.dup
+
+    def self.from_h(hash)
+      return nil if hash.nil?
+
+      new(hash)
+    end
+  end
+
+  # Shared long-running operation envelope.
+  class Operation
+    attr_reader :name, :done, :metadata, :response, :error, :raw
+
+    def initialize(fields)
+      @raw = fields
+      @name = fields["name"]
+      @done = fields["done"]
+      @metadata = OperationMetadata.from_h(fields["metadata"])
+      @response = fields["response"]
+      @error = ErrorBody.from_h(fields["error"])
     end
 
     def to_h = @raw.dup

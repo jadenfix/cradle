@@ -10,8 +10,8 @@ use beatbox_core::{
     BrowserAdapterRegistrationResponse, BrowserAdmissionDecision, BrowserAdmissionRequest,
     BrowserAdmissionResponse, BrowserArtifactMode, BrowserCredentialMode, BrowserProfilesResponse,
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel,
-    BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, CreateJobResponse,
-    ErrorResponse, ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane,
+    BrowserSensitiveActivityMode, BrowserSensitivity, BrowserSessionActor, ErrorResponse,
+    ExecuteRequest, ExecutionResult, ExecutionStatus, JobRecord, JobStatus, Lane, Operation,
     Policy, Source, browser_adapter_launch_template_expires_at,
     browser_adapter_launch_template_issued_at,
 };
@@ -494,7 +494,8 @@ async fn jobs_complete_and_persist_to_sqlite() -> Result<(), Box<dyn std::error:
         .await?;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let body = to_bytes(response.into_body(), usize::MAX).await?;
-    let created: CreateJobResponse = serde_json::from_slice(&body)?;
+    let created: Operation = serde_json::from_slice(&body)?;
+    let job_id = operation_job_id(&created)?;
 
     let mut completed = None;
     for _ in 0..30 {
@@ -503,7 +504,7 @@ async fn jobs_complete_and_persist_to_sqlite() -> Result<(), Box<dyn std::error:
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
-                    .uri(format!("/v1/jobs/{}", created.job_id))
+                    .uri(format!("/v1/jobs/{job_id}"))
                     .body(Body::empty())?,
             )
             .await?;
@@ -523,9 +524,7 @@ async fn jobs_complete_and_persist_to_sqlite() -> Result<(), Box<dyn std::error:
     );
 
     let reopened = JobStore::open(&db_path)?;
-    let persisted = reopened
-        .get(&created.job_id)?
-        .ok_or("missing persisted job")?;
+    let persisted = reopened.get(&job_id)?.ok_or("missing persisted job")?;
     assert_eq!(persisted.status, JobStatus::Succeeded);
     assert_eq!(
         persisted.result.as_ref().map(|result| &result.value),
@@ -553,8 +552,7 @@ async fn jobs_dedupe_idempotency_keys() -> Result<(), Box<dyn std::error::Error>
         )
         .await?;
     assert_eq!(first.status(), StatusCode::ACCEPTED);
-    let first: CreateJobResponse =
-        serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await?)?;
+    let first: Operation = serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await?)?;
 
     let second = app
         .oneshot(
@@ -566,10 +564,48 @@ async fn jobs_dedupe_idempotency_keys() -> Result<(), Box<dyn std::error::Error>
         )
         .await?;
     assert_eq!(second.status(), StatusCode::ACCEPTED);
-    let second: CreateJobResponse =
+    let second: Operation =
         serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await?)?;
 
-    assert_eq!(first.job_id, second.job_id);
+    assert_eq!(operation_job_id(&first)?, operation_job_id(&second)?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn jobs_dedupe_idempotency_key_header() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = add_one_request(41);
+    let body = serde_json::to_vec(&request)?;
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/jobs")
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", "retry-key-header")
+                .body(Body::from(body.clone()))?,
+        )
+        .await?;
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+    let first: Operation = serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await?)?;
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/jobs")
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", "retry-key-header")
+                .body(Body::from(body))?,
+        )
+        .await?;
+    assert_eq!(second.status(), StatusCode::ACCEPTED);
+    let second: Operation =
+        serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await?)?;
+
+    assert_eq!(operation_job_id(&first)?, operation_job_id(&second)?);
     Ok(())
 }
 
@@ -696,7 +732,7 @@ async fn jobs_reject_when_concurrency_cap_is_exhausted() -> Result<(), Box<dyn s
 #[tokio::test]
 async fn canceling_terminal_job_conflicts() -> Result<(), Box<dyn std::error::Error>> {
     let app = router(ServerConfig::new(BeatboxEngine::new()?));
-    let created: CreateJobResponse = serde_json::from_slice(
+    let created: Operation = serde_json::from_slice(
         &to_bytes(
             app.clone()
                 .oneshot(
@@ -712,12 +748,13 @@ async fn canceling_terminal_job_conflicts() -> Result<(), Box<dyn std::error::Er
         )
         .await?,
     )?;
+    let job_id = operation_job_id(&created)?;
 
     // Wait for the fast job to finish, then a DELETE must report 409 (nothing to
     // cancel) rather than a spurious 204.
     let mut succeeded = false;
     for _ in 0..40 {
-        let job = job_status(&app, &created.job_id).await?;
+        let job = job_status(&app, &job_id).await?;
         if job == JobStatus::Succeeded {
             succeeded = true;
             break;
@@ -730,7 +767,7 @@ async fn canceling_terminal_job_conflicts() -> Result<(), Box<dyn std::error::Er
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/v1/jobs/{}", created.job_id))
+                .uri(format!("/v1/jobs/{job_id}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -751,14 +788,15 @@ async fn canceling_running_job_frees_the_concurrency_slot() -> Result<(), Box<dy
     let app = router(config);
 
     let long = spin_job_request();
-    let created: CreateJobResponse = serde_json::from_slice(
+    let created: Operation = serde_json::from_slice(
         &to_bytes(submit_job(&app, &long).await?.into_body(), usize::MAX).await?,
     )?;
+    let job_id = operation_job_id(&created)?;
 
     // Wait until the worker has taken the slot (job is running).
     let mut running = false;
     for _ in 0..80 {
-        if job_status(&app, &created.job_id).await? == JobStatus::Running {
+        if job_status(&app, &job_id).await? == JobStatus::Running {
             running = true;
             break;
         }
@@ -776,7 +814,7 @@ async fn canceling_running_job_frees_the_concurrency_slot() -> Result<(), Box<dy
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/v1/jobs/{}", created.job_id))
+                .uri(format!("/v1/jobs/{job_id}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -810,13 +848,14 @@ async fn duplicate_submission_does_not_consume_a_permit() -> Result<(), Box<dyn 
 
     let mut long = spin_job_request();
     long.idempotency_key = Some("dupe-key".to_string());
-    let created: CreateJobResponse = serde_json::from_slice(
+    let created: Operation = serde_json::from_slice(
         &to_bytes(submit_job(&app, &long).await?.into_body(), usize::MAX).await?,
     )?;
+    let job_id = operation_job_id(&created)?;
 
     let mut running = false;
     for _ in 0..80 {
-        if job_status(&app, &created.job_id).await? == JobStatus::Running {
+        if job_status(&app, &job_id).await? == JobStatus::Running {
             running = true;
             break;
         }
@@ -832,16 +871,15 @@ async fn duplicate_submission_does_not_consume_a_permit() -> Result<(), Box<dyn 
     // ...but a duplicate of the running job dedupes to the same id without a permit.
     let dup = submit_job(&app, &long).await?;
     assert_eq!(dup.status(), StatusCode::ACCEPTED);
-    let dup: CreateJobResponse =
-        serde_json::from_slice(&to_bytes(dup.into_body(), usize::MAX).await?)?;
-    assert_eq!(dup.job_id, created.job_id);
+    let dup: Operation = serde_json::from_slice(&to_bytes(dup.into_body(), usize::MAX).await?)?;
+    assert_eq!(operation_job_id(&dup)?, job_id);
 
     // Stop the long job so its worker doesn't run out the full wall budget.
     app.clone()
         .oneshot(
             Request::builder()
                 .method(Method::DELETE)
-                .uri(format!("/v1/jobs/{}", created.job_id))
+                .uri(format!("/v1/jobs/{job_id}"))
                 .body(Body::empty())?,
         )
         .await?;
@@ -862,6 +900,16 @@ async fn submit_job(
                 .body(Body::from(serde_json::to_vec(request)?))?,
         )
         .await?)
+}
+
+fn operation_job_id(operation: &Operation) -> Result<String, Box<dyn std::error::Error>> {
+    operation
+        .name
+        .rsplit('/')
+        .next()
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("operation name has no id: {}", operation.name).into())
 }
 
 async fn job_status(
@@ -3892,10 +3940,7 @@ async fn integration_contract_reports_runnable_wasm_and_planned_lanes()
     assert!(
         value["auth"]["required_for"]
             .as_array()
-            .is_some_and(
-                |required| required.iter().any(|item| item == "/mcp tools/list")
-                    && required.iter().any(|item| item == "/mcp tools/call")
-            )
+            .is_some_and(|required| required.iter().any(|item| item == "POST /mcp"))
     );
     let rest = value["rest"]
         .as_array()
@@ -3972,6 +4017,16 @@ async fn auth_required_rejects_mcp_tools_list_without_key() -> Result<(), Box<dy
         )
         .await?;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["jsonrpc"], "2.0");
+    assert_eq!(value["id"], serde_json::Value::Null);
+    assert_eq!(value["error"]["code"], -32001);
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("missing") || message.contains("invalid"))
+    );
 
     let response = app
         .oneshot(
@@ -4485,6 +4540,20 @@ async fn openapi_lists_jobs_surface() -> Result<(), Box<dyn std::error::Error>> 
         .as_str()
         .ok_or("execute 200 should reference a schema")?;
     assert!(schema_ref.ends_with("/ExecutionResult"), "got {schema_ref}");
+    let mcp_responses = value["paths"]["/mcp"]["post"]["responses"]
+        .as_object()
+        .ok_or("MCP POST should define responses")?;
+    assert!(
+        mcp_responses.contains_key("401"),
+        "MCP POST should document auth failures"
+    );
+    let mcp_401_ref = mcp_responses["401"]["content"]["application/json"]["schema"]["$ref"]
+        .as_str()
+        .ok_or("MCP 401 should reference a JSON schema")?;
+    assert!(
+        mcp_401_ref.ends_with("/JsonRpcErrorResponse"),
+        "MCP 401 should document the JSON-RPC error envelope, got {mcp_401_ref}"
+    );
 
     // cpu_time_ms is nullable in the schema (honest metrics), not a plain integer.
     let cpu = &schemas["Metrics"]["properties"]["cpu_time_ms"];
@@ -4554,6 +4623,8 @@ async fn mcp_lists_tools() -> Result<(), Box<dyn std::error::Error>> {
     let tools = &value["result"]["tools"];
     assert!(tools.to_string().contains("run_wasm"));
     assert!(tools.to_string().contains("get_capabilities"));
+    assert!(tools.to_string().contains("projects.capabilities.get"));
+    assert!(tools.to_string().contains("projects.jobs.create"));
     assert!(tools.to_string().contains("get_integration_contract"));
     assert!(tools.to_string().contains("get_browser_profiles"));
     assert!(tools.to_string().contains("admit_browser_session"));
@@ -4806,6 +4877,37 @@ async fn mcp_rejects_text_plain_json_posts() -> Result<(), Box<dyn std::error::E
             .as_str()
             .is_some_and(|message| message.contains("content-type"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_rest_only_operation_id_tools_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let app = router(ServerConfig::new(BeatboxEngine::new()?));
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "projects.jobs.create",
+            "arguments": {}
+        }
+    });
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let value: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!(value["error"]["code"], -32602);
+    let message = value["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("projects.jobs.create"));
+    assert!(message.contains("REST-only"));
     Ok(())
 }
 

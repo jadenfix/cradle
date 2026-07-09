@@ -79,7 +79,7 @@ not set.
 | `validateBrowserAdapter(req)` | `POST /v1/browser/adapter/validate` | yes | raw JSON (`unknown`) |
 | `validateBrowserAdapterCompletion(req)` | `POST /v1/browser/adapter/completion/validate` | yes | raw JSON (`unknown`) |
 | `execute(req)` | `POST /v1/execute` | yes | `ExecutionResult` |
-| `createJob(req)` | `POST /v1/jobs` | yes | `CreateJobResponse` (202) |
+| `createJob(req)` | `POST /v1/jobs` | yes | `Operation` (202) |
 | `getJob(id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
 | `cancelJob(id)` | `DELETE /v1/jobs/{id}` | yes | `void` (204) |
 | `openapi()` | `GET /openapi.json` | no | raw JSON (`unknown`) |
@@ -116,9 +116,10 @@ ExecuteRequest.of("wasm", Source.moduleRef("..."), {
 ## Async jobs
 
 ```ts
-const { job_id } = await client.createJob(
+const operation = await client.createJob(
   ExecuteRequest.wasmWat("(module ...)", { input: { n: 41 } }),
 );
+const job_id = operation.name.split("/").pop()!;
 const job = await client.getJob(job_id);
 if (job.status === "succeeded") console.log(job.result?.value);
 await client.cancelJob(job_id);

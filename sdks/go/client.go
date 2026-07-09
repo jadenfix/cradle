@@ -254,9 +254,9 @@ func (c *Client) Execute(ctx context.Context, req ExecuteRequest) (*ExecutionRes
 	return &out, nil
 }
 
-// CreateJob enqueues an asynchronous job (POST /v1/jobs) and returns its id.
-func (c *Client) CreateJob(ctx context.Context, req ExecuteRequest) (*CreateJobResponse, error) {
-	var out CreateJobResponse
+// CreateJob enqueues an asynchronous job (POST /v1/jobs) and returns an Operation.
+func (c *Client) CreateJob(ctx context.Context, req ExecuteRequest) (*Operation, error) {
+	var out Operation
 	if err := c.do(ctx, http.MethodPost, c.baseURL+"/v1/jobs", true, req, &out); err != nil {
 		return nil, err
 	}

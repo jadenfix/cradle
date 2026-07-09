@@ -101,10 +101,10 @@ module Beatbox
       ExecutionResult.from_h(body)
     end
 
-    # POST /v1/jobs. @return [CreateJobResponse]
+    # POST /v1/jobs. @return [Operation]
     def create_job(request)
       body = request_json(:post, "/v1/jobs", body: request, auth: true)
-      CreateJobResponse.from_h(body)
+      Operation.from_h(body)
     end
 
     # GET /v1/jobs/{id}. @return [JobRecord]

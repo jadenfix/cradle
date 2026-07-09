@@ -87,7 +87,7 @@ client = Client("http://127.0.0.1:7300", token="cradle-token-placeholder", timeo
 | `client.browser_adapter_validate(request)` | `POST /v1/browser/adapter/validate` | yes | `dict` |
 | `client.browser_adapter_completion_validate(request)` | `POST /v1/browser/adapter/completion/validate` | yes | `dict` |
 | `client.execute(request)` | `POST /v1/execute` | yes | `ExecutionResult` |
-| `client.create_job(request)` | `POST /v1/jobs` | yes | `CreateJobResponse` |
+| `client.create_job(request)` | `POST /v1/jobs` | yes | `Operation` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `JobRecord` |
 | `client.cancel_job(job_id)` | `DELETE /v1/jobs/{id}` | yes | `None` |
 | `client.openapi()` | `GET /openapi.json` | no | `dict` |
@@ -124,12 +124,13 @@ daemon merges them onto its defaults.
 ### Async jobs
 
 ```python
-created = client.create_job(ExecuteRequest.wasm_wat("(module ...)"))
-job = client.get_job(created.job_id)
+operation = client.create_job(ExecuteRequest.wasm_wat("(module ...)"))
+job_id = operation.name.rsplit("/", 1)[-1]
+job = client.get_job(job_id)
 print(job.status)             # JobStatus.QUEUED / RUNNING / SUCCEEDED / ...
 if job.result is not None:
     print(job.result.value)
-client.cancel_job(created.job_id)
+client.cancel_job(job_id)
 ```
 
 ## Error handling

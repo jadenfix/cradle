@@ -180,11 +180,15 @@ type EgressRecord struct {
 	Bytes  uint64 `json:"bytes"`
 }
 
-// ErrorBody is the {code, message} pair carried by API error responses and by
-// the error field of a result/job.
+// ErrorBody is the shared error payload carried by API error responses and by
+// the error field of a result/job/operation.
 type ErrorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string           `json:"code"`
+	Message   string           `json:"message"`
+	Status    uint16           `json:"status"`
+	RequestID string           `json:"request_id"`
+	Retryable bool             `json:"retryable"`
+	Details   []map[string]any `json:"details"`
 }
 
 // errorResponse is the {"error": {...}} envelope returned on non-2xx responses.
@@ -225,7 +229,25 @@ type JobRecord struct {
 	UpdatedAt string           `json:"updated_at"`
 }
 
-// CreateJobResponse is returned (202) by CreateJob.
+// CreateJobResponse is the legacy pre-Operation create-job response shape.
+// CreateJob now returns Operation.
 type CreateJobResponse struct {
 	JobID string `json:"job_id"`
+}
+
+// OperationMetadata carries progress metadata for an operation.
+type OperationMetadata struct {
+	TargetResource string  `json:"target_resource,omitempty"`
+	CreateTime     string  `json:"create_time,omitempty"`
+	CurrentStage   string  `json:"current_stage,omitempty"`
+	ProgressRatio  float64 `json:"progress_ratio,omitempty"`
+}
+
+// Operation is the shared long-running operation envelope.
+type Operation struct {
+	Name     string             `json:"name"`
+	Done     bool               `json:"done"`
+	Metadata *OperationMetadata `json:"metadata,omitempty"`
+	Response json.RawMessage    `json:"response,omitempty"`
+	Error    *ErrorBody         `json:"error,omitempty"`
 }

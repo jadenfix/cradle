@@ -83,7 +83,7 @@ Redirects are never followed, so the token header can't leak cross-origin.
 | `validateBrowserAdapter(request)` | `POST /v1/browser/adapter/validate` | `JsonNode` (raw) |
 | `validateBrowserAdapterCompletion(request)` | `POST /v1/browser/adapter/completion/validate` | `JsonNode` (raw) |
 | `execute(request)`         | `POST /v1/execute`       | `ExecutionResult`   |
-| `createJob(request)`       | `POST /v1/jobs`          | `CreateJobResponse` |
+| `createJob(request)`       | `POST /v1/jobs`          | `Operation`         |
 | `getJob(id)`               | `GET /v1/jobs/{id}`      | `JobRecord`         |
 | `cancelJob(id)`            | `DELETE /v1/jobs/{id}`   | `void`              |
 | `openapi()`                | `GET /openapi.json`      | `JsonNode` (raw)    |

@@ -102,7 +102,7 @@ trailing whitespace are rejected before any request can be built.
 | `client.validate_browser_adapter(request)` | `POST /v1/browser/adapter/validate` | yes | `Hash` (raw JSON) |
 | `client.validate_browser_adapter_completion(request)` | `POST /v1/browser/adapter/completion/validate` | yes | `Hash` (raw JSON) |
 | `client.execute(request)` | `POST /v1/execute` | yes | `Beatbox::ExecutionResult` |
-| `client.create_job(request)` | `POST /v1/jobs` | yes | `Beatbox::CreateJobResponse` |
+| `client.create_job(request)` | `POST /v1/jobs` | yes | `Beatbox::Operation` |
 | `client.get_job(job_id)` | `GET /v1/jobs/{id}` | yes | `Beatbox::JobRecord` |
 | `client.cancel_job(job_id)` | `DELETE /v1/jobs/{id}` | yes | `nil` |
 | `client.openapi` | `GET /openapi.json` | no | `Hash` (raw JSON) |

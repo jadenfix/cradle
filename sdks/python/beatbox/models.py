@@ -313,13 +313,31 @@ class ExecuteRequest:
 class ErrorBody:
     code: str
     message: str
+    status: int = 0
+    request_id: str = ""
+    retryable: bool = False
+    details: list[Mapping[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"code": self.code, "message": self.message}
+        return {
+            "code": self.code,
+            "message": self.message,
+            "status": self.status,
+            "request_id": self.request_id,
+            "retryable": self.retryable,
+            "details": list(self.details),
+        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ErrorBody":
-        return cls(code=data.get("code", ""), message=data.get("message", ""))
+        return cls(
+            code=data.get("code", ""),
+            message=data.get("message", ""),
+            status=data.get("status", 0),
+            request_id=data.get("request_id", ""),
+            retryable=data.get("retryable", False),
+            details=list(data.get("details", [])),
+        )
 
 
 @dataclass
@@ -456,6 +474,8 @@ class ExecutionResult:
 
 @dataclass
 class CreateJobResponse:
+    """Legacy pre-Operation create-job response shape."""
+
     job_id: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -464,6 +484,44 @@ class CreateJobResponse:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CreateJobResponse":
         return cls(job_id=data.get("job_id", ""))
+
+
+@dataclass
+class OperationMetadata:
+    target_resource: str = ""
+    create_time: str = ""
+    current_stage: str = ""
+    progress_ratio: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "OperationMetadata":
+        return cls(
+            target_resource=data.get("target_resource", ""),
+            create_time=data.get("create_time", ""),
+            current_stage=data.get("current_stage", ""),
+            progress_ratio=float(data.get("progress_ratio", 0.0)),
+        )
+
+
+@dataclass
+class Operation:
+    name: str
+    done: bool
+    metadata: Optional[OperationMetadata] = None
+    response: Any = None
+    error: Optional[ErrorBody] = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Operation":
+        metadata = data.get("metadata")
+        err = data.get("error")
+        return cls(
+            name=data.get("name", ""),
+            done=bool(data.get("done", False)),
+            metadata=OperationMetadata.from_dict(metadata) if isinstance(metadata, Mapping) else None,
+            response=data.get("response"),
+            error=ErrorBody.from_dict(err) if isinstance(err, Mapping) else None,
+        )
 
 
 @dataclass

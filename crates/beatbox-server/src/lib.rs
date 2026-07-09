@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod jobs;
 
 use std::collections::{BTreeMap, HashMap};
@@ -33,10 +35,10 @@ use beatbox_core::{
     BrowserSandboxAvailability, BrowserSandboxControl, BrowserSandboxLevel, BrowserSandboxProfile,
     BrowserSensitiveActivityMode, BrowserSensitiveActivityModeContract, BrowserSensitivity,
     BrowserSessionActor, BrowserStorageGuardPlan, BrowserSuppressionGuardPlan,
-    CapabilitiesResponse, CapabilityLane, CapabilityLimits, CreateJobResponse,
-    EcosystemConsumerContract, EcosystemEndpointContract, EcosystemIntegrationContract,
-    EcosystemLaneContract, EcosystemMcpToolContract, ErrorBody, ErrorResponse, ExecuteRequest,
-    ExecutionResult, ExecutionStatus, JobRecord, Lane, Policy, Source,
+    CapabilitiesResponse, CapabilityLane, CapabilityLimits, EcosystemConsumerContract,
+    EcosystemEndpointContract, EcosystemIntegrationContract, EcosystemLaneContract,
+    EcosystemMcpToolContract, ErrorBody, ErrorResponse, ExecuteRequest, ExecutionResult,
+    ExecutionStatus, JobRecord, Lane, Operation, OperationMetadata, Policy, Source,
     browser_adapter_launch_template_expires_at, browser_adapter_launch_template_issued_at,
 };
 use beatbox_engine::{BeatboxEngine, CancelFlag, EngineError};
@@ -44,7 +46,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 pub use jobs::JobStore;
 use jobs::{CancelOutcome, JobStoreError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -65,6 +67,7 @@ pub const MAX_BROWSER_ADAPTER_CAPABILITIES: usize = 128;
 pub const MAX_BROWSER_ADAPTER_LAUNCH_REQUESTS: usize = 128;
 pub const AETHER_PAYMENT_HEADER: &str = "x-payment";
 pub const AETHER_PAYMENT_HASH_HEADER: &str = "x-aether-payment-hash";
+pub const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 pub const MAX_AETHER_PAYMENT_HEADER_BYTES: usize = 8192;
 const MCP_ACCESS_CONTROL_ALLOW_METHODS: &str = "POST, GET, OPTIONS";
 const MCP_ACCESS_CONTROL_ALLOW_HEADERS: &str = concat!(
@@ -441,7 +444,8 @@ async fn execute(
     request: Request<Body>,
 ) -> Result<Json<ExecutionResult>, ApiError> {
     state.authorize(&headers)?;
-    let request = parse_json_body(&state, request).await?;
+    let mut request = parse_json_body(&state, request).await?;
+    apply_idempotency_key_header(&headers, &mut request)?;
     execute_sync(&state, request).await.map(Json)
 }
 
@@ -449,9 +453,10 @@ async fn create_job(
     State(state): State<AppState>,
     headers: HeaderMap,
     request: Request<Body>,
-) -> Result<(StatusCode, Json<CreateJobResponse>), ApiError> {
+) -> Result<(StatusCode, Json<Operation>), ApiError> {
     state.authorize(&headers)?;
-    let request = parse_json_body(&state, request).await?;
+    let mut request = parse_json_body(&state, request).await?;
+    apply_idempotency_key_header(&headers, &mut request)?;
     admit_execution_request(&state.config, &request, ExecutionMode::Job)?;
     let request = Arc::new(request);
 
@@ -462,7 +467,7 @@ async fn create_job(
         .await
         .map_err(ApiError::job_store)?
     {
-        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
+        return Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))));
     }
 
     // Insert-or-dedupe atomically. A duplicate (inserted == false) returns here
@@ -475,7 +480,7 @@ async fn create_job(
         .map_err(ApiError::job_store)?;
     let job_id = created.job_id;
     if !created.inserted {
-        return Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })));
+        return Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))));
     }
 
     // Genuinely new job: reserve a worker slot. If the cap is hit, roll back the
@@ -521,7 +526,45 @@ async fn create_job(
     };
     let request = Arc::try_unwrap(request).unwrap_or_else(|arc| (*arc).clone());
     spawn_job(state, job_id.clone(), request, permit);
-    Ok((StatusCode::ACCEPTED, Json(CreateJobResponse { job_id })))
+    Ok((StatusCode::ACCEPTED, Json(job_operation(job_id))))
+}
+
+fn apply_idempotency_key_header(
+    headers: &HeaderMap,
+    request: &mut ExecuteRequest,
+) -> Result<(), ApiError> {
+    let Some(value) = headers.get(IDEMPOTENCY_KEY_HEADER) else {
+        return Ok(());
+    };
+    let key = value
+        .to_str()
+        .map_err(|_| {
+            ApiError::bad_request("invalid_idempotency_key", "Idempotency-Key must be ASCII")
+        })?
+        .trim();
+    if key.is_empty() {
+        return Err(ApiError::bad_request(
+            "invalid_idempotency_key",
+            "Idempotency-Key must not be empty",
+        ));
+    }
+    request.idempotency_key = Some(key.to_string());
+    Ok(())
+}
+
+fn job_operation(job_id: String) -> Operation {
+    Operation {
+        name: format!("projects/default/operations/{job_id}"),
+        done: false,
+        metadata: Some(OperationMetadata {
+            target_resource: format!("projects/default/jobs/{job_id}"),
+            create_time: Utc::now().to_rfc3339(),
+            current_stage: "queued".to_string(),
+            progress_ratio: 0.0,
+        }),
+        response: None,
+        error: None,
+    }
 }
 
 async fn get_job(
@@ -785,7 +828,12 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(ErrorResponse { error: self.body })).into_response()
+        let status = self.status;
+        let error = self
+            .body
+            .with_http_status(status.as_u16())
+            .with_request_id(format!("req-{}", uuid::Uuid::new_v4()));
+        (status, Json(ErrorResponse { error })).into_response()
     }
 }
 
@@ -4114,7 +4162,10 @@ pub fn openapi_spec_json() -> String {
         beatbox_core::EgressRecord,
         ErrorBody,
         ErrorResponse,
-        CreateJobResponse,
+        JsonRpcErrorObject,
+        JsonRpcErrorResponse,
+        Operation,
+        OperationMetadata,
         JobRecord,
         beatbox_core::JobStatus,
         beatbox_core::BrowserProfilesResponse,
@@ -4180,6 +4231,20 @@ pub fn openapi_spec_json() -> String {
 )]
 struct ApiDoc;
 
+#[derive(Serialize, utoipa::ToSchema)]
+struct JsonRpcErrorObject {
+    code: i64,
+    message: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct JsonRpcErrorResponse {
+    jsonrpc: String,
+    #[schema(nullable = true)]
+    id: Option<Value>,
+    error: JsonRpcErrorObject,
+}
+
 struct SecurityAddon;
 
 impl utoipa::Modify for SecurityAddon {
@@ -4203,6 +4268,7 @@ impl utoipa::Modify for SecurityAddon {
 
 #[allow(dead_code)]
 mod openapi_paths {
+    use super::JsonRpcErrorResponse;
     use beatbox_core::{
         BrowserAdapterCapabilityIssueRequest, BrowserAdapterCapabilityIssueResponse,
         BrowserAdapterCompletionReport, BrowserAdapterCompletionValidationResponse,
@@ -4211,8 +4277,8 @@ mod openapi_paths {
         BrowserAdapterLaunchPlanResponse, BrowserAdapterManifestRequest,
         BrowserAdapterManifestResponse, BrowserAdapterRegistrationRequest,
         BrowserAdapterRegistrationResponse, BrowserAdmissionRequest, BrowserAdmissionResponse,
-        BrowserProfilesResponse, CapabilitiesResponse, CreateJobResponse,
-        EcosystemIntegrationContract, ErrorResponse, ExecuteRequest, ExecutionResult, JobRecord,
+        BrowserProfilesResponse, CapabilitiesResponse, EcosystemIntegrationContract, ErrorResponse,
+        ExecuteRequest, ExecutionResult, JobRecord, Operation,
     };
 
     #[utoipa::path(
@@ -4227,7 +4293,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/capabilities",
-        operation_id = "getCapabilities",
+        operation_id = "projects.capabilities.get",
         tag = "v1",
         responses(
             (status = 200, description = "Lane availability and host limits", body = CapabilitiesResponse),
@@ -4239,7 +4305,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/integration",
-        operation_id = "getIntegrationContract",
+        operation_id = "projects.integration.get",
         tag = "v1",
         responses(
             (status = 200, description = "Focused ecosystem integration contract", body = EcosystemIntegrationContract),
@@ -4251,7 +4317,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/profiles",
-        operation_id = "getBrowserProfiles",
+        operation_id = "projects.browserProfiles.get",
         tag = "v1",
         responses(
             (status = 200, description = "Browser sandbox profile discovery contract", body = BrowserProfilesResponse),
@@ -4263,8 +4329,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/admit",
-        operation_id = "admitBrowserSession",
+        operation_id = "projects.browserSessions.admit",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdmissionRequest,
         responses(
             (status = 200, description = "Browser sandbox admission decision", body = BrowserAdmissionResponse),
@@ -4277,7 +4344,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/browser/adapter/contract",
-        operation_id = "getBrowserAdapterContract",
+        operation_id = "projects.browserAdapters.getContract",
         tag = "v1",
         responses(
             (status = 200, description = "Fail-closed browser adapter contract and conformance profile discovery", body = BrowserAdapterContractResponse),
@@ -4289,8 +4356,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/capability",
-        operation_id = "issueBrowserAdapterCapability",
+        operation_id = "projects.browserAdapters.issueCapability",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterCapabilityIssueRequest,
         responses(
             (status = 200, description = "Issue a short-lived one-time browser adapter same-user capability", body = BrowserAdapterCapabilityIssueResponse),
@@ -4304,8 +4372,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/register",
-        operation_id = "registerBrowserAdapter",
+        operation_id = "projects.browserAdapters.register",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterRegistrationRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter registration preflight", body = BrowserAdapterRegistrationResponse),
@@ -4318,8 +4387,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/plan",
-        operation_id = "planBrowserAdapterLaunch",
+        operation_id = "projects.browserAdapters.planLaunch",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterLaunchPlanRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter launch plan preflight", body = BrowserAdapterLaunchPlanResponse),
@@ -4332,8 +4402,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/launch/claim",
-        operation_id = "claimBrowserAdapterLaunch",
+        operation_id = "projects.browserAdapters.claimLaunch",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterLaunchClaimRequest,
         responses(
             (status = 200, description = "REST-only browser adapter launch request replay claim", body = BrowserAdapterLaunchClaimResponse),
@@ -4346,8 +4417,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/validate",
-        operation_id = "validateBrowserAdapter",
+        operation_id = "projects.browserAdapters.validate",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterManifestRequest,
         responses(
             (status = 200, description = "Fail-closed browser adapter manifest validation", body = BrowserAdapterManifestResponse),
@@ -4360,8 +4432,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/browser/adapter/completion/validate",
-        operation_id = "validateBrowserAdapterCompletion",
+        operation_id = "projects.browserAdapters.validateCompletion",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = BrowserAdapterCompletionReport,
         responses(
             (status = 200, description = "Fail-closed browser adapter completion report validation", body = BrowserAdapterCompletionValidationResponse),
@@ -4374,7 +4447,9 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/execute",
+        operation_id = "projects.executions.execute",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = ExecuteRequest,
         responses(
             (status = 200, description = "ExecutionResult", body = ExecutionResult),
@@ -4387,11 +4462,12 @@ mod openapi_paths {
     #[utoipa::path(
         post,
         path = "/v1/jobs",
-        operation_id = "createJob",
+        operation_id = "projects.jobs.create",
         tag = "v1",
+        params(("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")),
         request_body = ExecuteRequest,
         responses(
-            (status = 202, description = "Created asynchronous job", body = CreateJobResponse),
+            (status = 202, description = "Created asynchronous job operation", body = Operation),
             (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
             (status = 409, description = "Idempotency key reused with a different payload", body = ErrorResponse),
             (status = 422, description = "Protocol, source, policy, or job-limit rejection", body = ErrorResponse),
@@ -4403,7 +4479,7 @@ mod openapi_paths {
     #[utoipa::path(
         get,
         path = "/v1/jobs/{id}",
-        operation_id = "getJob",
+        operation_id = "projects.jobs.get",
         tag = "v1",
         params(("id" = String, Path, description = "Job id")),
         responses(
@@ -4417,9 +4493,12 @@ mod openapi_paths {
     #[utoipa::path(
         delete,
         path = "/v1/jobs/{id}",
-        operation_id = "cancelJob",
+        operation_id = "projects.jobs.cancel",
         tag = "v1",
-        params(("id" = String, Path, description = "Job id")),
+        params(
+            ("id" = String, Path, description = "Job id"),
+            ("Idempotency-Key" = String, Header, description = "Required for idempotent state-changing operations")
+        ),
         responses(
             (status = 204, description = "Canceled job (or already canceled)"),
             (status = 401, description = "Missing or invalid bearer token", body = ErrorResponse),
@@ -4437,6 +4516,7 @@ mod openapi_paths {
         responses(
             (status = 200, description = "JSON-RPC response"),
             (status = 202, description = "JSON-RPC notification accepted"),
+            (status = 401, description = "Missing or invalid bearer token", body = JsonRpcErrorResponse),
             (status = 403, description = "Origin not allowed")
         )
     )]
@@ -5065,6 +5145,94 @@ fn mcp_tools() -> Value {
                     }
                 }
             }
+        },
+        {
+            "name": "projects.capabilities.get",
+            "description": "OperationId-named alias for get_capabilities.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.integration.get",
+            "description": "OperationId-named alias for get_integration_contract.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserProfiles.get",
+            "description": "OperationId-named alias for get_browser_profiles.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserAdapters.getContract",
+            "description": "OperationId-named alias for get_browser_adapter_contract.",
+            "inputSchema": {"type": "object", "additionalProperties": false}
+        },
+        {
+            "name": "projects.browserSessions.admit",
+            "description": "OperationId-named alias for admit_browser_session.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.register",
+            "description": "OperationId-named alias for register_browser_adapter.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.validate",
+            "description": "OperationId-named alias for validate_browser_adapter.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.validateCompletion",
+            "description": "OperationId-named alias for validate_browser_adapter_completion.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.executions.execute",
+            "description": "OperationId-named alias for run_wasm on the currently runnable Wasm lane.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "oneOf": [{"required": ["wat"]}, {"required": ["wasm_base64"]}],
+                "properties": {
+                    "wat": {"type": "string"},
+                    "wasm_base64": {"type": "string"},
+                    "input": {},
+                    "entrypoint": {"type": "string"},
+                    "timeout_ms": {"type": "integer"},
+                    "memory_bytes": {"type": "integer"},
+                    "fuel": {"type": "integer"}
+                }
+            }
+        },
+        {
+            "name": "projects.browserAdapters.issueCapability",
+            "description": "REST-only operationId. Same-user browser adapter capabilities are bearer material and are not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.planLaunch",
+            "description": "REST-only operationId. Launch planning remains capability-bound and is not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.browserAdapters.claimLaunch",
+            "description": "REST-only operationId. Launch claim replay checks remain capability-bound and are not exposed through MCP transcripts.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.create",
+            "description": "REST-only operationId for asynchronous job creation.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.get",
+            "description": "REST-only operationId for asynchronous job lookup.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
+        },
+        {
+            "name": "projects.jobs.cancel",
+            "description": "REST-only operationId for asynchronous job cancellation.",
+            "inputSchema": {"type": "object", "additionalProperties": true}
         }
     ])
 }
@@ -5093,7 +5261,7 @@ async fn mcp_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     let mut result = match name {
-        "get_capabilities" => {
+        "get_capabilities" | "projects.capabilities.get" => {
             mcp_tool_arguments(&arguments, "get_capabilities", &[])?;
             let capabilities = capabilities_json(&state.config);
             Ok(json!({
@@ -5102,7 +5270,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_integration_contract" => {
+        "get_integration_contract" | "projects.integration.get" => {
             mcp_tool_arguments(&arguments, "get_integration_contract", &[])?;
             let integration = ecosystem_integration_contract();
             Ok(json!({
@@ -5111,7 +5279,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_browser_profiles" => {
+        "get_browser_profiles" | "projects.browserProfiles.get" => {
             mcp_tool_arguments(&arguments, "get_browser_profiles", &[])?;
             let profiles = serde_json::to_value(browser_profiles_response()).map_err(|error| {
                 (
@@ -5125,7 +5293,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "get_browser_adapter_contract" => {
+        "get_browser_adapter_contract" | "projects.browserAdapters.getContract" => {
             mcp_tool_arguments(&arguments, "get_browser_adapter_contract", &[])?;
             let contract =
                 serde_json::to_value(browser_adapter_contract_response()).map_err(|error| {
@@ -5140,7 +5308,7 @@ async fn mcp_tools_call(
                 "isError": false,
             }))
         }
-        "admit_browser_session" => {
+        "admit_browser_session" | "projects.browserSessions.admit" => {
             let request = mcp_browser_admission_request(&arguments)?;
             let decision = browser_admission_response(request);
             let is_error = decision.decision != BrowserAdmissionDecision::Accepted;
@@ -5156,7 +5324,7 @@ async fn mcp_tools_call(
                 "isError": is_error,
             }))
         }
-        "register_browser_adapter" => {
+        "register_browser_adapter" | "projects.browserAdapters.register" => {
             let request = mcp_browser_adapter_registration_request(&arguments)?;
             let registration = browser_adapter_mcp_registration_response(request);
             let registration = serde_json::to_value(registration).map_err(|error| {
@@ -5171,7 +5339,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "validate_browser_adapter" => {
+        "validate_browser_adapter" | "projects.browserAdapters.validate" => {
             let request = mcp_browser_adapter_manifest_request(&arguments)?;
             let validation = browser_adapter_manifest_response(request);
             let validation = serde_json::to_value(validation).map_err(|error| {
@@ -5186,7 +5354,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "validate_browser_adapter_completion" => {
+        "validate_browser_adapter_completion" | "projects.browserAdapters.validateCompletion" => {
             let request = mcp_browser_adapter_completion_report(&arguments)?;
             let validation = browser_adapter_completion_validation_response(None, request);
             let validation = serde_json::to_value(validation).map_err(|error| {
@@ -5201,7 +5369,7 @@ async fn mcp_tools_call(
                 "isError": true,
             }))
         }
-        "run_wasm" => {
+        "run_wasm" | "projects.executions.execute" => {
             let request = mcp_run_wasm_request(&arguments)?;
             let result = execute_sync(state, request)
                 .await
@@ -5222,6 +5390,15 @@ async fn mcp_tools_call(
                 .map_err(api_error_to_rpc)?;
             tool_result(result)
         }
+        "projects.browserAdapters.issueCapability"
+        | "projects.browserAdapters.planLaunch"
+        | "projects.browserAdapters.claimLaunch"
+        | "projects.jobs.create"
+        | "projects.jobs.get"
+        | "projects.jobs.cancel" => Err((
+            -32602,
+            format!("{name} is REST-only in this daemon; use the REST API"),
+        )),
         other => Err((-32602, format!("unknown tool: {other}"))),
     }?;
     payment_context.apply_to_tool_result(&mut result);
