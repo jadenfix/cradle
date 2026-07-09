@@ -183,12 +183,12 @@ type EgressRecord struct {
 // ErrorBody is the shared error payload carried by API error responses and by
 // the error field of a result/job/operation.
 type ErrorBody struct {
-	Code      string                   `json:"code"`
-	Message   string                   `json:"message"`
-	Status    uint16                   `json:"status"`
-	RequestID string                   `json:"request_id"`
-	Retryable bool                     `json:"retryable"`
-	Details   []map[string]any         `json:"details"`
+	Code      string           `json:"code"`
+	Message   string           `json:"message"`
+	Status    uint16           `json:"status"`
+	RequestID string           `json:"request_id"`
+	Retryable bool             `json:"retryable"`
+	Details   []map[string]any `json:"details"`
 }
 
 // errorResponse is the {"error": {...}} envelope returned on non-2xx responses.
