@@ -36,6 +36,7 @@ Run tests:
 
 ```sh
 cargo test
+python3 scripts/native-e2e.py
 ```
 
 Remote requests upload modules as inline WAT or base64 Wasm bytes. Daemon-local
@@ -107,3 +108,9 @@ sandboxed execution for
 [beater.js](https://github.com/jadenfix/beater.js), tool execution for
 [tempo](https://github.com/jadenfix/tempo), and auditable side-effect records
 for [beaterOS](https://github.com/jadenfix/beaterOS).
+
+The dependency-free native E2E gate drives the actual Wasm CLI and authenticated
+daemon, checks fuel exhaustion, REST execution, asynchronous jobs, retry
+idempotency, MCP discovery, and SQLite results after a daemon restart. It uses
+an ephemeral database/loopback port and respects `CARGO_TARGET_DIR`. It does not
+claim that planned Python/JavaScript/native/browser lanes are runnable.
