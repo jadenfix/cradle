@@ -41,3 +41,6 @@ jobs:
           cargo run -p beatbox --locked -- run examples/spin.wasm --input '{"n":0}' --policy fuel=1000000 | tee /tmp/beatbox-spin.json
           grep '"status": "timeout"' /tmp/beatbox-spin.json
           grep '"code": "fuel_exhausted"' /tmp/beatbox-spin.json
+
+      - name: Native CLI REST MCP and durable jobs E2E
+        run: python3 scripts/native-e2e.py
