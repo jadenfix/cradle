@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Verify the real Wasm CLI, authenticated daemon, MCP and SQLite job recovery."""
+import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,9 +16,16 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def main():
-    subprocess.run(["cargo", "build", "--locked", "--bin", "beatbox", "--bin", "beatboxd"], cwd=ROOT, check=True)
-    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT))
-    binaries = Path(metadata["target_directory"]) / "debug"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bin-dir", type=Path, help="Reuse explicitly supplied native binaries instead of rebuilding")
+    args = parser.parse_args()
+    if args.bin_dir is None:
+        subprocess.run(["cargo", "build", "--locked", "--bin", "beatbox", "--bin", "beatboxd"], cwd=ROOT, check=True)
+        metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--no-deps"], cwd=ROOT))
+        binaries = Path(metadata["target_directory"]) / "debug"
+    else:
+        binaries = args.bin_dir.resolve()
+    print(json.dumps({"binary_mode": "reuse" if args.bin_dir else "build", "binaries": {name: hashlib.sha256((binaries / name).read_bytes()).hexdigest() for name in ("beatbox", "beatboxd")}}, sort_keys=True))
     cli = json.loads(subprocess.check_output([str(binaries / "beatbox"), "run", "examples/fib.wasm", "--input", '{"n":10}'], cwd=ROOT))
     assert cli["status"] == "ok" and cli["value"] == 55 and cli["deterministic"]
     timeout = json.loads(subprocess.check_output([str(binaries / "beatbox"), "run", "examples/spin.wasm", "--input", '{"n":0}', "--policy", "fuel=1000000"], cwd=ROOT))
